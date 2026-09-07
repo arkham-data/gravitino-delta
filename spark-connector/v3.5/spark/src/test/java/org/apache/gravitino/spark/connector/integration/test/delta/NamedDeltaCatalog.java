@@ -62,6 +62,11 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
   private boolean direct;
   String failurePoint = "none";
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Connects this fixture catalog to Gravitino and creates its native Delta delegate.
+   */
   @Override
   public void initialize(String name, CaseInsensitiveStringMap options) {
     catalogName = name;
@@ -75,31 +80,37 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
     nativeCatalog.setDelegateCatalog(new RegistryDelegate());
   }
 
+  /** {@inheritDoc} */
   @Override
   public String name() {
     return catalogName;
   }
 
+  /** {@inheritDoc} */
   @Override
   public void close() {
     client.close();
   }
 
+  /** {@inheritDoc} */
   @Override
   public Table loadTable(Identifier id) throws NoSuchTableException {
     return loadRegistered(id);
   }
 
+  /** {@inheritDoc} */
   @Override
   public boolean tableExists(Identifier id) {
     return registry.asTableCatalog().tableExists(gravitinoId(id));
   }
 
+  /** {@inheritDoc} */
   @Override
   public void invalidateTable(Identifier id) {
     // No name or schema cache: every load resolves Gravitino and the native Delta snapshot.
   }
 
+  /** {@inheritDoc} */
   @Override
   public Identifier[] listTables(String[] namespace) {
     return Arrays.stream(registry.asTableCatalog().listTables(Namespace.of(namespace)))
@@ -107,6 +118,7 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
         .toArray(Identifier[]::new);
   }
 
+  /** {@inheritDoc} */
   @Override
   public Table createTable(
       Identifier id, StructType schema, Transform[] partitions, Map<String, String> properties)
@@ -120,6 +132,7 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
     return result;
   }
 
+  /** {@inheritDoc} */
   @Override
   public StagedTable stageCreate(
       Identifier id, StructType schema, Transform[] partitions, Map<String, String> properties)
@@ -133,6 +146,7 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
         location);
   }
 
+  /** {@inheritDoc} */
   @Override
   public StagedTable stageReplace(
       Identifier id, StructType schema, Transform[] partitions, Map<String, String> properties)
@@ -147,6 +161,7 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
         location);
   }
 
+  /** {@inheritDoc} */
   @Override
   public StagedTable stageCreateOrReplace(
       Identifier id, StructType schema, Transform[] partitions, Map<String, String> properties)
@@ -161,17 +176,20 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
         location);
   }
 
+  /** {@inheritDoc} */
   @Override
   public Table alterTable(Identifier id, TableChange... changes) {
     // Native commands resolve through the Gravitino-backed delegate; generic metadata stays stale.
     return nativeCatalog.alterTable(id, changes);
   }
 
+  /** {@inheritDoc} */
   @Override
   public boolean dropTable(Identifier id) {
     return registry.asTableCatalog().dropTable(gravitinoId(id));
   }
 
+  /** {@inheritDoc} */
   @Override
   public void renameTable(Identifier from, Identifier to) {
     registry
@@ -179,11 +197,13 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
         .alterTable(gravitinoId(from), org.apache.gravitino.rel.TableChange.rename(to.name()));
   }
 
+  /** {@inheritDoc} */
   @Override
   public boolean namespaceExists(String[] namespace) {
     return namespace.length == 1 && registry.asSchemas().schemaExists(namespace[0]);
   }
 
+  /** {@inheritDoc} */
   @Override
   public String[][] listNamespaces() {
     return Arrays.stream(registry.asSchemas().listSchemas())
@@ -191,12 +211,14 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
         .toArray(String[][]::new);
   }
 
+  /** {@inheritDoc} */
   @Override
   public String[][] listNamespaces(String[] namespace) throws NoSuchNamespaceException {
     checkNamespace(namespace);
     return new String[0][];
   }
 
+  /** {@inheritDoc} */
   @Override
   public Map<String, String> loadNamespaceMetadata(String[] namespace)
       throws NoSuchNamespaceException {
@@ -204,16 +226,19 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
     return registry.asSchemas().loadSchema(namespace[0]).properties();
   }
 
+  /** {@inheritDoc} */
   @Override
   public void createNamespace(String[] namespace, Map<String, String> properties) {
     throw new UnsupportedOperationException("Fixture namespaces are created through Gravitino");
   }
 
+  /** {@inheritDoc} */
   @Override
   public void alterNamespace(String[] namespace, NamespaceChange... changes) {
     throw new UnsupportedOperationException("Not in the experimental contract");
   }
 
+  /** {@inheritDoc} */
   @Override
   public boolean dropNamespace(String[] namespace, boolean cascade) {
     throw new UnsupportedOperationException("Not in the experimental contract");
@@ -295,11 +320,13 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
   }
 
   private final class RegistryDelegate extends DelegatingCatalogExtension {
+    /** {@inheritDoc} */
     @Override
     public String name() {
       return catalogName;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Table loadTable(Identifier id) throws NoSuchTableException {
       if (Arrays.equals(id.namespace(), new String[] {"delta"})) throw new NoSuchTableException(id);
@@ -318,36 +345,43 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
       this.location = location;
     }
 
+    /** {@inheritDoc} */
     @Override
     public String name() {
       return nativeStage.name();
     }
 
+    /** {@inheritDoc} */
     @Override
     public StructType schema() {
       return nativeStage.schema();
     }
 
+    /** {@inheritDoc} */
     @Override
     public Transform[] partitioning() {
       return nativeStage.partitioning();
     }
 
+    /** {@inheritDoc} */
     @Override
     public Map<String, String> properties() {
       return nativeStage.properties();
     }
 
+    /** {@inheritDoc} */
     @Override
     public Set<TableCapability> capabilities() {
       return nativeStage.capabilities();
     }
 
+    /** {@inheritDoc} */
     @Override
     public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
       return ((SupportsWrite) nativeStage).newWriteBuilder(info);
     }
 
+    /** {@inheritDoc} */
     @Override
     public void commitStagedChanges() {
       inject("before-commit");
@@ -357,6 +391,7 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
       inject("after-publication");
     }
 
+    /** {@inheritDoc} */
     @Override
     public void abortStagedChanges() {
       nativeStage.abortStagedChanges();

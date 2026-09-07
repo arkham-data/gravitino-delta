@@ -30,6 +30,11 @@ import org.apache.spark.sql.types.StructType;
 public class ReplacementDeltaCatalog extends DeltaCatalog {
   ReplacementStage lastStage;
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Adds the deferred-truncate wrapper to the native replacement stage.
+   */
   @Override
   public StagedTable stageReplace(
       Identifier id, StructType schema, Transform[] transforms, Map<String, String> properties) {
@@ -37,6 +42,11 @@ public class ReplacementDeltaCatalog extends DeltaCatalog {
     return lastStage;
   }
 
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Adds the deferred-truncate wrapper to the native replacement stage.
+   */
   @Override
   public StagedTable stageCreateOrReplace(
       Identifier id, StructType schema, Transform[] transforms, Map<String, String> properties) {

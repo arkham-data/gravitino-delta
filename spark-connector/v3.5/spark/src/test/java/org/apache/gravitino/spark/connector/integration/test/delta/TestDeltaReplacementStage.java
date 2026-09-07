@@ -107,16 +107,19 @@ public class TestDeltaReplacementStage {
         ((SupportsWrite) stage)
             .newWriteBuilder(
                 new LogicalWriteInfo() {
+                  /** {@inheritDoc} */
                   @Override
                   public String queryId() {
                     return "truncate-does-not-commit";
                   }
 
+                  /** {@inheritDoc} */
                   @Override
                   public StructType schema() {
                     return schema;
                   }
 
+                  /** {@inheritDoc} */
                   @Override
                   public CaseInsensitiveStringMap options() {
                     return new CaseInsensitiveStringMap(Map.of());

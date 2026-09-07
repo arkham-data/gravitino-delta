@@ -45,26 +45,31 @@ final class ReplacementStage implements StagedTable, SupportsWrite {
     this.nativeStage = nativeStage;
   }
 
+  /** {@inheritDoc} */
   @Override
   public String name() {
     return nativeStage.name();
   }
 
+  /** {@inheritDoc} */
   @Override
   public StructType schema() {
     return nativeStage.schema();
   }
 
+  /** {@inheritDoc} */
   @Override
   public Transform[] partitioning() {
     return nativeStage.partitioning();
   }
 
+  /** {@inheritDoc} */
   @Override
   public Map<String, String> properties() {
     return nativeStage.properties();
   }
 
+  /** {@inheritDoc} */
   @Override
   public Set<TableCapability> capabilities() {
     Set<TableCapability> result = new HashSet<>(nativeStage.capabilities());
@@ -72,18 +77,21 @@ final class ReplacementStage implements StagedTable, SupportsWrite {
     return result;
   }
 
+  /** {@inheritDoc} */
   @Override
   public void commitStagedChanges() {
     commits++;
     nativeStage.commitStagedChanges();
   }
 
+  /** {@inheritDoc} */
   @Override
   public void abortStagedChanges() {
     aborts++;
     nativeStage.abortStagedChanges();
   }
 
+  /** {@inheritDoc} */
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     builders++;
@@ -97,6 +105,11 @@ final class ReplacementStage implements StagedTable, SupportsWrite {
       this.nativeBuilder = nativeBuilder;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Acknowledges replacement mode without committing or removing data.
+     */
     @Override
     public WriteBuilder truncate() {
       truncates++;
@@ -106,6 +119,7 @@ final class ReplacementStage implements StagedTable, SupportsWrite {
       return this;
     }
 
+    /** {@inheritDoc} */
     @Override
     public Write build() {
       builds++;

@@ -260,7 +260,9 @@ from compilation as well as execution; excluding test execution alone would not
 compile direct Delta imports. Opt-in builds additionally assemble the existing
 generic provider jar for MiniGravitino's isolated provider loader. The default
 Delta dependency remains absent. The final default `TestCatalogNameAdaptor` check
-ran one test with zero failures or skips, and default Spotless passed. All four
+ran one test with zero failures or skips, and default Spotless passed. Its
+`compileTestJava` task was restored `FROM-CACHE`; this was a successful default
+baseline, not a fresh default compilation. All four
 opt-in dependency reports resolved 13 Spark artifacts to the requested patch and
 both Delta Spark/storage artifacts to the requested version. Full inventories
 (including Scala, Hadoop, AWS, and Kyuubi) are saved in `dependency-inventory.json`.
