@@ -94,8 +94,8 @@ not intended behavior. Use `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openj
 
 **Interfaces:**
 - Consume Task1 `RegistrationCommitVerifier.Result` and TableEntity stored location/schema/base/token fields.
-- Use actual `DefaultEngine.create(Configuration)`, `Table.forPath(engine, storedLocation)`, `getLatestSnapshot(engine)`, `Snapshot.getVersion()`, `getSchema(engine)`.
-- Separate observation (version/schema) from operation-correlation MATCHED evidence. Valid uncorrelated logs return AMBIGUOUS, never MATCHED. Missing log may yield NOT_COMMITTED only as an observation; this alone does not prove a stale writer cannot commit later. Corrupt/read-denied/mismatched logs fail closed with explicit diagnosis.
+- Use actual `DefaultEngine.create(Configuration)`, `Table.forPath(engine, storedLocation)`, `getLatestSnapshot(engine)`, `Snapshot.getVersion(engine)`, `getSchema(engine)`.
+- Public Kernel Snapshot3.3.0/3.3.2 exposes version/schema but no UUID/configuration accessor; leave unknown UUID/correlation explicit rather than casting internal classes. Separate observation (version/schema) from operation-correlation MATCHED evidence. Valid uncorrelated logs return AMBIGUOUS, never MATCHED. Missing log may yield NOT_COMMITTED only as an observation; this alone does not prove a stale writer cannot commit later. Corrupt/read-denied/mismatched logs fail closed with explicit diagnosis.
 - Test-only Gradle property `deltaRegistrationKernelVersion` accepts only3.3.0/3.3.2; omitted preserves existing3.3.0. Align only io.delta Kernel artifacts on module testCompileClasspath/testRuntimeClasspath. Pass required expected version to test JVM and execute jar-source/version assertion. Do not upgrade global libs.versions or start Spark in this fixture.
 
 - [ ] **Step 1: Add RED with actual local Kernel data.** Reuse `CatalogGenericCatalogDeltaIT` local native transaction pattern:
