@@ -106,7 +106,7 @@ final class KernelRegistrationCommitInspector implements RegistrationCommitVerif
       return Result.notCommitted(
           "No Delta transaction log was observed at the stored location; this observation alone "
               + "does not prove a stale writer cannot commit later");
-    } catch (UnsupportedOperationException unsupportedType) {
+    } catch (UnsupportedSchemaTypeException unsupportedType) {
       return Result.ambiguous(
           "The Delta snapshot uses an unsupported schema type; publication remains blocked: "
               + unsupportedType.getMessage(),
@@ -163,6 +163,12 @@ final class KernelRegistrationCommitInspector implements RegistrationCommitVerif
     if (nativeType instanceof StringType) {
       return Types.StringType.get();
     }
-    throw new UnsupportedOperationException(nativeType.getClass().getName());
+    throw new UnsupportedSchemaTypeException(nativeType.getClass().getName());
+  }
+
+  private static final class UnsupportedSchemaTypeException extends RuntimeException {
+    private UnsupportedSchemaTypeException(String nativeType) {
+      super(nativeType);
+    }
   }
 }

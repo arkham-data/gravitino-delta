@@ -63,6 +63,19 @@ valid-log test against the unchanged 3.3.0 baseline. Setting it to 3.3.1 failed
 during configuration with the expected allowlist message; the override is
 limited to this module's test compile and runtime classpaths.
 
+A scoped review follow-up passed **5 inspector tests, 0 failures, 0 errors, 0
+skipped** on each of Kernel 3.3.0 and 3.3.2. It removes the required stored token,
+mangles the stored native version, and creates a real Kernel table with a Boolean
+column outside the experiment's bounded conversion. Every case remains
+AMBIGUOUS with no publishable observation and the expected stored-evidence or
+unsupported-type diagnosis. A configured test Hadoop filesystem also injects an
+actual `AccessControlException` and a separate `UnsupportedOperationException`
+at `getFileStatus`. Invocation, exception-class, and message assertions prove the
+intended boundary ran; both failures remain AMBIGUOUS and neither becomes a
+verified absence. The inspector now reserves the unsupported-schema diagnosis
+for its own conversion exception, so unrelated Kernel runtime failures use the
+unreadable-log diagnosis.
+
 A valid version-zero snapshot returns an immutable observation containing its
 actual canonical Delta schema, converted integer/string columns, null native
 UUID, and version. It remains **AMBIGUOUS** because the pinned public Kernel
@@ -190,6 +203,15 @@ executable 3.3.0 RED (3 executed, 2 failed, 0 errors). The final per-patch XML i
 under `kernel-3.3.0-xml/` and `kernel-3.3.2-xml/`; dependency reports, exact logs,
 and exit files are adjacent. `default-xml/`, `default.log`, and
 `unsupported-property.log` retain the property-selection checks.
+
+Review-follow-up evidence is under `task-2/review-fix-1/`. The exact injected
+filesystem characterization passed before the diagnostic catch was narrowed,
+so it is labeled `pre-fix-characterization` rather than behavioral RED. The two
+preceding fixture-discovery runs and their XML are separately labeled and are
+not treated as product behavior evidence. Final focused XML and logs are under
+`kernel-3.3.0-xml/` and `kernel-3.3.2-xml/`; each records 5 passing inspector
+tests. The injection is deterministic local test configuration and does not
+claim real S3 permission behavior.
 
 ## Remaining acceptance boundaries
 

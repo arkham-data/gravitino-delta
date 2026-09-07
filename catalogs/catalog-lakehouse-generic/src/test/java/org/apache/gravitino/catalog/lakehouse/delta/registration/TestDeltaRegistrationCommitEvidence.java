@@ -26,12 +26,15 @@ import io.delta.kernel.Table;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.net.URI;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,18 +43,28 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.commons.io.FileUtils;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.meta.AuditInfo;
 import org.apache.gravitino.meta.TableEntity;
 import org.apache.gravitino.rel.types.Types;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.security.AccessControlException;
+import org.apache.hadoop.util.Progressable;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Exercises read-only registration evidence against actual local Delta transaction logs. */
 class TestDeltaRegistrationCommitEvidence {
+  private static final String INJECTED_FAILURE = "delta.registration.test.filesystem.failure";
   @TempDir Path directory;
 
   @Test
@@ -158,6 +171,68 @@ class TestDeltaRegistrationCommitEvidence {
     Assertions.assertTrue(unmatchedHint.reason().contains("only a search hint"));
   }
 
+  @Test
+  void testMalformedStoredEvidenceAndUnsupportedTypesAreAmbiguous() {
+    StructType supportedSchema = new StructType().add("id", IntegerType.INTEGER, true);
+    Path supportedPath = directory.resolve("supported");
+    createDeltaTable(supportedPath, supportedSchema);
+    KernelRegistrationCommitInspector inspector =
+        new KernelRegistrationCommitInspector(new Configuration());
+
+    TableEntity missingToken = reservation(supportedPath, supportedSchema.toJson(), null);
+    missingToken.properties().remove(RegistrationCommand.INTERNAL + "token");
+    RegistrationCommitVerifier.Result missingTokenResult = inspector.verify(missingToken, 0L);
+    assertCannotPublish(missingTokenResult);
+    Assertions.assertEquals(RegistrationCommitVerifier.Kind.AMBIGUOUS, missingTokenResult.kind());
+    Assertions.assertNull(missingTokenResult.observation());
+    Assertions.assertTrue(missingTokenResult.reason().contains("Stored registration evidence"));
+
+    TableEntity invalidBase = reservation(supportedPath, supportedSchema.toJson(), null);
+    invalidBase.properties().put(RegistrationCommand.INTERNAL + "native.version", "not-a-number");
+    RegistrationCommitVerifier.Result invalidBaseResult = inspector.verify(invalidBase, 0L);
+    assertCannotPublish(invalidBaseResult);
+    Assertions.assertEquals(RegistrationCommitVerifier.Kind.AMBIGUOUS, invalidBaseResult.kind());
+    Assertions.assertNull(invalidBaseResult.observation());
+    Assertions.assertTrue(invalidBaseResult.reason().contains("Stored registration evidence"));
+
+    StructType unsupportedSchema = new StructType().add("flag", BooleanType.BOOLEAN, true);
+    Path unsupportedPath = directory.resolve("unsupported-type");
+    createDeltaTable(unsupportedPath, unsupportedSchema);
+    RegistrationCommitVerifier.Result unsupported =
+        inspector.verify(reservation(unsupportedPath, unsupportedSchema.toJson(), null), 0L);
+    assertCannotPublish(unsupported);
+    Assertions.assertEquals(RegistrationCommitVerifier.Kind.AMBIGUOUS, unsupported.kind());
+    Assertions.assertNull(unsupported.observation());
+    Assertions.assertTrue(unsupported.reason().contains("unsupported schema type"));
+    Assertions.assertTrue(unsupported.reason().contains(BooleanType.class.getName()));
+  }
+
+  @Test
+  void testReadFailuresAreAmbiguousRatherThanNotCommitted() {
+    StructType schema = new StructType().add("id", IntegerType.INTEGER, true);
+
+    InjectedFailureFileSystem.reset();
+    RegistrationCommitVerifier.Result accessDenied =
+        new KernelRegistrationCommitInspector(failureConfiguration("access-denied"))
+            .verify(reservation("failure://registration/table", schema.toJson(), null), 0L);
+    assertCannotPublish(accessDenied);
+    Assertions.assertEquals(RegistrationCommitVerifier.Kind.AMBIGUOUS, accessDenied.kind());
+    Assertions.assertNull(accessDenied.observation());
+    Assertions.assertTrue(accessDenied.reason().contains("could not be read"));
+    InjectedFailureFileSystem.assertFailure(AccessControlException.class);
+
+    InjectedFailureFileSystem.reset();
+    RegistrationCommitVerifier.Result unsupportedRead =
+        new KernelRegistrationCommitInspector(failureConfiguration("unsupported-read"))
+            .verify(reservation("failure://registration/table", schema.toJson(), null), 0L);
+    assertCannotPublish(unsupportedRead);
+    Assertions.assertEquals(RegistrationCommitVerifier.Kind.AMBIGUOUS, unsupportedRead.kind());
+    Assertions.assertNull(unsupportedRead.observation());
+    Assertions.assertTrue(unsupportedRead.reason().contains("could not be read"));
+    Assertions.assertFalse(unsupportedRead.reason().contains("unsupported schema type"));
+    InjectedFailureFileSystem.assertFailure(UnsupportedOperationException.class);
+  }
+
   private static void assertLoadedKernelArtifacts() {
     String expectedVersion = System.getProperty("deltaRegistrationKernelVersion");
     Assertions.assertNotNull(expectedVersion, "Gradle must pass the selected Kernel version");
@@ -179,6 +254,14 @@ class TestDeltaRegistrationCommitEvidence {
     Assertions.assertNotEquals(RegistrationCommitVerifier.Kind.MATCHED, result.kind());
   }
 
+  private static Configuration failureConfiguration(String failure) {
+    Configuration configuration = new Configuration();
+    configuration.setClass("fs.failure.impl", InjectedFailureFileSystem.class, FileSystem.class);
+    configuration.setBoolean("fs.failure.impl.disable.cache", true);
+    configuration.set(INJECTED_FAILURE, failure);
+    return configuration;
+  }
+
   private static void createDeltaTable(Path path, StructType schema) {
     Configuration configuration = new Configuration();
     Engine engine = DefaultEngine.create(configuration);
@@ -193,13 +276,18 @@ class TestDeltaRegistrationCommitEvidence {
 
   private static TableEntity reservation(
       Path location, String schemaFingerprint, Long nativeVersion) {
+    return reservation(location.toUri().toString(), schemaFingerprint, nativeVersion);
+  }
+
+  private static TableEntity reservation(
+      String location, String schemaFingerprint, Long nativeVersion) {
     Map<String, String> properties = new HashMap<>();
     properties.put(RegistrationCommand.INTERNAL + "version", "1");
     properties.put(RegistrationCommand.INTERNAL + "state", "RESERVED");
     properties.put(RegistrationCommand.INTERNAL + "generation", "0");
     properties.put(RegistrationCommand.INTERNAL + "token", "operation-token");
     properties.put(RegistrationCommand.INTERNAL + "actor", "owner");
-    properties.put(RegistrationCommand.INTERNAL + "location", location.toUri().toString());
+    properties.put(RegistrationCommand.INTERNAL + "location", location);
     properties.put(RegistrationCommand.INTERNAL + "schemaFingerprint", schemaFingerprint);
     properties.put(RegistrationCommand.INTERNAL + "request", "test-only-request");
     properties.put(RegistrationCommand.INTERNAL + "operation", "RESERVE");
@@ -244,5 +332,133 @@ class TestDeltaRegistrationCommitEvidence {
       @Override
       public void close() {}
     };
+  }
+
+  /** Deterministic test filesystem that injects failures at Delta's first metadata read. */
+  public static final class InjectedFailureFileSystem extends FileSystem {
+    private static final AtomicInteger OPEN_CALLS = new AtomicInteger();
+    private static final AtomicInteger GET_FILE_STATUS_CALLS = new AtomicInteger();
+    private static final AtomicReference<Class<?>> LAST_FAILURE_CLASS = new AtomicReference<>();
+    private static final AtomicReference<String> LAST_FAILURE_MESSAGE = new AtomicReference<>();
+
+    private URI uri;
+    private org.apache.hadoop.fs.Path workingDirectory;
+
+    /** {@inheritDoc} */
+    @Override
+    public void initialize(URI name, Configuration configuration) throws IOException {
+      super.initialize(name, configuration);
+      uri = URI.create(name.getScheme() + "://" + name.getAuthority());
+      workingDirectory = new org.apache.hadoop.fs.Path(uri.toString() + "/");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public URI getUri() {
+      return uri;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public FSDataInputStream open(org.apache.hadoop.fs.Path path, int bufferSize)
+        throws IOException {
+      OPEN_CALLS.incrementAndGet();
+      throw new FileNotFoundException("No checkpoint marker in injected filesystem");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public FSDataOutputStream create(
+        org.apache.hadoop.fs.Path path,
+        FsPermission permission,
+        boolean overwrite,
+        int bufferSize,
+        short replication,
+        long blockSize,
+        Progressable progress) {
+      throw new AssertionError("Read-only evidence inspection must not create files");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public FSDataOutputStream append(
+        org.apache.hadoop.fs.Path path, int bufferSize, Progressable progress) {
+      throw new AssertionError("Read-only evidence inspection must not append files");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean rename(org.apache.hadoop.fs.Path source, org.apache.hadoop.fs.Path destination) {
+      throw new AssertionError("Read-only evidence inspection must not rename files");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean delete(org.apache.hadoop.fs.Path path, boolean recursive) {
+      throw new AssertionError("Read-only evidence inspection must not delete files");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public FileStatus[] listStatus(org.apache.hadoop.fs.Path path) {
+      throw new AssertionError("Injected getFileStatus failure must precede directory listing");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void setWorkingDirectory(org.apache.hadoop.fs.Path newDirectory) {
+      workingDirectory = newDirectory;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public org.apache.hadoop.fs.Path getWorkingDirectory() {
+      return workingDirectory;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean mkdirs(org.apache.hadoop.fs.Path path, FsPermission permission) {
+      throw new AssertionError("Read-only evidence inspection must not create directories");
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public FileStatus getFileStatus(org.apache.hadoop.fs.Path path) throws IOException {
+      GET_FILE_STATUS_CALLS.incrementAndGet();
+      if ("access-denied".equals(getConf().get(INJECTED_FAILURE))) {
+        return throwFailure(
+            new AccessControlException("Injected Delta log read denial at getFileStatus"));
+      }
+      return throwFailure(
+          new UnsupportedOperationException(
+              "Injected unsupported Delta log read at getFileStatus"));
+    }
+
+    private static void reset() {
+      OPEN_CALLS.set(0);
+      GET_FILE_STATUS_CALLS.set(0);
+      LAST_FAILURE_CLASS.set(null);
+      LAST_FAILURE_MESSAGE.set(null);
+    }
+
+    private static void assertFailure(Class<?> expectedClass) {
+      Assertions.assertTrue(OPEN_CALLS.get() >= 1);
+      Assertions.assertEquals(1, GET_FILE_STATUS_CALLS.get());
+      Assertions.assertEquals(expectedClass, LAST_FAILURE_CLASS.get());
+      Assertions.assertTrue(LAST_FAILURE_MESSAGE.get().contains("getFileStatus"));
+    }
+
+    private static <T> T throwFailure(RuntimeException failure) {
+      LAST_FAILURE_CLASS.set(failure.getClass());
+      LAST_FAILURE_MESSAGE.set(failure.getMessage());
+      throw failure;
+    }
+
+    private static <T> T throwFailure(IOException failure) throws IOException {
+      LAST_FAILURE_CLASS.set(failure.getClass());
+      LAST_FAILURE_MESSAGE.set(failure.getMessage());
+      throw failure;
+    }
   }
 }
