@@ -1,0 +1,134 @@
+---
+title: "Delta registration lifecycle experiment results"
+license: "This software is licensed under the Apache License version 2."
+---
+
+# Delta registration lifecycle experiment results
+
+## Task 1: durable H2 registration fixture
+
+On September 7, 2026, the test-only `registration` package in
+`catalogs/catalog-lakehouse-generic` exercised existing `ManagedTableOperations`
+and a real file-backed relational `EntityStore` on the feasibility branch based
+on `8e919ff9a`. This task changes no production provider, core, API, REST,
+client, storage schema, native Delta patch, or module dependency.
+
+The focused run passed **21 tests, 0 failures, 0 errors, 0 skipped**:
+
+| Class | Executed tests | Result |
+| --- | --- | --- |
+| `TestDeltaRegistrationLifecycle` | 11 | Pass |
+| `TestGenericCatalogOperations` | 2 | Pass |
+| `TestDeltaTableOperations` | 8 | Pass |
+
+The module's `spotlessApply` and `spotlessCheck` passed. Sources use Java 8
+language constructs and ran on JDK 17.0.16 with Gradle 8.2. The recorded
+`testRuntimeClasspath` selects H2 2.2.224 and Delta Kernel API/defaults/storage
+3.3.0 through the existing module dependencies. The existing worktree
+Git-commit resource warning, Gradle deprecation notice, and macOS Docker-context
+notice appeared; no Docker tests were requested.
+
+## Observed behavior
+
+| Boundary | Executed evidence |
+| --- | --- |
+| Reserve and durability | Unique insert stores the first dispatcher-simulated `StringIdentifier`, token, principal, location, canonical request, and generation. A close/reopen of the same H2 file preserves the complete record. |
+| Visibility | Reserved, replacing, aborted, and quarantined records remain in raw TABLE storage and are hidden from the fixture's ordinary list/load/exists. A published record appears once. |
+| Retry | A new injected candidate ID does not replace the first ID for identical reservation content. Changed principal/token/schema/location fails without changing the row. Delayed reserve retry after publication and finalization after response loss preserve identity. |
+| Evidence | NOT_COMMITTED cannot publish; AMBIGUOUS quarantines. Only explicitly synthetic MATCHED evidence publishes observed columns/version/UUID. Candidate version is merely passed to the trusted verifier. Client state flags and mixed property commands fail. |
+| Replace | The same Gravitino ID, location, creator, and creation time survive a replacement with a new synthetic native UUID/schema. Pending replacement retains prior publication properties and columns. Verified absence on abort restores those values while keeping the newest generation/token; exact abort replay across reopen performs no new verification. |
+| Recovery | Correct token alone does not authorize a foreign principal. Configured recovery authority still needs evidence and an explicit simulated writer handoff. QUARANTINED allows subsequent evidence-verified recovery with handoff; it never enables automatic timeout takeover. |
+| Stale inspection | A real store mutation during the injected verifier invalidates its inspected base. The subsequent update rejects the stale ID/token/generation/base, leaving its candidate columns unpublished. |
+| Backend OCC | Two actual update callbacks wait at a latch after reading the same unmodified base. Exactly one commits; the other throws `OptimisticLockException`. Only the winning properties and column persist, including after reopen. Timed latches/futures replace sleep-based synchronization. |
+| Abort and deletion | Verified absence leaves a durable hidden ABORTED row. The sentinel data file is unchanged; raw TABLE count remains one. Drop/purge are explicitly unsupported in the adapter. |
+| SPI limits | Calling the pinned relational store's `executeInTransaction` throws `UnsupportedOperationException`. TABLE deletion has no caller-expected-ID predicate; no check-then-delete workaround is implemented. |
+
+H2 uses `DB_CLOSE_DELAY=0` and the fixture closes/recreates the actual store,
+not a mock wrapper. Cache configuration is false, and reopen assertions inspect
+an actual `NoOpsCache`. Only `GravitinoEnv.config` is assigned directly for
+namespace setup, and its previous value is restored in teardown. These tests
+run serially because the relational store uses process singleton infrastructure.
+
+The callback implementation performs pure state validation and immutable
+candidate construction. Evidence inspection and column ID allocation occur
+before `store.update`. The callback checks the complete inspected entity again;
+it performs no native IO, native commit, data deletion, or external ownership
+operation. The synchronized race is a backend control-request conflict test,
+not evidence of concurrent native writer support.
+
+## Test protocol and inspection seam
+
+The consumed input property is `delta.registration.command`. Version 1 uses a
+fixed-field envelope, canonical URL-safe Base64 text fields, and a maximum of
+16,384 UTF-8 bytes. Missing, unknown, extra, unsupported-version, and malformed
+fields are rejected. Persisted properties use `delta.registration.internal.`;
+returned reservation receipts expose only ID, generation, token, and state under
+`delta.registration.receipt.`. The fixture accepts the injected identity as a
+simulation of dispatcher behavior, not proof that it is authenticated REST input.
+
+Local locations normalize lexically to absolute file URIs, avoiding the
+filesystem-dependent trailing slash that `Path.toUri()` adds when a native
+operation creates the directory. The retry regression creates that directory
+between calls and verifies unchanged reservation identity. Remote URI keys retain exact
+comparison semantics, rejecting ambiguous dot segments, escaped paths, userinfo,
+query, fragment, and missing authority. This deliberately limited remote URI
+validation is not a finalized S3 or multicloud location contract.
+
+`RegistrationCommitVerifier.verify(TableEntity, long)` returns an immutable
+`Result` with a distinct `Kind` and optional `Observation`. Observation exposes
+native version, nullable native UUID, schema fingerprint, and copied columns.
+An AMBIGUOUS observation can carry parsed schema/version without a UUID;
+MATCHED requires both an observation and UUID. All MATCHED outcomes here are
+labeled **synthetic operation correlation**, with no Delta-log read or write.
+Task 2 can consume this same interface without manufacturing MATCHED.
+
+## Reproduction and retained evidence
+
+Run from the feasibility checkout with:
+
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+./gradlew :catalogs:catalog-lakehouse-generic:spotlessApply \
+  :catalogs:catalog-lakehouse-generic:test -PskipITs \
+  --tests '*TestDeltaRegistrationLifecycle' \
+  --tests '*TestGenericCatalogOperations' \
+  --tests '*TestDeltaTableOperations' \
+  :catalogs:catalog-lakehouse-generic:spotlessCheck
+```
+
+Local evidence is retained under
+`build/delta-registration-lifecycle-evidence/task-1/`. `commands.txt` records
+commands and exit codes; `final-green-xml/` preserves nonzero per-class JUnit
+counts before another task overwrites module reports. The actual module reports
+originate in `catalogs/catalog-lakehouse-generic/build/test-results/test/`.
+
+The original behavioral RED inherited unfiltered managed-table behavior and
+failed the hidden-list assertion (1 executed, 1 failed, exit 1). Expanded RED
+executed 8 tests with 6 failures; additional retry/record-codec RED executed 11
+with 2 failures. Their logs and exit files survive, but their original XML was
+not retained because the first copy script searched the wrong build directory.
+A separately labeled temporary visibility-filter mutation later reproduced the
+same assertion (1 executed, 1 failed, exit 1), with XML retained under
+`visibility-mutation-red-xml/`. The exact passing source was restored and the
+focused verification passed. A later concrete directory-creation retry regression
+also failed (1 executed, 1 failed, exit 1), with original XML retained under
+`location-red-xml/`; lexical URI construction fixed it.
+`location-final-green.log` and `final-green-xml/` are the final 21-test verification.
+The supplemental visibility-mutation XML is not represented as
+historical XML from the original RED run.
+
+## Remaining acceptance boundaries
+
+This is H2 lifecycle evidence, with synthetic matched commit evidence. It proves
+neither end-to-end Delta recovery nor actual Spark token correlation, S3 atomicity,
+REST authentication/authorization, owner-hook atomicity, schema-cascade safety,
+cross-server cache convergence, distributed writer fencing, or Ranger policy
+isolation. New reads are blocked while REPLACING: native read availability/parity
+during replacement remains unproved. Aborted names are not automatically reclaimed.
+
+Full eventual acceptance still requires Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2
+and Ranger 2.8.0. Existing separate Spark/Ranger evidence is recorded in
+[the feasibility results](delta-spark-feasibility-results.md); these H2 tests add
+no new Ranger or Spark acceptance. Actual Kernel log inspection is Task 2;
+dispatcher/REST ownership and native durable correlation/fencing are later gates
+in the [approved design](superpowers/specs/2026-09-07-delta-registration-lifecycle-design.md).
