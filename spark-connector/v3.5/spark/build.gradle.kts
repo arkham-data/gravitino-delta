@@ -209,10 +209,20 @@ if (deltaTestSparkVersion != null) {
     }
 }
 
+// These experimental helpers import Delta directly; execution exclusion alone cannot compile
+// the default test source set without adding Delta to ordinary builds.
+if (deltaTestSparkVersion == null) {
+  sourceSets.test {
+    java.exclude("**/integration/test/delta/**")
+  }
+}
+
 tasks.test {
   if (deltaTestSparkVersion == null) {
     exclude("**/connector/delta/TestDeltaNativeContract.class")
+    exclude("**/integration/test/delta/**")
   } else {
+    dependsOn(":catalogs:catalog-lakehouse-generic:jar")
     systemProperty("gravitino.delta.test.sparkVersion", deltaTestSparkVersion)
     systemProperty("gravitino.delta.test.deltaVersion", requireNotNull(deltaTestVersion))
   }
