@@ -54,6 +54,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.annotation.Nullable;
 import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.Config;
@@ -85,6 +86,9 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 /** Exercises the test protocol against a real file-backed relational store. */
@@ -324,6 +328,12 @@ class TestDeltaRegistrationLifecycle {
         "new-uuid", raw().properties().get(RegistrationCommand.INTERNAL + "native.uuid"));
     Assertions.assertEquals(
         "2", raw().properties().get(RegistrationCommand.INTERNAL + "generation"));
+    TableEntity restored = raw();
+    int callsBeforeReplay = verifications.get();
+    reopen();
+    transition(RegistrationCommand.abort(1001L, 2L, "failed-replace"));
+    Assertions.assertEquals(restored, raw());
+    Assertions.assertEquals(callsBeforeReplay, verifications.get());
     Assertions.assertThrows(
         IllegalStateException.class,
         () -> transition(RegistrationCommand.publish(1001L, 1L, "replacement", 2L)));
@@ -544,6 +554,111 @@ class TestDeltaRegistrationLifecycle {
     Assertions.assertThrows(
         IllegalArgumentException.class,
         () -> RegistrationCommitVerifier.Result.matched(observation, "untrusted lack of identity"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "state",
+        "version",
+        "generation",
+        "token",
+        "actor",
+        "location",
+        "schemaFingerprint",
+        "request",
+        "operation",
+        "native.version",
+        "native.uuid",
+        "native.schemaFingerprint",
+        "completedCommand",
+        "reason"
+      })
+  void testMissingPriorSnapshotCannotMutateReplacement(String missingField) throws Exception {
+    assertMalformedPriorRejected(missingField, null);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "state, RESERVED",
+    "version, 2",
+    "generation, 5",
+    "token, replacement",
+    "actor, foreign",
+    "location, file:///tmp/foreign",
+    "native.version, 7",
+    "native.uuid, foreign",
+    "native.schemaFingerprint, foreign",
+    "request, 1|RESERVE|b3RoZXI|ZmlsZTovLy90bXAvZGVsdGE|c2NoZW1h",
+    "operation, UNKNOWN",
+    "completedCommand, invalid",
+    "prior.state, PUBLISHED"
+  })
+  void testCorruptPriorSnapshotCannotMutateReplacement(String field, String corruptValue)
+      throws Exception {
+    assertMalformedPriorRejected(field, corruptValue);
+  }
+
+  @Test
+  void testInvalidTransitionCandidateIsRejectedBeforePersistence() throws Exception {
+    reserve(1001L, "token", "schema");
+    TableEntity reservation = raw();
+    outcome =
+        RegistrationCommitVerifier.Result.matched(
+            new RegistrationCommitVerifier.Observation(
+                0L,
+                "synthetic-uuid",
+                "",
+                Collections.singletonList(Column.of("must_not_publish", Types.StringType.get()))),
+            "synthetic malformed native schema fingerprint");
+    Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> transition(RegistrationCommand.publish(1001L, 0L, "token", 0L)));
+    Assertions.assertEquals(
+        reservation, raw(), "Invalid candidate must not change the stored row before failing");
+  }
+
+  private void assertMalformedPriorRejected(String field, @Nullable String corruptValue)
+      throws Exception {
+    reserve(1001L, "token", "schema");
+    outcome = syntheticMatched(0L, "original-uuid", "original_column");
+    transition(RegistrationCommand.publish(1001L, 0L, "token", 0L));
+    transition(RegistrationCommand.beginReplace(1001L, 0L, "token", "replacement", "new-schema"));
+    TableEntity validReplacement = raw();
+    outcome = RegistrationCommitVerifier.Result.notCommitted("synthetic verified absence");
+    for (String pendingState : Arrays.asList("REPLACING", "QUARANTINED")) {
+      store.update(
+          IDENT,
+          TableEntity.class,
+          Entity.EntityType.TABLE,
+          current -> {
+            Map<String, String> properties = new HashMap<>(validReplacement.properties());
+            properties.put(RegistrationCommand.INTERNAL + "state", pendingState);
+            String key = RegistrationCommand.INTERNAL + "prior." + field;
+            if (corruptValue == null) {
+              properties.remove(key);
+            } else {
+              properties.put(key, corruptValue);
+            }
+            return RegistrationLifecycleFixture.copy(
+                current, properties, validReplacement.columns());
+          });
+      TableEntity malformed = raw();
+      Assertions.assertThrows(
+          IllegalArgumentException.class,
+          () -> transition(RegistrationCommand.abort(1001L, 1L, "replacement")),
+          "Malformed " + field + " in " + pendingState + " must reject abort");
+      Assertions.assertEquals(
+          malformed, raw(), "Rejected abort must retain all malformed record fields for recovery");
+      Assertions.assertThrows(
+          IllegalArgumentException.class,
+          () -> transition(RegistrationCommand.publish(1001L, 1L, "replacement", 1L)),
+          "Malformed snapshot must also reject publication");
+      Assertions.assertEquals(malformed, raw());
+      reopen();
+      Assertions.assertEquals(
+          malformed, raw(), "Neither rejected request may persist a changed row");
+    }
   }
 
   private TableEntity raceUpdate(

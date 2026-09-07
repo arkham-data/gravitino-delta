@@ -13,13 +13,23 @@ and a real file-backed relational `EntityStore` on the feasibility branch based
 on `8e919ff9a`. This task changes no production provider, core, API, REST,
 client, storage schema, native Delta patch, or module dependency.
 
-The focused run passed **21 tests, 0 failures, 0 errors, 0 skipped**:
+The initial focused run passed **21 tests, 0 failures, 0 errors, 0 skipped**:
 
 | Class | Executed tests | Result |
 | --- | --- | --- |
 | `TestDeltaRegistrationLifecycle` | 11 | Pass |
 | `TestGenericCatalogOperations` | 2 | Pass |
 | `TestDeltaTableOperations` | 8 | Pass |
+
+A scoped review follow-up passed **39 lifecycle tests, 0 failures, 0 errors,
+0 skipped**, with module formatting checks. Fourteen missing prior-field cases
+and thirteen corrupt/inconsistent prior-field cases each exercise REPLACING and
+QUARANTINED replacement records. Rejected abort and publish requests leave the
+complete malformed row unchanged, including after reopen. A malformed
+publication candidate is rejected before persistence. The restored-abort test
+also reopens H2, repeats the exact abort, and checks unchanged row and verifier
+call count. Existing generic/Delta operation suites were not rerun in this
+follow-up; their initial results above remain separate evidence.
 
 The module's `spotlessApply` and `spotlessCheck` passed. Sources use Java 8
 language constructs and ran on JDK 17.0.16 with Gradle 8.2. The recorded
@@ -51,8 +61,12 @@ run serially because the relational store uses process singleton infrastructure.
 
 The callback implementation performs pure state validation and immutable
 candidate construction. Evidence inspection and column ID allocation occur
-before `store.update`. The callback checks the complete inspected entity again;
-it performs no native IO, native commit, data deletion, or external ownership
+before `store.update`. The callback checks the complete inspected entity again.
+Pending replacements require a complete PUBLISHED prior snapshot with
+consistent generation, token, principal, location, native base, and completion
+receipt. The resulting candidate is validated inside the callback before it
+returns to the store; it performs no native IO, native commit, data deletion,
+or external ownership
 operation. The synchronized race is a backend control-request conflict test,
 not evidence of concurrent native writer support.
 
@@ -97,7 +111,10 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
 ```
 
 Local evidence is retained under
-`build/delta-registration-lifecycle-evidence/task-1/`. `commands.txt` records
+`build/delta-registration-lifecycle-evidence/task-1/`. The scoped review follow-up
+has `review-fix-1/commands.txt`, original `red-xml/` (28 executed, 28 failed), and
+`green-xml/` (39 executed, all passed), with corresponding logs and exit files.
+The original `commands.txt` records
 commands and exit codes; `final-green-xml/` preserves nonzero per-class JUnit
 counts before another task overwrites module reports. The actual module reports
 originate in `catalogs/catalog-lakehouse-generic/build/test-results/test/`.

@@ -224,7 +224,10 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
                 if (!current.equals(inspected)) {
                   throw new IllegalStateException("Reservation changed during evidence inspection");
                 }
-                return applyVerifiedTransition(current, command, evidence, observedColumns);
+                TableEntity candidate =
+                    applyVerifiedTransition(current, command, evidence, observedColumns);
+                state(candidate);
+                return candidate;
               }));
     } catch (IOException failure) {
       throw new RuntimeException("Cannot transition table", failure);
@@ -438,7 +441,70 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
       value(entity, "native.uuid");
       value(entity, "native.schemaFingerprint");
     }
+    validatePriorPublication(entity, state, operation);
     return state;
+  }
+
+  private static void validatePriorPublication(TableEntity entity, State state, String operation) {
+    boolean replacing =
+        state == State.REPLACING || (state == State.QUARANTINED && "REPLACE".equals(operation));
+    Map<String, String> priorProperties = new HashMap<>();
+    entity
+        .properties()
+        .forEach(
+            (key, value) -> {
+              if (key.startsWith(PRIOR)) {
+                String suffix = key.substring(PRIOR.length());
+                if (suffix.startsWith("prior.")) {
+                  throw new IllegalArgumentException("Nested prior publication is invalid");
+                }
+                priorProperties.put(INTERNAL + suffix, value);
+              }
+            });
+    if (!replacing) {
+      if (!priorProperties.isEmpty()) {
+        throw new IllegalArgumentException(
+            "Only pending replacements may retain prior publication");
+      }
+      return;
+    }
+    if (!"REPLACE".equals(operation)) {
+      throw new IllegalArgumentException("Replacing state requires replacement operation");
+    }
+    TableEntity prior = copy(entity, priorProperties, entity.columns());
+    if (state(prior) != State.PUBLISHED) {
+      throw new IllegalArgumentException(
+          "Replacement requires a complete published prior snapshot");
+    }
+    long generation = Long.parseLong(value(entity, "generation"));
+    long priorGeneration = Long.parseLong(value(prior, "generation"));
+    if (generation == 0
+        || priorGeneration != generation - 1
+        || value(entity, "token").equals(value(prior, "token"))) {
+      throw new IllegalArgumentException("Prior publication has inconsistent generation or token");
+    }
+    for (String field :
+        new String[] {
+          "actor",
+          "location",
+          "request",
+          "native.version",
+          "native.uuid",
+          "native.schemaFingerprint"
+        }) {
+      if (!value(entity, field).equals(value(prior, field))) {
+        throw new IllegalArgumentException("Prior publication disagrees with retained " + field);
+      }
+    }
+    value(prior, "reason");
+    RegistrationCommand completed = RegistrationCommand.decode(value(prior, "completedCommand"));
+    if ((completed.operation != RegistrationCommand.Operation.PUBLISH
+            && completed.operation != RegistrationCommand.Operation.ABORT)
+        || completed.expectedId != entity.id()
+        || completed.generation != priorGeneration
+        || !completed.token.equals(value(prior, "token"))) {
+      throw new IllegalArgumentException("Prior publication has inconsistent completion receipt");
+    }
   }
 
   private static String value(TableEntity entity, String suffix) {
