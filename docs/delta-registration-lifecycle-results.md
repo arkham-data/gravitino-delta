@@ -38,6 +38,42 @@ language constructs and ran on JDK 17.0.16 with Gradle 8.2. The recorded
 Git-commit resource warning, Gradle deprecation notice, and macOS Docker-context
 notice appeared; no Docker tests were requested.
 
+## Task 2: actual Delta Kernel log inspection
+
+Task 2 adds a separate test-only, read-only `KernelRegistrationCommitInspector`.
+The fixture creates real local Delta transaction logs through Kernel
+`createTransactionBuilder` and `commit`, then opens only the normalized location
+stored in the Task 1 record. It calls the public `Table.getLatestSnapshot`,
+`Snapshot.getVersion`, and `Snapshot.getSchema` APIs. No Spark process, native
+operation marker, production provider, or Delta-log write occurs during
+verification.
+
+The final patch matrices passed **42 tests, 0 failures, 0 errors, 0 skipped** on
+each selected Kernel patch:
+
+| Kernel selection | Inspector tests | Lifecycle tests | Loaded artifacts | Result |
+| --- | ---: | ---: | --- | --- |
+| 3.3.0 | 3 | 39 | API/defaults 3.3.0 | Pass |
+| 3.3.2 | 3 | 39 | API/defaults 3.3.2 | Pass |
+
+The executed tests assert both artifact manifest versions and JAR code sources.
+The per-version runtime dependency reports additionally select matching
+`delta-storage` patches. Omitting `deltaRegistrationKernelVersion` executed the
+valid-log test against the unchanged 3.3.0 baseline. Setting it to 3.3.1 failed
+during configuration with the expected allowlist message; the override is
+limited to this module's test compile and runtime classpaths.
+
+A valid version-zero snapshot returns an immutable observation containing its
+actual canonical Delta schema, converted integer/string columns, null native
+UUID, and version. It remains **AMBIGUOUS** because the pinned public Kernel
+snapshot API exposes no operation token or other proven correlation marker.
+Schema mismatch, an unchanged replacement base, a candidate hint that differs
+from the latest stored-location version, corrupt JSON, invalid stored evidence,
+unsupported schema types, and other read failures all fail closed as AMBIGUOUS.
+Only `TableNotFoundException` yields NOT_COMMITTED, and its reason states that
+absence does not prove a stale writer cannot commit later. A valid log elsewhere
+at the candidate version cannot override the stored location.
+
 ## Observed behavior
 
 | Boundary | Executed evidence |
@@ -92,9 +128,10 @@ validation is not a finalized S3 or multicloud location contract.
 `Result` with a distinct `Kind` and optional `Observation`. Observation exposes
 native version, nullable native UUID, schema fingerprint, and copied columns.
 An AMBIGUOUS observation can carry parsed schema/version without a UUID;
-MATCHED requires both an observation and UUID. All MATCHED outcomes here are
-labeled **synthetic operation correlation**, with no Delta-log read or write.
-Task 2 can consume this same interface without manufacturing MATCHED.
+MATCHED requires both an observation and UUID. All MATCHED outcomes in the H2
+lifecycle fixture are labeled **synthetic operation correlation**, with no
+Delta-log read or write. The actual Kernel inspector consumes the same interface
+and never manufactures MATCHED.
 
 ## Reproduction and retained evidence
 
@@ -134,18 +171,41 @@ also failed (1 executed, 1 failed, exit 1), with original XML retained under
 The supplemental visibility-mutation XML is not represented as
 historical XML from the original RED run.
 
+Task 2 can be reproduced with:
+
+```bash
+./gradlew :catalogs:catalog-lakehouse-generic:test -PskipITs \
+  -PdeltaRegistrationKernelVersion=3.3.0 \
+  --tests '*TestDeltaRegistrationCommitEvidence' \
+  --tests '*TestDeltaRegistrationLifecycle'
+./gradlew :catalogs:catalog-lakehouse-generic:test -PskipITs \
+  -PdeltaRegistrationKernelVersion=3.3.2 \
+  --tests '*TestDeltaRegistrationCommitEvidence' \
+  --tests '*TestDeltaRegistrationLifecycle'
+```
+
+Its local evidence is retained under
+`build/delta-registration-lifecycle-evidence/task-2/`. `red-xml/` preserves the
+executable 3.3.0 RED (3 executed, 2 failed, 0 errors). The final per-patch XML is
+under `kernel-3.3.0-xml/` and `kernel-3.3.2-xml/`; dependency reports, exact logs,
+and exit files are adjacent. `default-xml/`, `default.log`, and
+`unsupported-property.log` retain the property-selection checks.
+
 ## Remaining acceptance boundaries
 
-This is H2 lifecycle evidence, with synthetic matched commit evidence. It proves
-neither end-to-end Delta recovery nor actual Spark token correlation, S3 atomicity,
-REST authentication/authorization, owner-hook atomicity, schema-cascade safety,
+These results combine H2 lifecycle evidence, explicitly synthetic MATCHED
+evidence, and actual Kernel snapshot observation. They prove neither end-to-end
+Delta recovery nor actual Spark token correlation, S3 atomicity, REST
+authentication/authorization, owner-hook atomicity, schema-cascade safety,
 cross-server cache convergence, distributed writer fencing, or Ranger policy
-isolation. New reads are blocked while REPLACING: native read availability/parity
-during replacement remains unproved. Aborted names are not automatically reclaimed.
+isolation. The narrow schema conversion exercised here is not a claim of complete
+Delta protocol/type support. New reads are blocked while REPLACING: native read
+availability/parity during replacement remains unproved. Aborted names are not
+automatically reclaimed.
 
 Full eventual acceptance still requires Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2
 and Ranger 2.8.0. Existing separate Spark/Ranger evidence is recorded in
-[the feasibility results](delta-spark-feasibility-results.md); these H2 tests add
-no new Ranger or Spark acceptance. Actual Kernel log inspection is Task 2;
-dispatcher/REST ownership and native durable correlation/fencing are later gates
-in the [approved design](superpowers/specs/2026-09-07-delta-registration-lifecycle-design.md).
+[the feasibility results](delta-spark-feasibility-results.md); these tests add no
+new Ranger or Spark acceptance. Dispatcher/REST ownership and native durable
+operation correlation/fencing are later gates in the
+[approved design](superpowers/specs/2026-09-07-delta-registration-lifecycle-design.md).

@@ -24,6 +24,31 @@ plugins {
   id("idea")
 }
 
+val supportedDeltaRegistrationKernelVersions = setOf("3.3.0", "3.3.2")
+val deltaRegistrationKernelVersion =
+  providers
+    .gradleProperty("deltaRegistrationKernelVersion")
+    .getOrElse(libs.versions.delta.kernel.get())
+
+require(deltaRegistrationKernelVersion in supportedDeltaRegistrationKernelVersions) {
+  "deltaRegistrationKernelVersion must be one of " +
+    supportedDeltaRegistrationKernelVersions.joinToString(", ")
+}
+
+configurations
+  .matching { it.name == "testCompileClasspath" || it.name == "testRuntimeClasspath" }
+  .configureEach {
+    resolutionStrategy.eachDependency {
+      if (
+        requested.group == "io.delta" &&
+        (requested.name == "delta-kernel-api" || requested.name == "delta-kernel-defaults")
+      ) {
+        useVersion(deltaRegistrationKernelVersion)
+        because("the registration evidence tests run against the selected pinned Kernel patch")
+      }
+    }
+  }
+
 dependencies {
   compileOnly(project(":api"))
   compileOnly(project(":common"))
@@ -115,6 +140,7 @@ tasks {
 }
 
 tasks.test {
+  systemProperty("deltaRegistrationKernelVersion", deltaRegistrationKernelVersion)
   val skipITs = project.hasProperty("skipITs")
   if (skipITs) {
     // Exclude integration tests
