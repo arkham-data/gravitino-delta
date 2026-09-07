@@ -153,6 +153,59 @@ table's policies. Cached results, checkpoint restarts, and active-stream
 revocation require measured behavior and an explicit enforcement boundary before
 release. Do not claim instantaneous revocation from policy polling alone.
 
+### Task 0.3 concrete local candidate and deployment boundary
+
+The test-only candidate uses one Ranger service with
+`catalog -> database -> table -> column`. Access and mask requests carry all four
+keys; row-filter requests stop at the table level. The native descriptor is a
+non-persisted Spark `CatalogTable` whose `TableIdentifier` has separate table,
+database, and catalog fields. `IdentityDeltaCatalog.loadTable(Identifier)` calls
+the existing named bridge, retains `DeltaTableV2`, and copies only its descriptor.
+No three-part `tableIdentifier` string or session-catalog registration is used.
+Native read and analyzed `MergeIntoCommand` source/target identity are separate
+checks; MERGE identity does not establish MERGE authorization.
+
+The policy selector prototype subclasses `RangerAuthorizationHadoopSQLPlugin` and
+runs inherited `onRoleUpdated` grant/revoke mechanics. It changes resource
+translation/creation and wildcard lookup in test code only. Managed policies must
+be access type 0, belong to the configured service, carry `gravitino-managed`,
+`gravitino-metalake-id:<id>`, and `gravitino-catalog-id:<id>`, and have the exact
+resource key/value shape. Duplicate owned access policies fail closed. Unlabelled
+Ranger access policies and mask/filter policies remain Ranger-owned. No stable
+table ID is available in the existing callbacks; drop/recreate attachment remains
+an explicit Ranger administrator contract.
+
+`CatalogAwareRangerExtension` is a bounded test read rule installed through
+`SparkSessionExtensions.injectResolutionRule`. It obtains decisions from the real
+Kyuubi `SparkRangerAdminPlugin` (1.10.2) / Ranger (2.5.0) engine, and parses the
+returned mask/filter expressions into Spark plans. It distinguishes native
+`TahoeLogFileIndex` data scans from `DeltaLogFileIndex` transaction-log metadata
+reconstruction. That metadata allowance is necessary for native execution and is
+not evidence of metadata confidentiality, storage credential separation, or
+permission to run arbitrary jobs. The fixture's fresh read plans and direct Delta
+path negative do not establish safety for cached/reused plans, arbitrary file
+APIs, user-constructed plans, time travel, streaming, DML, or maintenance.
+
+`NamedDeltaCatalog.createMetadataClient(String)` is a test helper seam, not a core
+or client contract addition. Its identity-decorating subclass uses the existing
+`GravitinoAdminClient.builder(uri).withSimpleAuth("metadata_service")` interface;
+query evaluation remains under local `UGI.doAs("reader")`. No broad reader grant
+is added. The embedded server does not validate the production metadata
+permission/authentication boundary. Production must provision a scoped metadata
+credential with existing USE_CATALOG/USE_SCHEMA/SELECT_TABLE permissions and an
+independently authenticated query subject, with rejection of missing/tampered
+session signatures or an equivalent trusted launcher. The SQL-only versus
+arbitrary-job platform trust contract remains open.
+
+Ranger Admin installation of this service definition, resource lookup,
+persistence/labels, polling/cache behavior, and cross-process revocation remain
+external acceptance gates. Local JSON is supplied through
+`ranger.plugin.spark.policy.source.impl`; `refreshPoliciesAndTags()` exercises a
+local snapshot refresh only. The production provider is not registered or
+packaged by this experiment. Task 0.2's managed lifecycle/provider/recovery
+failures remain full-support blockers; see the results document for measured
+Task 0.3 outcomes and dependency convergence.
+
 ## S3 and migration
 
 Use the standard single-driver S3 LogStore under the platform exclusion

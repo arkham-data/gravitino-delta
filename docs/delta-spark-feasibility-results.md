@@ -275,3 +275,154 @@ packaging. Spark and Delta retain their unmodified Apache-licensed jars. Any
 production bridge/native dependency package still needs interface, version,
 license/NOTICE, and transitive dependency review. Local ignored build evidence
 must be archived externally if it needs to outlive this workspace.
+
+
+## Task 0.3: local authorization characterization
+
+Task 0.3 establishes a bounded local read candidate, not a passing full-support
+or deployed authorization gate. All implementation additions are test helpers,
+fixture resources, or Gradle test wiring. Core, API, server/client contracts,
+entity schemas, and native dependency jars are unchanged. Task 0.2's
+managed/provider/registration-recovery failures remain unresolved.
+
+### Policy ownership and native identity
+
+The initial stock acceptance run executed 3 JUnit tests, with 2 expected
+failures: same-resource access/mask/filter policies triggered
+`Each metadata object can have at most one policy`; inherited revoke selected a
+Ranger-owned mask and invoked `deletePolicy(3)` twice because SELECT_TABLE maps to
+READ and SELECT. The final authorization module executes 5 passing
+characterization tests. These preserve the two stock defects as negative controls
+and exercise a separate candidate through the real inherited `onRoleUpdated`
+grant/revoke path with mocked Admin transport. Rich Ranger-owned access, mask,
+and filter objects remain unchanged; grant/revoke retries create/delete only one
+owned policy. Duplicate owned access matches fail, while foreign catalog labels,
+mask type, missing resource keys, another catalog value, and excluded resources
+are ignored. Gravitino still cannot bind SELECT_TABLE to COLUMN.
+
+The candidate owns access policies labelled `gravitino-managed`,
+`gravitino-metalake-id:10`, and `gravitino-catalog-id:20`. It filters service, type,
+labels, exact resource keys/single values, excludes, and recursion. Its supported
+characterization is SELECT_TABLE allow on tables; it is not a packaged provider
+and does not implement rename/drop/owner lifecycle. No stable table identifier
+was found in existing callbacks, so no drop/recreate isolation guarantee follows.
+
+The original path-only `NamedDeltaCatalog` remains a negative control. Its native
+MERGE shape assertion is now unconditional. The separate `IdentityDeltaCatalog`
+copies the native `DeltaTableV2` with a synthetic, non-persisted `CatalogTable`:
+`TableIdentifier(table=orders, database=Some(sales), catalog=Some(delta_a))`, or
+`delta_b`, with the log-derived schema and original location. It never supplies a
+three-part `tableIdentifier` string. Native `LogicalRelation.catalogTable` retains
+the canonical identity, and analyzed native `MergeIntoCommand` has target delta_a
+and named source delta_b. The latter is identity evidence only, not MERGE access,
+mask, or filter enforcement. No session `sales` database is created.
+
+Stock Kyuubi 1.10.2 retains `AccessResource.catalog=Some(delta_a)` as a Scala
+property but sends only `{database=sales, table=orders, column=allowed}` as the
+Ranger resource map. Delta_a and delta_b maps are identical. The candidate instead
+uses one service `delta_local` with `catalog -> database -> table -> column`;
+access/mask requests include all four keys, and row-filter requests end at table.
+The local service definition includes existing READ/SELECT and other supported
+access types, while the reader policy allows only column `allowed` in delta_a.
+
+### Real Ranger engine and executed Spark results
+
+`LocalRangerPolicyClient` implements Ranger 2.5's supported
+`getServicePoliciesIfUpdated(long,long)` hook, selected through
+`ranger.plugin.spark.policy.source.impl`. The unmodified Kyuubi
+`SparkRangerAdminPlugin` evaluates those snapshots with the real Ranger engine.
+The test-only `CatalogAwareRangerExtension` uses Spark's public resolution-rule
+injection interface; it does not access Kyuubi `private[authz]` helpers. It reads
+Ranger's returned CUSTOM mask expression and row filter and parses them into
+Spark expressions. No mask/filter value is hardcoded in the rule.
+
+| Query/action as local `reader` | Measured result |
+| --- | --- |
+| `SELECT allowed FROM delta_a.sales.orders` | `[[MASKED]]`: source rows `visible` and `second` become one masked row via policy 2 and filter policy 3 (`id = 1`) |
+| `SELECT denied FROM delta_a.sales.orders` | Ranger denies `delta_a/sales/orders/denied` |
+| `SELECT * FROM delta_a.sales.orders` | Ranger denies the ungranted `id` column |
+| `SELECT allowed FROM delta_b.sales.orders` | Ranger denies `delta_b/sales/orders/allowed` despite delta_a's grant |
+| ``SELECT allowed FROM delta.`<actual delta_a location>` `` | Rejected for missing canonical identity on the true path-only native data relation |
+| Remove local access policy 1, refresh, issue fresh allowed-column SELECT | Active policy version becomes 2; fresh query is denied |
+
+The first empty-rule RED returned `[[visible], [second]]`. A later rewrite RED
+returned `[[visible]]`: Ranger's mask was correct, but reusing the scan's
+expression ID let Spark remove the mask projection during optimization. The
+candidate now allocates fresh alias IDs and remaps parent references; saved
+analyzed/optimized plans and executed rows show the actual mask survives.
+
+Native `DeltaLogFileIndex` scans reconstruct transaction-log metadata and lack
+canonical table identity. They must remain usable by native Delta. The bounded
+rule distinguishes these from `TahoeLogFileIndex` data scans; this is not a
+blanket JSON/Parquet exemption. Direct Delta data-path reads are explicitly denied.
+Metadata/log exposure and raw file APIs/arbitrary jobs remain deployment gates.
+
+Every candidate Ranger request records `user=reader`; none uses
+`metadata_service`. The existing client builder's `withSimpleAuth` fixture option
+is used for metadata calls, and UGI restoration is asserted after `doAs`.
+No broad Gravitino or Ranger reader grant is added. However, embedded Gravitino
+uses its default authorization-disabled configuration, so these tests do not
+prove server-enforced metadata permissions or cryptographic authentication.
+Production requires a scoped metadata credential and a separately authenticated
+end-user/session boundary. SQL-only versus arbitrary Spark jobs is still an open
+platform contract.
+
+The poll interval is configured as 600000 ms. Revocation here uses the public
+`refreshPoliciesAndTags()` call and asserts the active version before a fresh
+query. This measures local source refresh, not Ranger Admin persistence,
+cross-process polling latency, active-query interruption, cached/reused plans,
+checkpoint/stream restart, or instantaneous revocation.
+
+### Runtime/build convergence and remaining gates
+
+Spark/Delta remain the four opt-in pairs below. Java is 17.0.16 and Gradle 8.2.
+Scala library, compiler, and reflect converge to 2.12.21 for this fixture;
+Zinc's compiler bridge/interface is 1.6.1. Scala helpers target Java 8 bytecode on
+JDK 17 because Gradle 8.2 otherwise emitted invalid `-target:jvm-1.17`.
+Java/JUnit tests remain in `src/test/java`; explicit Scala compilation covers only
+two helpers. Default builds exclude both Java/Scala Delta fixtures and the local
+Ranger resources, and do not add Delta/Kyuubi-authz/Ranger dependencies.
+
+Kyuubi authz is 1.10.2, distinct from the existing Kyuubi Hive connector 1.11.0.
+The Spark fixture converges every Ranger artifact to 2.5.0; the separate mocked
+Admin characterization uses Gravitino's existing Ranger 2.4.0. This is not proof
+that a mixed 2.4/2.5 production classpath is safe. Spark's Hadoop client remains
+3.3.6 and AWS SDK 2.31.73. Setup failures identified and excluded Ranger's raw
+Hadoop 3.3.4 (FSBuilder linkage failure), Jersey 1 server/bundle (duplicate shaded
+ASM), and JAX-RS 1 `jsr311-api` (missing `Application.getProperties`). Jersey
+client/core 1.19.4 remain available for Ranger beside embedded Jersey 2.41.
+All exclusions/forced versions are scoped to opt-in Spark test classpaths.
+The full inventory also retains Hive's Hadoop/YARN 2.7.2 artifacts,
+Hadoop HDFS 3.3.6, and AWS v1 bundle 1.12.367 alongside core/logs 1.12.765.
+Those paths were not exercised by the local read engine; no packaged YARN/S3
+compatibility is claimed.
+
+| Spark | Delta | JUnit tests/failures/skips | Local refresh | Gradle exit |
+| --- | --- | --- | --- | --- |
+| 3.5.4 | 3.3.0 | 2 / 0 / 0 | 1 ms, version 2 | 0 |
+| 3.5.4 | 3.3.2 | 2 / 0 / 0 | 1 ms, version 2 | 0 |
+| 3.5.6 | 3.3.0 | 2 / 0 / 0 | 1 ms, version 2 | 0 |
+| 3.5.6 | 3.3.2 | 2 / 0 / 0 | 1 ms, version 2 | 0 |
+
+Each row runs `TestDeltaNamedCatalogGate` and `TestRangerDeltaLocalEngine` under
+the same frozen test source revision. Each has one executed JUnit test. The first
+is a passing characterization of still-failing native/full-support boundaries;
+the second passes the bounded local authorization assertions. No full-support
+pass is implied. The exact commands are saved in each pair's `.command` file;
+`matrix.sh` runs the pairs sequentially and archives XML before the next pair.
+Dependency reports verify 13 Spark artifacts at the selected patch, two Delta
+artifacts at the selected version, five Ranger artifacts at 2.5.0, and all three
+Scala artifacts at 2.12.21. `dependency-inventory.json` retains every relevant
+artifact and each compilation task's actual cache/execution status.
+
+
+Raw logs, JUnit XML, dependency reports, Scala compiler paths, policy snapshots,
+and the exact runner commands are under `build/task-0.3-evidence/`. Setup failures
+are saved separately from intended assertion REDs. No checkstyleTest task exists;
+Spotless and Java compilation with the repository's `-Werror` are the available
+source checks. Downstream exact interfaces, file lists, package boundaries, and
+unchanged full acceptance matrix remain in the design and implementation plan.
+Custom service-definition deployment/Admin lookup, authenticated metadata/query
+subjects, owner/rename/drop lifecycle, DML authorization, time travel, maintenance,
+streams, caches, backend outages, and S3 credentials are still unproved. Local
+read success cannot clear those gates.

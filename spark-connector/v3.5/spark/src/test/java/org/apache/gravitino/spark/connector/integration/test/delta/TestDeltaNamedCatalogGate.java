@@ -304,8 +304,8 @@ public class TestDeltaNamedCatalogGate extends BaseIT {
     LogicalPlan plan = result.queryExecution().analyzed();
     if (statement.startsWith("MERGE")) {
       LOG.info("MERGE ANALYZED {}", plan.treeString());
-      if (plan instanceof MergeIntoCommand) {
-        MergeIntoCommand merge = (MergeIntoCommand) plan;
+      {
+        MergeIntoCommand merge = Assertions.assertInstanceOf(MergeIntoCommand.class, plan);
         LOG.info(
             "MERGE SOURCE {} TARGET {}", merge.source().treeString(), merge.target().treeString());
         Assertions.assertTrue(hasAnonymousNativeRelation(merge.target()));

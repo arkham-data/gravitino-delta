@@ -70,7 +70,7 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
   @Override
   public void initialize(String name, CaseInsensitiveStringMap options) {
     catalogName = name;
-    client = GravitinoAdminClient.builder(options.get("uri")).build();
+    client = createMetadataClient(options.get("uri"));
     registry =
         client
             .loadMetalake(options.get("metalake"))
@@ -242,6 +242,16 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
   @Override
   public boolean dropNamespace(String[] namespace, boolean cascade) {
     throw new UnsupportedOperationException("Not in the experimental contract");
+  }
+
+  /**
+   * Creates the fixture metadata client separately from the query UGI.
+   *
+   * @param uri the embedded Gravitino URI
+   * @return the registration metadata client
+   */
+  protected GravitinoAdminClient createMetadataClient(String uri) {
+    return GravitinoAdminClient.builder(uri).build();
   }
 
   private Table loadRegistered(Identifier id) throws NoSuchTableException {

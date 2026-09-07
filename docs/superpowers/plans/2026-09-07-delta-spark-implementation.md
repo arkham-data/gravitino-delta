@@ -149,7 +149,7 @@ failures without removing the requirement.
 
 **Files:**
 
-- Create `authorizations/authorization-ranger-delta/build.gradle.kts` and its provider service registration resource, following the existing authorization module conventions.
+- Extend the test-only `authorizations/authorization-ranger-delta/build.gradle.kts` module with production provider packaging and its service registration resource after the feasibility and deployment gates pass.
 - Create `authorizations/authorization-ranger-delta/src/main/java/org/apache/gravitino/authorization/ranger/delta/DeltaRangerAuthorizationProvider.java` and `DeltaRangerAuthorizationPlugin.java` implementing the existing extension contracts.
 - Add `TestRangerPolicyCoexistence` in the new module's matching test package and `TestRangerDeltaColumnAccess` in the Spark Delta integration-test package.
 - Read existing Ranger client and translator implementations as reuse references. Do not modify core/API/server/client contracts or shared Ranger plugin behavior for this feature.
@@ -174,6 +174,47 @@ grant → query → Ranger revoke → denial as separate paths. No public privil
 extension, core authorization change, or broad end-user grant is permitted as a
 shortcut for column-only access.
 
+### Exact production follow-up from Task 0.3
+
+- Add `META-INF/services/org.apache.gravitino.connector.authorization.AuthorizationProvider`
+  naming the new provider. Implement `shortName()` as `ranger-delta` and
+  `newPlugin(String metalake, String catalogProvider, Map<String,String> config)`.
+  Distribution belongs under `authorizations/ranger-delta/libs`; no provider is
+  installed by the characterization module.
+- Implement four-level `AuthorizationMetadataObject` and
+  `AuthorizationSecurableObject` classes alongside the provider. Override
+  `translatePrivilege`, `translateMetadataObject`, `translateOwner`,
+  `generateAuthorizationSecurableObject`, `policyResourceDefinesRule`,
+  `createPolicyAddResources`, `wildcardSearchPolicies`, and `findManagedPolicy`.
+  Reuse inherited grant/revoke only after its translation matrix is covered.
+  The local candidate intentionally covers only SELECT_TABLE allow on tables.
+- Override `onMetadataUpdated`, `updatePolicyByMetadataObject`,
+  `renameMetadataObject`, and `removeMetadataObject`; do not inherit the
+  HadoopSQL implementation's three-level catalog-removing lifecycle code.
+  Apply the same ownership/type boundary to owner changes, rename, cleanup,
+  retries, and catalog removal. Add `TestRangerPolicyLifecycle` covering
+  duplicate ownership labels, null/malformed policy responses, denied grants,
+  every existing supported privilege, failures/retries, and drop/recreate.
+- Add `authorizations/ranger-gravitino-service/src/main/resources/ranger-servicedef-delta.json`
+  in Package 5 with the exact canonical hierarchy and service lookup implementation.
+  Its `GravitinoResourceLookup` uses existing authenticated Gravitino client
+  load/list interfaces, bounded pagination, errors on failed authentication/backends,
+  and direct Admin import/export/lookup tests. Review deployment of this service definition
+  before installing it; local `ServicePolicies` is not Admin persistence.
+- Pin the isolated production authz package deliberately. Gravitino's existing
+  Ranger provider uses 2.4.0; Kyuubi authz 1.10.2 is compiled against 2.5.0.
+  Task 0.3 tests these in separate module classpaths, not as a mixed production
+  dependency graph. Converge each final package and test shared-model boundaries
+  explicitly. In the Spark fixture, exclude Ranger's raw Hadoop 3.3.4 in favor
+  of Spark's Hadoop client 3.3.6, and exclude Jersey 1 server/bundle plus
+  `jsr311-api` while retaining Jersey client/core 1.19.4. These exclusions
+  resolve observed duplicate-class failures with embedded Jersey 2.41.
+  The final distribution must separately resolve/validate residual Hive/YARN
+  2.7.2 versus Hadoop client/HDFS 3.3.6, and AWS v1 bundle 1.12.367 versus
+  core/logs 1.12.765 before S3/YARN acceptance. Keep the existing S3 credential,
+  LogStore, executor, refresh, and failure matrix; local engine success does not
+  establish compatibility for these unexecuted dependency paths.
+
 ## Package 5: Ranger metadata discovery and Spark enforcement
 
 **Depends on:** Packages 1, 2, and 4.
@@ -184,6 +225,25 @@ shortcut for column-only access.
 - Add `GravitinoResourceLookup.java` in that package for Gravitino API traversal; keep Ranger service wiring separate from HTTP/client behavior.
 - Add `TestGravitinoResourceLookup` in that module and `TestDeltaRangerEnforcement` in the Spark Delta integration-test package.
 - Extend the existing Ranger integration environment and service packaging following the selected Ranger deployment version.
+- Add `DeltaRangerExtension.java`, `DeltaCanonicalResource.java`, and
+  `DeltaRangerReadRule.java` under
+  `spark-connector/v3.5/spark/src/main/java/org/apache/gravitino/spark/connector/delta/`.
+  Use the public `SparkSessionExtensions` rule hooks and native `CatalogTable`
+  descriptor from `GravitinoDeltaCatalogSpark35.loadTable(Identifier)`; preserve
+  named source/target identities and fail closed on missing identities.
+  The test helper is not a production implementation: replace its per-analysis
+  tags with reviewed query/subject/policy-version handling before cached/reused
+  plans can be accepted. Masks require fresh Catalyst expression IDs and explicit
+  parent-reference remapping so optimization cannot erase them.
+- Add a scoped metadata client factory inside the Spark Delta package using
+  existing client builder authentication. Production subject resolution requires
+  a platform-owned authenticated contract; local `UGI.doAs` and Kyuubi
+  `private[authz]` helpers are not a supported public authentication interface.
+  Test failed metadata credentials and missing/tampered query identity independently.
+- Preserve the distinction between `DeltaLogFileIndex` metadata reconstruction
+  and `TahoeLogFileIndex` data scans, and test internal log visibility, raw Delta
+  paths, raw file APIs, and arbitrary-job restrictions against the selected
+  deployment trust model before release.
 
 **Interfaces:** Ranger's resource lookup contract consumes a prefix and parent
 resource context; the adapter obtains names from Gravitino APIs. Its exact Ranger

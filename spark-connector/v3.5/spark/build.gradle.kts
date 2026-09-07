@@ -21,6 +21,7 @@ evaluationDependsOn(":spark-connector:spark-common")
 plugins {
   `maven-publish`
   id("java")
+  id("scala")
   id("idea")
   alias(libs.plugins.shadow)
 }
@@ -61,6 +62,13 @@ if (hasProperty("excludePackagesForSparkConnector")) {
 dependencies {
   if (deltaTestVersion != null) {
     testImplementation("io.delta:delta-spark_$scalaVersion:$deltaTestVersion")
+    testImplementation("org.apache.kyuubi:kyuubi-spark-authz_$scalaVersion:${libs.versions.kyuubi4authz.get()}") { exclude("org.apache.hadoop") }
+    testImplementation("org.apache.ranger:ranger-plugins-common:2.5.0") { exclude("org.apache.hadoop") }
+    testImplementation("org.apache.ranger:ranger-plugins-audit:2.5.0") { exclude("org.apache.hadoop") }
+    testImplementation("org.apache.ranger:ranger-plugins-cred:2.5.0") { exclude("org.apache.hadoop") }
+    testImplementation("org.apache.ranger:ranger-intg:2.5.0") { isTransitive = false }
+    testImplementation("org.scala-lang:scala-library:2.12.21")
+    testImplementation("com.sun.jersey:jersey-client:1.19.4")
   }
 
   implementation(project(":spark-connector:spark-3.4"))
@@ -200,7 +208,20 @@ if (deltaTestSparkVersion != null) {
   configurations
     .matching { it.name == "testCompileClasspath" || it.name == "testRuntimeClasspath" }
     .configureEach {
+      // Jersey 1 server/bundle embed an old copy of Jersey 2's shaded ASM namespace.
+      // Keep Ranger's Jersey 1 client/core while the embedded server uses Jersey 2.41.
+      exclude(group = "com.sun.jersey", module = "jersey-bundle")
+      exclude(group = "com.sun.jersey", module = "jersey-server")
+      exclude(group = "javax.ws.rs", module = "jsr311-api")
       resolutionStrategy.eachDependency {
+        if (requested.group == "org.apache.ranger") {
+          useVersion("2.5.0")
+          because("Kyuubi authorization 1.10.2 is built against Ranger 2.5.0")
+        }
+        if (requested.group == "org.scala-lang") {
+          useVersion("2.12.21")
+          because("The opt-in Scala test helper compiles with one converged Scala toolchain")
+        }
         if (requested.group == "org.apache.spark") {
           useVersion(deltaTestSparkVersion)
           because("The Delta experiment must run one Spark patch version")
@@ -214,6 +235,8 @@ if (deltaTestSparkVersion != null) {
 if (deltaTestSparkVersion == null) {
   sourceSets.test {
     java.exclude("**/integration/test/delta/**")
+    scala.exclude("**/integration/test/delta/**")
+    resources.exclude("ranger-spark-security.xml", "ranger-delta-local-policies.json")
   }
 }
 
@@ -271,4 +294,13 @@ tasks.clean {
 
 tasks.named<Jar>("sourcesJar") {
   duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+// Gradle 8.2 otherwise emits the unsupported Scala spelling -target:jvm-1.17.
+// Helpers use Java 8 bytecode (as Spark/Delta do), while compiling/running on JDK 17.
+tasks.withType<ScalaCompile>().configureEach {
+  scalaCompileOptions.additionalParameters = listOf("-target:jvm-1.8")
+  doFirst {
+    logger.lifecycle("DELTA SCALA compilerClasspath={} target=jvm-1.8 java={}", scalaClasspath.files, System.getProperty("java.version"))
+  }
 }
