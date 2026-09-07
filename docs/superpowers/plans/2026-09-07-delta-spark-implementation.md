@@ -201,12 +201,16 @@ shortcut for column-only access.
   load/list interfaces, bounded pagination, errors on failed authentication/backends,
   and direct Admin import/export/lookup tests. Review deployment of this service definition
   before installing it; local `ServicePolicies` is not Admin persistence.
-- Pin the isolated production authz package deliberately. Gravitino's existing
-  Ranger provider uses 2.4.0; Kyuubi authz 1.10.2 is compiled against 2.5.0.
-  Task 0.3 tests these in separate module classpaths, not as a mixed production
-  dependency graph. Converge each final package and test shared-model boundaries
-  explicitly. In the Spark fixture, exclude Ranger's raw Hadoop 3.3.4 in favor
-  of Spark's Hadoop client 3.3.6, and exclude Jersey 1 server/bundle plus
+- Pin the isolated production authz package to the required Ranger 2.8.0 target.
+  Gravitino's existing Ranger provider uses 2.4.0, and Kyuubi authz 1.10.2 was
+  compiled against 2.5.0; those Task 0.3 results are historical only. Task 0.4
+  runs both bounded fixtures on 2.8.0 and converges every Ranger module in each
+  relevant test classpath. Ranger 2.8's `ranger-plugins-audit` is a POM-only
+  aggregator and executable audit APIs live in `ranger-audit-core`; select and
+  validate the deployed audit destinations separately. Test shared-model and
+  packaging boundaries explicitly. In the Spark fixture, exclude Ranger's raw
+  Hadoop 3.3.4 in favor of Spark's Hadoop client 3.3.6, and exclude Jersey 1
+  server/bundle plus
   `jsr311-api` while retaining Jersey client/core 1.19.4. These exclusions
   resolve observed duplicate-class failures with embedded Jersey 2.41.
   The final distribution must separately resolve/validate residual Hive/YARN

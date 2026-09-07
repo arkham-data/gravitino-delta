@@ -33,6 +33,13 @@ import org.apache.gravitino.rel.types.Types;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.kyuubi.plugin.spark.authz.ObjectType$;
 import org.apache.kyuubi.plugin.spark.authz.ranger.AccessResource;
+import org.apache.ranger.RangerClient;
+import org.apache.ranger.audit.provider.AuditProviderFactory;
+import org.apache.ranger.authorization.hadoop.utils.RangerCredentialProvider;
+import org.apache.ranger.authz.model.RangerAuthzRequest;
+import org.apache.ranger.plugin.classloader.RangerPluginClassLoader;
+import org.apache.ranger.plugin.service.RangerBasePlugin;
+import org.apache.ranger.ugsyncutil.util.UgsyncCommonConstants;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -55,6 +62,13 @@ class TestRangerDeltaLocalEngine extends BaseIT {
 
   @Test
   void nativeIdentityAndRangerEnforcement() throws Exception {
+    assertRangerArtifact(RangerClient.class, "ranger-intg");
+    assertRangerArtifact(AuditProviderFactory.class, "ranger-audit-core");
+    assertRangerArtifact(RangerCredentialProvider.class, "ranger-plugins-cred");
+    assertRangerArtifact(RangerAuthzRequest.class, "ranger-authz-api");
+    assertRangerArtifact(RangerPluginClassLoader.class, "ranger-plugin-classloader");
+    assertRangerArtifact(RangerBasePlugin.class, "ranger-plugins-common");
+    assertRangerArtifact(UgsyncCommonConstants.class, "ugsync-util");
     GravitinoMetalake metalake = client.createMetalake("ranger_delta_gate", "", Map.of());
     SparkSession.Builder builder =
         SparkSession.builder()
@@ -199,28 +213,38 @@ class TestRangerDeltaLocalEngine extends BaseIT {
                         List.of(
                             "SELECT denied FROM delta_a.sales.orders",
                             "SELECT * FROM delta_a.sales.orders",
-                            "SELECT allowed FROM delta_b.sales.orders",
-                            "SELECT allowed FROM delta.`"
-                                + directory.resolve("delta_a/sales/orders")
-                                + "`")) {
-                      Exception denied =
-                          Assertions.assertThrows(
-                              Exception.class, () -> spark.sql(query).collectAsList());
-                      LOG.info("DENIED SQL={} reason={}", query, denied.toString());
-                      Assertions.assertTrue(
-                          denied.toString().contains("Ranger denied")
-                              || denied.toString().contains("Missing canonical"));
-                    }
+                            "SELECT allowed FROM delta_b.sales.orders"))
+                      assertDenied(query, "Ranger denied");
+                    assertDenied(
+                        "SELECT allowed FROM delta.`"
+                            + directory.resolve("delta_a/sales/orders")
+                            + "`",
+                        "Missing canonical Delta identity");
                     LocalRangerPolicyClient.revokeColumnPolicy();
                     long start = System.nanoTime();
                     Assertions.assertEquals(2L, LocalRangerEngine.refresh());
                     LOG.info(
                         "LOCAL REFRESH version=2 elapsedMs={}",
                         (System.nanoTime() - start) / 1000000);
-                    Assertions.assertThrows(
-                        Exception.class,
-                        () ->
-                            spark.sql("SELECT allowed FROM delta_a.sales.orders").collectAsList());
+                    int requestCount = LocalRangerEngine.requests().size();
+                    assertDenied(
+                        "SELECT allowed FROM delta_a.sales.orders",
+                        "Ranger denied reader delta_a/sales/orders/allowed");
+                    List<String> refreshedRequests =
+                        LocalRangerEngine.requests()
+                            .subList(requestCount, LocalRangerEngine.requests().size());
+                    Assertions.assertTrue(
+                        refreshedRequests.stream()
+                            .anyMatch(
+                                request ->
+                                    request.startsWith("access user=reader")
+                                        && request.contains("catalog=delta_a")
+                                        && request.contains("database=sales")
+                                        && request.contains("table=orders")
+                                        && request.contains("column=allowed")
+                                        && request.contains("policy=-1")
+                                        && request.endsWith("allowed=false")),
+                        () -> "Fresh canonical request was not denied: " + refreshedRequests);
                     return null;
                   });
       Assertions.assertEquals(
@@ -258,5 +282,23 @@ class TestRangerDeltaLocalEngine extends BaseIT {
       if (scan != null) return scan;
     }
     return null;
+  }
+
+  private void assertDenied(String query, String expectedReason) {
+    Exception denied =
+        Assertions.assertThrows(Exception.class, () -> spark.sql(query).collectAsList());
+    LOG.info("DENIED SQL={} reason={}", query, denied.toString());
+    Assertions.assertTrue(
+        denied.toString().contains(expectedReason),
+        () -> "Expected denial containing '" + expectedReason + "', but received " + denied);
+  }
+
+  private static void assertRangerArtifact(Class<?> type, String artifact) {
+    Assertions.assertNotNull(type.getProtectionDomain().getCodeSource());
+    String location = type.getProtectionDomain().getCodeSource().getLocation().toExternalForm();
+    LOG.info("RANGER RUNTIME class={} location={}", type.getName(), location);
+    Assertions.assertTrue(
+        location.endsWith("/" + artifact + "-2.8.0.jar"),
+        () -> type.getName() + " must load from Ranger 2.8.0, but loaded " + location);
   }
 }

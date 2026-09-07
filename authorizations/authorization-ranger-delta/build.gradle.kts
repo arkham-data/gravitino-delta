@@ -23,13 +23,16 @@ dependencies {
   testImplementation(project(":core"))
   testImplementation(project(":authorizations:authorization-ranger"))
   testImplementation(project(":authorizations:authorization-common"))
-  testImplementation(libs.ranger.intg) { isTransitive = false }
-  testImplementation("org.apache.ranger:ranger-plugins-common:2.4.0") { isTransitive = false }
+  testImplementation("org.apache.ranger:ranger-intg:2.8.0") { isTransitive = false }
+  testImplementation("org.apache.ranger:ranger-plugins-common:2.8.0") { isTransitive = false }
   testImplementation("org.codehaus.jackson:jackson-mapper-asl:1.9.13")
+  testImplementation(libs.jackson.annotations)
   testImplementation(libs.javax.jaxb.api)
   testImplementation(libs.guava)
   testImplementation(libs.junit.jupiter.api)
   testImplementation(libs.mockito.core)
   testImplementation(libs.mockito.inline)
+  testImplementation(libs.slf4j.api)
   testRuntimeOnly(libs.junit.jupiter.engine)
+  testRuntimeOnly(libs.slf4j.simple)
 }

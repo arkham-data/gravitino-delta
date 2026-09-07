@@ -327,7 +327,7 @@ access types, while the reader policy allows only column `allowed` in delta_a.
 
 ### Real Ranger engine and executed Spark results
 
-`LocalRangerPolicyClient` implements Ranger 2.5's supported
+The historical Task 0.3 fixture used Ranger 2.5's supported
 `getServicePoliciesIfUpdated(long,long)` hook, selected through
 `ranger.plugin.spark.policy.source.impl`. The unmodified Kyuubi
 `SparkRangerAdminPlugin` evaluates those snapshots with the real Ranger engine.
@@ -384,8 +384,9 @@ two helpers. Default builds exclude both Java/Scala Delta fixtures and the local
 Ranger resources, and do not add Delta/Kyuubi-authz/Ranger dependencies.
 
 Kyuubi authz is 1.10.2, distinct from the existing Kyuubi Hive connector 1.11.0.
-The Spark fixture converges every Ranger artifact to 2.5.0; the separate mocked
-Admin characterization uses Gravitino's existing Ranger 2.4.0. This is not proof
+The historical Task 0.3 Spark fixture converged every Ranger artifact to 2.5.0;
+the separate mocked Admin characterization used Gravitino's existing Ranger
+2.4.0. This is not proof
 that a mixed 2.4/2.5 production classpath is safe. Spark's Hadoop client remains
 3.3.6 and AWS SDK 2.31.73. Setup failures identified and excluded Ranger's raw
 Hadoop 3.3.4 (FSBuilder linkage failure), Jersey 1 server/bundle (duplicate shaded
@@ -426,3 +427,59 @@ Custom service-definition deployment/Admin lookup, authenticated metadata/query
 subjects, owner/rename/drop lifecycle, DML authorization, time travel, maintenance,
 streams, caches, backend outages, and S3 credentials are still unproved. Local
 read success cannot clear those gates.
+
+## Task 0.4: required Ranger 2.8.0 validation
+
+Task 0.4 preserves the Task 0.3 source behavior and historical 2.4.0/2.5.0
+evidence, then reruns both bounded fixtures against the required Ranger 2.8.0
+release. The changes remain test-only: the authorization feasibility module and
+opt-in Spark test classpaths pin 2.8.0 without changing the shared Ranger version
+catalog or any production/core/API/REST/client/native code.
+
+Executable class-source assertions run before policy behavior. The Admin fixture
+proves `RangerClient` and `RangerPolicy` load from 2.8.0 jars. The Spark fixture
+proves the loaded integration client, audit core, credential, authz API, plugin
+classloader, common plugin, and ugsync utility classes all come from 2.8.0 jars.
+Dependency reports for every matrix row select 2.8.0 for every
+`org.apache.ranger` node, including Kyuubi's requested `ranger-plugins-audit`
+aggregator. In 2.8.0 that aggregator is POM-only; executable audit classes moved
+to `ranger-audit-core`, so the fixture pins and verifies that module directly.
+No audit destination/delivery backend is exercised.
+
+The runtime-version tests first failed on the old classpaths: the Admin suite
+failed during initialization on `ranger-intg-2.4.0.jar`, and the Spark suite ran
+one test that failed on `ranger-intg-2.5.0.jar`. Setup-only Spotless and compiler
+failures are archived separately and are not counted as RED. Ranger 2.8.0's
+model annotations also required an explicit Jackson annotations dependency in
+the non-transitive Admin fixture.
+
+The final Admin lifecycle suite executes 5 tests with zero failures, errors, or
+skips. It retains the stock negative controls and candidate grant/revoke,
+ownership, coexistence, retry, and duplicate-match assertions. The real Spark
+engine keeps the Task 0.3 access/mask/filter/catalog-isolation/direct-path checks.
+After policy version 2 refresh, it now requires the exact
+`Ranger denied reader delta_a/sales/orders/allowed` reason and a newly captured
+canonical access request containing delta_a, sales, orders, allowed, policy -1,
+and `allowed=false`.
+
+| Spark | Delta | JUnit tests/failures/skips | Ranger local refresh | Gradle exit |
+| --- | --- | --- | --- | --- |
+| 3.5.4 | 3.3.0 | 2 / 0 / 0 | 2 ms, version 2 | 0 |
+| 3.5.4 | 3.3.2 | 2 / 0 / 0 | 1 ms, version 2 | 0 |
+| 3.5.6 | 3.3.0 | 2 / 0 / 0 | 1 ms, version 2 | 0 |
+| 3.5.6 | 3.3.2 | 2 / 0 / 0 | 3 ms, version 2 | 0 |
+
+All rows used Java 17.0.16, Gradle 8.2, Scala 2.12.21, Hadoop client
+3.3.6, AWS SDK v2 2.31.73, Kyuubi authz 1.10.2, and the existing Kyuubi Hive
+connector 1.11.0. The default Spark baseline executes one test with zero
+failures/errors/skips, and its dependency report contains no Delta,
+Kyuubi-authz, or Ranger addition. Raw commands, exits, dependency reports,
+runtime logs, and XML are under `build/task-0.4-evidence/`.
+
+This establishes local Ranger 2.8.0 model/API compatibility and real in-process
+policy-engine behavior for the bounded read candidate. It does not establish a
+deployed Ranger Admin 2.8.0, service-definition installation or persistence,
+audit delivery, authenticated subjects, production S3/YARN packaging, Admin
+polling latency, DML/maintenance/history/stream enforcement, cached-plan safety,
+metadata confidentiality, or the unresolved registration and managed-table
+lifecycle gates. Full Delta support remains failed.

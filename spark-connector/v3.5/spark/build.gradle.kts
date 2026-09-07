@@ -63,10 +63,10 @@ dependencies {
   if (deltaTestVersion != null) {
     testImplementation("io.delta:delta-spark_$scalaVersion:$deltaTestVersion")
     testImplementation("org.apache.kyuubi:kyuubi-spark-authz_$scalaVersion:${libs.versions.kyuubi4authz.get()}") { exclude("org.apache.hadoop") }
-    testImplementation("org.apache.ranger:ranger-plugins-common:2.5.0") { exclude("org.apache.hadoop") }
-    testImplementation("org.apache.ranger:ranger-plugins-audit:2.5.0") { exclude("org.apache.hadoop") }
-    testImplementation("org.apache.ranger:ranger-plugins-cred:2.5.0") { exclude("org.apache.hadoop") }
-    testImplementation("org.apache.ranger:ranger-intg:2.5.0") { isTransitive = false }
+    testImplementation("org.apache.ranger:ranger-plugins-common:2.8.0") { exclude("org.apache.hadoop") }
+    testImplementation("org.apache.ranger:ranger-audit-core:2.8.0") { exclude("org.apache.hadoop") }
+    testImplementation("org.apache.ranger:ranger-plugins-cred:2.8.0") { exclude("org.apache.hadoop") }
+    testImplementation("org.apache.ranger:ranger-intg:2.8.0") { isTransitive = false }
     testImplementation("org.scala-lang:scala-library:2.12.21")
     testImplementation("com.sun.jersey:jersey-client:1.19.4")
   }
@@ -215,8 +215,8 @@ if (deltaTestSparkVersion != null) {
       exclude(group = "javax.ws.rs", module = "jsr311-api")
       resolutionStrategy.eachDependency {
         if (requested.group == "org.apache.ranger") {
-          useVersion("2.5.0")
-          because("Kyuubi authorization 1.10.2 is built against Ranger 2.5.0")
+          useVersion("2.8.0")
+          because("The required Delta authorization fixture must execute against Ranger 2.8.0")
         }
         if (requested.group == "org.scala-lang") {
           useVersion("2.12.21")

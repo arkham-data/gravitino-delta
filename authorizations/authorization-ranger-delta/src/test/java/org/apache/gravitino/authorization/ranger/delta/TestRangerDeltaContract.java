@@ -33,14 +33,26 @@ import org.apache.gravitino.authorization.ranger.RangerAuthorizationHadoopSQLPlu
 import org.apache.gravitino.authorization.ranger.RangerClientExtension;
 import org.apache.gravitino.authorization.ranger.RangerHadoopSQLMetadataObject;
 import org.apache.gravitino.exceptions.AuthorizationPluginException;
+import org.apache.ranger.RangerClient;
 import org.apache.ranger.plugin.model.RangerPolicy;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedConstruction;
 import org.mockito.Mockito;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Characterizes stock policy selection separately from the test-only candidate. */
 class TestRangerDeltaContract {
+  private static final Logger LOG = LoggerFactory.getLogger(TestRangerDeltaContract.class);
+
+  @BeforeAll
+  static void requireRanger280Runtime() {
+    assertRangerArtifact(RangerClient.class, "ranger-intg");
+    assertRangerArtifact(RangerPolicy.class, "ranger-plugins-common");
+  }
+
   @Test
   void columnBindingRemainsUnsupported() {
     Assertions.assertFalse(Privileges.SelectTable.allow().canBindTo(MetadataObject.Type.COLUMN));
@@ -239,5 +251,14 @@ class TestRangerDeltaContract {
         "10",
         "authorization.catalog.id",
         "20");
+  }
+
+  private static void assertRangerArtifact(Class<?> type, String artifact) {
+    Assertions.assertNotNull(type.getProtectionDomain().getCodeSource());
+    String location = type.getProtectionDomain().getCodeSource().getLocation().toExternalForm();
+    LOG.info("RANGER RUNTIME class={} location={}", type.getName(), location);
+    Assertions.assertTrue(
+        location.endsWith("/" + artifact + "-2.8.0.jar"),
+        () -> type.getName() + " must load from Ranger 2.8.0, but loaded " + location);
   }
 }

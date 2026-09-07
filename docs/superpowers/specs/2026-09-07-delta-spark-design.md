@@ -177,7 +177,7 @@ an explicit Ranger administrator contract.
 
 `CatalogAwareRangerExtension` is a bounded test read rule installed through
 `SparkSessionExtensions.injectResolutionRule`. It obtains decisions from the real
-Kyuubi `SparkRangerAdminPlugin` (1.10.2) / Ranger (2.5.0) engine, and parses the
+Kyuubi `SparkRangerAdminPlugin` (1.10.2) / Ranger engine, and parses the
 returned mask/filter expressions into Spark plans. It distinguishes native
 `TahoeLogFileIndex` data scans from `DeltaLogFileIndex` transaction-log metadata
 reconstruction. That metadata allowance is necessary for native execution and is
@@ -205,6 +205,14 @@ local snapshot refresh only. The production provider is not registered or
 packaged by this experiment. Task 0.2's managed lifecycle/provider/recovery
 failures remain full-support blockers; see the results document for measured
 Task 0.3 outcomes and dependency convergence.
+
+Ranger 2.8.0 is the required implementation and packaging target. Task 0.4
+executes this same bounded candidate on 2.8.0 across all four Spark/Delta pairs,
+with loaded-jar assertions and dependency convergence for every Ranger module.
+The earlier Ranger 2.5.0 Spark and Ranger 2.4.0 mocked Admin runs remain
+historical characterization only. Ranger 2.8 splits executable audit code into
+`ranger-audit-core`; production packaging must select and validate any actual
+audit destination separately.
 
 ## S3 and migration
 
