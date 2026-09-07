@@ -32,8 +32,18 @@ repositories {
 val glueHiveJarsDir: String? =
   project(":spark-connector:spark-common").extra["glueHiveJarsDir"] as String?
 
-val scalaVersion: String = project.properties["scalaVersion"] as? String ?: extra["defaultScalaVersion"].toString()
-val sparkVersion: String = libs.versions.spark35.get()
+val scalaVersion: String =
+  project.properties["scalaVersion"] as? String ?: extra["defaultScalaVersion"].toString()
+val deltaTestSparkVersion = providers.gradleProperty("deltaTestSparkVersion").orNull
+val deltaTestVersion = providers.gradleProperty("deltaTestVersion").orNull
+require((deltaTestSparkVersion == null) == (deltaTestVersion == null)) {
+  "Specify both deltaTestSparkVersion and deltaTestVersion"
+}
+if (deltaTestSparkVersion != null) {
+  require(deltaTestSparkVersion in setOf("3.5.4", "3.5.6"))
+  require(deltaTestVersion in setOf("3.3.0", "3.3.2"))
+}
+val sparkVersion: String = deltaTestSparkVersion ?: libs.versions.spark35.get()
 val sparkMajorVersion: String = sparkVersion.substringBeforeLast(".")
 val icebergVersion: String = libs.versions.iceberg4spark35.get()
 val paimonVersion: String = libs.versions.paimon.get()
@@ -49,6 +59,10 @@ if (hasProperty("excludePackagesForSparkConnector")) {
 }
 
 dependencies {
+  if (deltaTestVersion != null) {
+    testImplementation("io.delta:delta-spark_$scalaVersion:$deltaTestVersion")
+  }
+
   implementation(project(":spark-connector:spark-3.4"))
   implementation(project(":spark-connector:spark-common"))
   compileOnly("org.apache.kyuubi:kyuubi-spark-connector-hive_$scalaVersion:$kyuubiVersion")
@@ -182,7 +196,27 @@ dependencies {
   testRuntimeOnly(libs.junit.jupiter.engine)
 }
 
+if (deltaTestSparkVersion != null) {
+  configurations
+    .matching { it.name == "testCompileClasspath" || it.name == "testRuntimeClasspath" }
+    .configureEach {
+      resolutionStrategy.eachDependency {
+        if (requested.group == "org.apache.spark") {
+          useVersion(deltaTestSparkVersion)
+          because("The Delta experiment must run one Spark patch version")
+        }
+      }
+    }
+}
+
 tasks.test {
+  if (deltaTestSparkVersion == null) {
+    exclude("**/connector/delta/TestDeltaNativeContract.class")
+  } else {
+    systemProperty("gravitino.delta.test.sparkVersion", deltaTestSparkVersion)
+    systemProperty("gravitino.delta.test.deltaVersion", requireNotNull(deltaTestVersion))
+  }
+
   val skipITs = project.hasProperty("skipITs")
   val enableSparkSQLITs = project.hasProperty("enableSparkSQLITs")
   if (!enableSparkSQLITs) {

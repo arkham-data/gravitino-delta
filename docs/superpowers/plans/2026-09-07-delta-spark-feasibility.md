@@ -106,12 +106,12 @@ public class TestDeltaNativeContract {
                 + "WHEN NOT MATCHED THEN INSERT *")
         .collectAsList();
     Assertions.assertEquals(
-        55L, spark.sql("SELECT sum(amount) FROM native_delta.orders").head().getLong(0));
+        65L, spark.sql("SELECT sum(amount) FROM native_delta.orders").head().getLong(0));
     spark.sql("UPDATE native_delta.orders SET amount = amount + 1 WHERE id = 1")
         .collectAsList();
     spark.sql("DELETE FROM native_delta.orders WHERE id = 2").collectAsList();
     Assertions.assertEquals(
-        36L, spark.sql("SELECT sum(amount) FROM native_delta.orders").head().getLong(0));
+        46L, spark.sql("SELECT sum(amount) FROM native_delta.orders").head().getLong(0));
     spark.sql("CREATE TABLE native_delta.copied USING delta AS SELECT * FROM native_delta.orders")
         .collectAsList();
     Assertions.assertEquals(2L, spark.table("native_delta.copied").count());
