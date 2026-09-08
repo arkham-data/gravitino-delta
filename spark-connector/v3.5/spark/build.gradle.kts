@@ -37,12 +37,28 @@ val scalaVersion: String =
   project.properties["scalaVersion"] as? String ?: extra["defaultScalaVersion"].toString()
 val deltaTestSparkVersion = providers.gradleProperty("deltaTestSparkVersion").orNull
 val deltaTestVersion = providers.gradleProperty("deltaTestVersion").orNull
+val deltaS3Enabled = providers.gradleProperty("deltaS3Enabled").orNull == "true"
+val deltaS3Endpoint = providers.gradleProperty("deltaS3Endpoint").orNull
+val deltaS3Bucket = providers.gradleProperty("deltaS3Bucket").orNull
+val deltaS3CredentialsFile = providers.gradleProperty("deltaS3CredentialsFile").orNull
+val skipDockerTests = providers.gradleProperty("skipDockerTests").getOrElse("true")
 require((deltaTestSparkVersion == null) == (deltaTestVersion == null)) {
   "Specify both deltaTestSparkVersion and deltaTestVersion"
 }
 if (deltaTestSparkVersion != null) {
   require(deltaTestSparkVersion in setOf("3.5.4", "3.5.6"))
   require(deltaTestVersion in setOf("3.3.0", "3.3.2"))
+}
+if (deltaS3Enabled) {
+  require(deltaTestSparkVersion != null) {
+    "deltaS3Enabled requires deltaTestSparkVersion and deltaTestVersion"
+  }
+  require(skipDockerTests == "false") { "deltaS3Enabled requires -PskipDockerTests=false" }
+  require(!deltaS3Endpoint.isNullOrBlank()) { "deltaS3Enabled requires deltaS3Endpoint" }
+  require(!deltaS3Bucket.isNullOrBlank()) { "deltaS3Enabled requires deltaS3Bucket" }
+  require(!deltaS3CredentialsFile.isNullOrBlank()) {
+    "deltaS3Enabled requires deltaS3CredentialsFile"
+  }
 }
 val sparkVersion: String = deltaTestSparkVersion ?: libs.versions.spark35.get()
 val sparkMajorVersion: String = sparkVersion.substringBeforeLast(".")
@@ -248,6 +264,18 @@ tasks.test {
     dependsOn(":catalogs:catalog-lakehouse-generic:jar")
     systemProperty("gravitino.delta.test.sparkVersion", deltaTestSparkVersion)
     systemProperty("gravitino.delta.test.deltaVersion", requireNotNull(deltaTestVersion))
+  }
+  if (deltaS3Enabled) {
+    // This contract uses an explicitly supplied localhost endpoint and does not require the
+    // macOS container-IP bridge checked by the root build's general Docker-test gate.
+    extensions.extraProperties["gravitinoExternalTestEndpoints"] = true
+    systemProperty("gravitino.delta.test.s3.enabled", "true")
+    systemProperty("gravitino.delta.test.s3.endpoint", requireNotNull(deltaS3Endpoint))
+    systemProperty("gravitino.delta.test.s3.bucket", requireNotNull(deltaS3Bucket))
+    systemProperty(
+      "gravitino.delta.test.s3.credentialsFile",
+      requireNotNull(deltaS3CredentialsFile)
+    )
   }
 
   val skipITs = project.hasProperty("skipITs")

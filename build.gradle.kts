@@ -280,10 +280,13 @@ allprojects {
       }
 
       val dockerTest = project.rootProject.extra["dockerTest"] as? Boolean ?: false
+      val externalTestEndpoints =
+        param.extensions.extraProperties.has("gravitinoExternalTestEndpoints") &&
+          param.extensions.extraProperties["gravitinoExternalTestEndpoints"] == true
       param.environment("dockerTest", dockerTest.toString())
       val dorisMultiVersion = project.hasProperty("dorisMultiVersionTest")
       param.useJUnitPlatform {
-        if (!dockerTest) {
+        if (!dockerTest && !externalTestEndpoints) {
           excludeTags("gravitino-docker-test")
         }
         if (!dorisMultiVersion) {

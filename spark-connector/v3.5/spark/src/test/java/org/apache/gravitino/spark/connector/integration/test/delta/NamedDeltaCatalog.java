@@ -18,7 +18,6 @@
  */
 package org.apache.gravitino.spark.connector.integration.test.delta;
 
-import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,6 +28,7 @@ import org.apache.gravitino.Namespace;
 import org.apache.gravitino.client.GravitinoAdminClient;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.types.Types;
+import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
@@ -267,7 +267,7 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
   private String location(Identifier id) {
     if (tableExists(id))
       return registry.asTableCatalog().loadTable(gravitinoId(id)).properties().get("location");
-    return Paths.get(
+    return new Path(
             registry.asSchemas().loadSchema(id.namespace()[0]).properties().get("location"),
             id.name())
         .toString();
