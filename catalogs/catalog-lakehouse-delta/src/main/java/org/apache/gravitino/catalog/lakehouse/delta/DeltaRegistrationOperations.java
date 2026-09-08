@@ -127,8 +127,12 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
         || partitions != null && partitions.length != 0
         || distribution != null && !distribution.equals(Distributions.NONE)
         || sortOrders != null && sortOrders.length != 0
-        || indexes != null && indexes.length != 0) throw invalidCommand();
-    if (properties == null) throw invalidCommand();
+        || indexes != null && indexes.length != 0) {
+      throw invalidCommand();
+    }
+    if (properties == null) {
+      throw invalidCommand();
+    }
     Map<String, String> request = new HashMap<>(properties);
     String injected = request.remove(StringIdentifier.ID_KEY);
     DeltaTablePropertiesMetadata.validateRequestProperties(request);
@@ -140,9 +144,12 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
     }
     DeltaRegistrationCommand command =
         DeltaRegistrationCommand.decode(request.get(DeltaRegistrationCommand.COMMAND_PROPERTY));
-    if (command.operation() != Operation.RESERVE && command.operation() != Operation.ADOPT)
+    if (command.operation() != Operation.RESERVE && command.operation() != Operation.ADOPT) {
       throw invalidCommand();
-    if (command.operation() == Operation.ADOPT && !privileged) throw denied();
+    }
+    if (command.operation() == Operation.ADOPT && !privileged) {
+      throw denied();
+    }
     try {
       return pendingReplay(ident, registrations.load(ident), command, actor);
     } catch (NoSuchEntityException absent) {
@@ -154,13 +161,14 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
             ? config.locations().admittedExistingLocation(command.location().orElseThrow())
             : config.locations().newTableLocation(ident, id);
     // Store the canonical admitted source in the opening command for deterministic replay.
-    if (command.operation() == Operation.ADOPT)
+    if (command.operation() == Operation.ADOPT) {
       command =
           DeltaRegistrationCommand.adopt(
               command.token().orElseThrow(),
               location,
               command.runId().orElseThrow(),
               command.reference().orElseThrow());
+    }
     DeltaNativeObservation observed = null;
     if (command.operation() == Operation.ADOPT) {
       try {
@@ -172,7 +180,9 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
     DeltaRegistrationState initial =
         DeltaRegistrationState.initial(
             ident, id, command, actor, location, newAudit(actor), observed);
-    if (observed != null) initial = projected(initial, initial.data(), observed, actor);
+    if (observed != null) {
+      initial = projected(initial, initial.data(), observed, actor);
+    }
     try {
       return table(registrations.insert(initial.entity()), false);
     } catch (EntityAlreadyExistsException concurrent) {
@@ -186,25 +196,37 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
     String actor = authorization.currentActor();
     boolean privileged = authorization.isPrivileged(ident, actor);
     boolean recovery = privileged || config.recoveryPrincipals().contains(actor);
-    if (changes == null || changes.length != 1 || !(changes[0] instanceof TableChange.SetProperty))
+    if (changes == null
+        || changes.length != 1
+        || !(changes[0] instanceof TableChange.SetProperty)) {
       throw invalidCommand();
+    }
     TableChange.SetProperty property = (TableChange.SetProperty) changes[0];
-    if (!DeltaRegistrationCommand.COMMAND_PROPERTY.equals(property.getProperty()))
+    if (!DeltaRegistrationCommand.COMMAND_PROPERTY.equals(property.getProperty())) {
       throw invalidCommand();
+    }
     DeltaRegistrationCommand command = DeltaRegistrationCommand.decode(property.getValue());
     DeltaRegistrationState current = load(ident);
     if (command.operation() == Operation.ADMINISTRATIVE_STATUS) {
-      if (!privileged) throw denied();
+      if (!privileged) {
+        throw denied();
+      }
       return table(current, false);
     }
     if (command.operation() == Operation.STATUS_BY_TOKEN) {
       authorizeActor(current, actor, recovery);
       if (!current.receipt().identity().token().equals(command.token().orElseThrow())
-          || !current.receipt().runId().equals(command.runId().orElseThrow())) throw changed();
+          || !current.receipt().runId().equals(command.runId().orElseThrow())) {
+        throw changed();
+      }
       return table(current, false);
     }
-    if (!command.expected().isPresent()) throw invalidCommand();
-    if (!current.receipt().identity().equals(command.expected().orElseThrow())) throw changed();
+    if (!command.expected().isPresent()) {
+      throw invalidCommand();
+    }
+    if (!current.receipt().identity().equals(command.expected().orElseThrow())) {
+      throw changed();
+    }
     switch (command.operation()) {
       case STATUS:
         authorizeActor(current, actor, recovery);
@@ -212,15 +234,20 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
       case BEGIN_REPLACE:
         return table(beginReplace(current, command, actor), false);
       case HANDOFF:
-        if (!recovery) throw denied();
+        if (!recovery) {
+          throw denied();
+        }
         requirePending(current);
-        if (!current.receipt().runId().equals(command.runId().orElseThrow())) throw changed();
+        if (!current.receipt().runId().equals(command.runId().orElseThrow())) {
+          throw changed();
+        }
         ObjectNode handoffData = current.data();
         if (handoffData.has("handoff")) {
           JsonNode old = handoffData.get("handoff");
           if (!actor.equals(old.get("actor").asText())
-              || !command.reference().orElseThrow().equals(old.get("reference").asText()))
+              || !command.reference().orElseThrow().equals(old.get("reference").asText())) {
             throw changed();
+          }
           return table(current, false);
         }
         handoffData
@@ -231,8 +258,12 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
             .put("run", current.receipt().runId());
         return table(replace(current, handoffData), false);
       case ABORT:
-        if (!recovery || !current.data().has("handoff")) throw denied();
-        if (current.receipt().state() == State.ABANDONED) return table(current, false);
+        if (!recovery || !current.data().has("handoff")) {
+          throw denied();
+        }
+        if (current.receipt().state() == State.ABANDONED) {
+          return table(current, false);
+        }
         requirePending(current);
         ObjectNode aborted = current.data();
         aborted
@@ -255,7 +286,9 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
     String actor = authorization.currentActor();
     authorization.isPrivileged(ident, actor);
     DeltaRegistrationState state = refresh(ident, load(ident), actor);
-    if (state.receipt().state() != State.PUBLISHED) throw unpublished();
+    if (state.receipt().state() != State.PUBLISHED) {
+      throw unpublished();
+    }
     return table(state, true);
   }
 
@@ -266,9 +299,13 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
     authorization.isPrivileged(NameIdentifier.of(namespace, "_list"), actor);
     List<NameIdentifier> result = new ArrayList<>();
     for (DeltaRegistrationState candidate : registrations.list(namespace)) {
-      if (candidate.receipt().state() != State.PUBLISHED) continue;
+      if (candidate.receipt().state() != State.PUBLISHED) {
+        continue;
+      }
       NameIdentifier ident = NameIdentifier.of(namespace, candidate.entity().name());
-      if (refresh(ident, candidate, actor).receipt().state() == State.PUBLISHED) result.add(ident);
+      if (refresh(ident, candidate, actor).receipt().state() == State.PUBLISHED) {
+        result.add(ident);
+      }
     }
     return result.toArray(new NameIdentifier[0]);
   }
@@ -289,28 +326,37 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
       DeltaRegistrationState current,
       DeltaRegistrationCommand command,
       String actor) {
-    if (!actor.equals(current.actor())) throw denied();
+    if (!actor.equals(current.actor())) {
+      throw denied();
+    }
     // The caller must serialize this retry after the original request has completed/drained.
     // Elapsed time and a lost response are not evidence that its owner hook has finished.
-    if (current.receipt().state() != State.RESERVED && current.receipt().state() != State.ADOPTING)
+    if (current.receipt().state() != State.RESERVED
+        && current.receipt().state() != State.ADOPTING) {
       throw changed();
-    if (command.operation() == Operation.ADOPT)
+    }
+    if (command.operation() == Operation.ADOPT) {
       command =
           DeltaRegistrationCommand.adopt(
               command.token().orElseThrow(),
               config.locations().admittedExistingLocation(command.location().orElseThrow()),
               command.runId().orElseThrow(),
               command.reference().orElseThrow());
+    }
     if (!command.encode().equals(current.data().get("opening").asText())
         || current.receipt().identity().generation() != 0
-        || current.data().has("handoff")) throw changed();
+        || current.data().has("handoff")) {
+      throw changed();
+    }
     authorization.requirePendingReplayOwner(ident, actor);
     return table(current, false);
   }
 
   private DeltaRegistrationState beginReplace(
       DeltaRegistrationState current, DeltaRegistrationCommand command, String actor) {
-    if (current.receipt().state() != State.PUBLISHED) throw unpublished();
+    if (current.receipt().state() != State.PUBLISHED) {
+      throw unpublished();
+    }
     DeltaNativeObservation observed;
     try {
       observed = observe(current.location());
@@ -318,10 +364,14 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
       return quarantine(current, "UNREPRESENTABLE_NATIVE_METADATA");
     }
     String inconsistency = inconsistency(current, observed);
-    if (inconsistency != null) return quarantine(current, inconsistency);
+    if (inconsistency != null) {
+      return quarantine(current, inconsistency);
+    }
     long generation = Math.addExact(current.receipt().identity().generation(), 1);
     String token = command.replacementToken().orElseThrow();
-    if (token.equals(current.receipt().identity().token())) throw changed();
+    if (token.equals(current.receipt().identity().token())) {
+      throw changed();
+    }
     DeltaRegistrationIdentity next =
         DeltaRegistrationIdentity.of(current.receipt().identity().id(), generation, token);
     DeltaOperationMarker marker =
@@ -350,13 +400,25 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
       boolean recovery) {
     boolean handoff = current.data().has("handoff");
     if (handoff) {
-      if (!recovery) throw denied();
-    } else if (!actor.equals(current.actor())) throw denied();
-    if (current.receipt().operation() == Operation.ADOPT && !privileged) throw denied();
-    if (current.receipt().state() == State.PUBLISHED) return current;
+      if (!recovery) {
+        throw denied();
+      }
+    } else if (!actor.equals(current.actor())) {
+      throw denied();
+    }
+    if (current.receipt().operation() == Operation.ADOPT && !privileged) {
+      throw denied();
+    }
+    if (current.receipt().state() == State.PUBLISHED) {
+      return current;
+    }
     requirePending(current);
-    if (current.receipt().state() == State.QUARANTINED && (!handoff || !recovery)) throw denied();
-    if (current.receipt().reason().equals("NATIVE_ID_CHANGED")) throw changed();
+    if (current.receipt().state() == State.QUARANTINED && (!handoff || !recovery)) {
+      throw denied();
+    }
+    if (current.receipt().reason().equals("NATIVE_ID_CHANGED")) {
+      throw changed();
+    }
     try {
       authorization.requireInitialOwner(ident);
     } catch (SecurityException e) {
@@ -366,13 +428,16 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
     try {
       if (current.receipt().operation() == Operation.ADOPT) {
         observed = observe(current.location());
-        if (!DeltaRegistrationState.observation(observed).equals(current.data().get("observation")))
+        if (!DeltaRegistrationState.observation(observed)
+            .equals(current.data().get("observation"))) {
           return quarantine(current, "ADOPTION_BASELINE_CHANGED");
+        }
       } else {
         DeltaOperationMarker marker = current.marker();
         DeltaCommitEvidence evidence = reader.verify(marker);
-        if (evidence.kind() != DeltaCommitEvidence.Kind.MATCHED)
+        if (evidence.kind() != DeltaCommitEvidence.Kind.MATCHED) {
           return quarantine(current, "NATIVE_EVIDENCE_AMBIGUOUS");
+        }
         long version =
             marker.operation() == DeltaOperationMarker.Operation.CREATE
                 ? 0
@@ -383,11 +448,14 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
             || !observed.uuid().equals(evidence.uuid().orElse(null))
             || !DeltaRegistrationState.JSON
                 .readTree(observed.schemaJson())
-                .equals(DeltaRegistrationState.JSON.readTree(evidence.schemaJson().orElseThrow())))
+                .equals(
+                    DeltaRegistrationState.JSON.readTree(evidence.schemaJson().orElseThrow()))) {
           return quarantine(current, "NATIVE_EVIDENCE_AMBIGUOUS");
+        }
         if (marker.operation() == DeltaOperationMarker.Operation.REPLACE
-            && marker.baseUuid().orElseThrow().equals(observed.uuid()))
+            && marker.baseUuid().orElseThrow().equals(observed.uuid())) {
           return quarantine(current, "NATIVE_ID_CHANGED");
+        }
       }
     } catch (DeltaMetadataException e) {
       return quarantine(current, "NATIVE_READ_UNAVAILABLE");
@@ -405,7 +473,9 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
                 : "EXACT_NATIVE_COMMIT")
         .put("reason", "NONE");
     data.remove("quarantineOrigin");
-    if (handoff) data.put("recoveryActor", actor);
+    if (handoff) {
+      data.put("recoveryActor", actor);
+    }
     DeltaRegistrationState candidate;
     try {
       candidate = projected(current, data, observed, actor);
@@ -419,7 +489,9 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
       NameIdentifier ident, DeltaRegistrationState initial, String actor) {
     DeltaRegistrationState current = initial;
     for (int attempt = 0; attempt <= 3; attempt++) {
-      if (current.receipt().state() != State.PUBLISHED) return current;
+      if (current.receipt().state() != State.PUBLISHED) {
+        return current;
+      }
       try {
         DeltaNativeObservation observed;
         try {
@@ -428,12 +500,16 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
           return quarantine(current, "UNREPRESENTABLE_NATIVE_METADATA");
         }
         String inconsistency = inconsistency(current, observed);
-        if (inconsistency != null) return quarantine(current, inconsistency);
+        if (inconsistency != null) {
+          return quarantine(current, inconsistency);
+        }
         if (DeltaRegistrationState.observation(observed)
             .equals(current.data().get("observation"))) {
           // An unchanged native head still needs a fresh complete row after native I/O.
           DeltaRegistrationState latest = registrations.load(ident);
-          if (latest.entity().equals(current.entity())) return latest;
+          if (latest.entity().equals(current.entity())) {
+            return latest;
+          }
           throw changed();
         }
         DeltaRegistrationState candidate;
@@ -444,9 +520,13 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
         }
         return registrations.replace(current, candidate.entity());
       } catch (OptimisticLockException e) {
-        if (attempt == 3) throw changed();
+        if (attempt == 3) {
+          throw changed();
+        }
       } catch (IllegalStateException e) {
-        if (!"REGISTRATION_CHANGED".equals(e.getMessage()) || attempt == 3) throw e;
+        if (!"REGISTRATION_CHANGED".equals(e.getMessage()) || attempt == 3) {
+          throw e;
+        }
       }
       current = registrations.load(ident);
     }
@@ -456,12 +536,17 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
   @Nullable
   private String inconsistency(DeltaRegistrationState current, DeltaNativeObservation observed) {
     JsonNode previous = current.data().get("observation");
-    if (!previous.get("uuid").asText().equals(observed.uuid())) return "NATIVE_ID_CHANGED";
+    if (!previous.get("uuid").asText().equals(observed.uuid())) {
+      return "NATIVE_ID_CHANGED";
+    }
     long version = previous.get("version").longValue();
-    if (observed.version() < version) return "NATIVE_VERSION_REGRESSION";
+    if (observed.version() < version) {
+      return "NATIVE_VERSION_REGRESSION";
+    }
     if (observed.version() == version
-        && !previous.equals(DeltaRegistrationState.observation(observed)))
+        && !previous.equals(DeltaRegistrationState.observation(observed))) {
       return "NATIVE_METADATA_INCONSISTENT";
+    }
     return null;
   }
 
@@ -500,7 +585,9 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
     data.put("state", "QUARANTINED")
         .put("reason", reason)
         .put("quarantineOrigin", published ? "PUBLISHED_REFRESH" : "PENDING_PUBLICATION");
-    if (!published) data.put("evidence", "UNRESOLVED");
+    if (!published) {
+      data.put("evidence", "UNRESOLVED");
+    }
     return replace(current, data);
   }
 
@@ -515,8 +602,9 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
 
   private DeltaNativeObservation checked(DeltaSnapshotMetadata snapshot, String location) {
     DeltaNativeObservation observed = DeltaNativeObservation.from(snapshot);
-    if (!location.equals(observed.location()))
+    if (!location.equals(observed.location())) {
       throw new IllegalArgumentException("NATIVE_LOCATION_MISMATCH");
+    }
     DeltaStorageAdmission.checkObservation(observed);
     return observed;
   }
@@ -532,13 +620,14 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
   private Table table(DeltaRegistrationState state, boolean readable) {
     TableEntity row = state.entity();
     Map<String, String> properties = new HashMap<>(state.receipt().toProperties());
-    if (readable)
+    if (readable) {
       state
           .data()
           .get("observation")
           .get("safe")
           .fields()
           .forEachRemaining(entry -> properties.put(entry.getKey(), entry.getValue().asText()));
+    }
     Column[] columns =
         readable
             ? row.columns().stream()
@@ -571,11 +660,15 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
 
   private static void authorizeActor(
       DeltaRegistrationState current, String actor, boolean recovery) {
-    if (!actor.equals(current.actor()) && !recovery) throw denied();
+    if (!actor.equals(current.actor()) && !recovery) {
+      throw denied();
+    }
   }
 
   private static void requirePending(DeltaRegistrationState current) {
-    if (!current.pendingRecovery()) throw unpublished();
+    if (!current.pendingRecovery()) {
+      throw unpublished();
+    }
   }
 
   private static SecurityException denied() {

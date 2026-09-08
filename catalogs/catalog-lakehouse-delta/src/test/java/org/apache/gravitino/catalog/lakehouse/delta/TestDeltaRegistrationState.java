@@ -146,7 +146,7 @@ class TestDeltaRegistrationState {
   @Test
   void duplicatePositionsNeverBecomeAnOrderedPublicSchema() {
     TableEntity row = reserved().entity();
-    for (long id : List.of(101L, 102L))
+    for (long id : List.of(101L, 102L)) {
       row.columns()
           .add(
               ColumnEntity.builder()
@@ -156,6 +156,7 @@ class TestDeltaRegistrationState {
                   .withDataType(Types.IntegerType.get())
                   .withAuditInfo(TestDeltaRegistrationOperations.AUDIT)
                   .build());
+    }
     assertThrows(IllegalArgumentException.class, () -> DeltaRegistrationState.from(row));
   }
 

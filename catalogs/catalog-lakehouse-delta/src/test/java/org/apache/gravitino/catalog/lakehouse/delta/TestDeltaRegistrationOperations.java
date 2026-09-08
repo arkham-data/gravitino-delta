@@ -206,7 +206,9 @@ public class TestDeltaRegistrationOperations {
                           SupportsRelationOperations.Type.OWNER_REL,
                           IDENT,
                           Entity.EntityType.TABLE);
-              if (persisted.isEmpty()) return Optional.empty();
+              if (persisted.isEmpty()) {
+                return Optional.empty();
+              }
               Owner value = mock(Owner.class);
               when(value.name()).thenReturn(persisted.get(0).name());
               when(value.type()).thenReturn(Owner.Type.USER);
@@ -233,13 +235,19 @@ public class TestDeltaRegistrationOperations {
 
   @AfterEach
   void cleanup() throws Exception {
-    if (resumed != null) resumed.countDown();
+    if (resumed != null) {
+      resumed.countDown();
+    }
     if (executor != null) {
       executor.shutdownNow();
       assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS));
     }
-    if (reader != null) reader.close();
-    if (store != null) store.close();
+    if (reader != null) {
+      reader.close();
+    }
+    if (store != null) {
+      store.close();
+    }
   }
 
   @Test
@@ -501,7 +509,9 @@ public class TestDeltaRegistrationOperations {
             call -> {
               DeltaCommitEvidence evidence = reader.verify(call.getArgument(0));
               entered.countDown();
-              if (!resumed.await(20, TimeUnit.SECONDS)) throw new AssertionError("resume timeout");
+              if (!resumed.await(20, TimeUnit.SECONDS)) {
+                throw new AssertionError("resume timeout");
+              }
               return evidence;
             });
     when(paused.atVersion(anyString(), anyLong()))
@@ -520,7 +530,9 @@ public class TestDeltaRegistrationOperations {
     assertTrue(entered.await(20, TimeUnit.SECONDS));
     actor.set("recovery");
     alter(DeltaRegistrationCommand.handoff(reserved.identity(), "run-a", "controller-drained"));
-    if (abort) alter(DeltaRegistrationCommand.abort(reserved.identity()));
+    if (abort) {
+      alter(DeltaRegistrationCommand.abort(reserved.identity()));
+    }
     TableEntity retained = rawTable(IDENT);
     resumed.countDown();
     assertThrows(CompletionException.class, publishing::join);
@@ -703,7 +715,7 @@ public class TestDeltaRegistrationOperations {
         0,
         envelope -> {
           ObjectNode metadata = (ObjectNode) envelope.get("metaData");
-          if (metadata != null)
+          if (metadata != null) {
             switch (field) {
               case "description":
                 metadata.put("description", "");
@@ -725,8 +737,10 @@ public class TestDeltaRegistrationOperations {
               default:
                 break;
             }
-          if (field.equals("protocol") && envelope.has("protocol"))
+          }
+          if (field.equals("protocol") && envelope.has("protocol")) {
             ((ObjectNode) envelope.get("protocol")).put("minWriterVersion", 3);
+          }
         });
     assertThrows(RuntimeException.class, () -> operations.loadTable(IDENT));
     assertEquals(
@@ -873,10 +887,11 @@ public class TestDeltaRegistrationOperations {
         marker.normalizedLocation(),
         version,
         envelope -> {
-          if (envelope.has("protocol"))
+          if (envelope.has("protocol")) {
             ((ObjectNode) envelope.get("protocol"))
                 .put("minReaderVersion", 2)
                 .put("minWriterVersion", 5);
+          }
         });
   }
 
@@ -904,11 +919,13 @@ public class TestDeltaRegistrationOperations {
     for (String field : List.of("uuid", "version", "publication")) {
       TableEntity row = pending.entity();
       ObjectNode data = pending.data();
-      if (field.equals("publication"))
+      if (field.equals("publication")) {
         data.put("state", "PUBLISHED").put("evidence", "EXACT_NATIVE_COMMIT");
-      else if (field.equals("uuid"))
+      } else if (field.equals("uuid")) {
         ((ObjectNode) data.get("observation")).put("uuid", "not-the-base");
-      else ((ObjectNode) data.get("observation")).put("version", 1L);
+      } else {
+        ((ObjectNode) data.get("observation")).put("version", 1L);
+      }
       row.properties().put(DeltaRegistrationState.PROPERTY, data.toString());
       assertThrows(IllegalArgumentException.class, () -> DeltaRegistrationState.from(row), field);
     }
@@ -1077,7 +1094,9 @@ public class TestDeltaRegistrationOperations {
             call -> {
               DeltaSnapshotMetadata observed = reader.latest(call.getArgument(0));
               entered.countDown();
-              if (!resumed.await(10, TimeUnit.SECONDS)) throw new AssertionError("resume timeout");
+              if (!resumed.await(10, TimeUnit.SECONDS)) {
+                throw new AssertionError("resume timeout");
+              }
               return observed;
             });
     executor = Executors.newSingleThreadExecutor();
@@ -1138,7 +1157,9 @@ public class TestDeltaRegistrationOperations {
     /** {@inheritDoc} */
     @Override
     public void initialize(URI uri, Configuration configuration) throws IOException {
-      if (!"bucket".equals(uri.getAuthority())) throw new IOException("unowned authority");
+      if (!"bucket".equals(uri.getAuthority())) {
+        throw new IOException("unowned authority");
+      }
       root = Path.of(configuration.get("delta.fixture.root")).toAbsolutePath().normalize();
       fs.initialize(URI.create("file:///"), configuration);
       setConf(configuration);
@@ -1198,9 +1219,13 @@ public class TestDeltaRegistrationOperations {
     private org.apache.hadoop.fs.Path local(org.apache.hadoop.fs.Path path) throws IOException {
       URI uri = path.toUri();
       if (uri.getAuthority() != null && !"bucket".equals(uri.getAuthority())
-          || !uri.getPath().startsWith("/fixture/")) throw new IOException("unowned path");
+          || !uri.getPath().startsWith("/fixture/")) {
+        throw new IOException("unowned path");
+      }
       Path target = root.resolve(uri.getPath().substring("/fixture/".length())).normalize();
-      if (!target.startsWith(root)) throw new IOException("unowned path");
+      if (!target.startsWith(root)) {
+        throw new IOException("unowned path");
+      }
       return new org.apache.hadoop.fs.Path(target.toUri());
     }
 
@@ -1223,7 +1248,9 @@ public class TestDeltaRegistrationOperations {
     @Override
     public FileStatus[] listStatus(org.apache.hadoop.fs.Path path) throws IOException {
       FileStatus[] result = fs.listStatus(local(path));
-      for (FileStatus status : result) external(status);
+      for (FileStatus status : result) {
+        external(status);
+      }
       return result;
     }
   }

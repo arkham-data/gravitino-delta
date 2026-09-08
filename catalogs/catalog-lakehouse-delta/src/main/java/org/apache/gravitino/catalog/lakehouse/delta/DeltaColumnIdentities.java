@@ -52,8 +52,17 @@ final class DeltaColumnIdentities {
       oldMapping = mapping(prior.data().get("observation").get("schema").textValue());
       for (ColumnEntity column : prior.entity().columns()) {
         names.put(column.name(), column);
-        if (oldMapping.containsKey(column.name()))
+        if (oldMapping.containsKey(column.name())) {
           mapped.put(oldMapping.get(column.name()), column);
+        }
+      }
+    }
+    // Valid native identities have priority over name fallbacks, regardless of schema order.
+    Set<Long> reserved = new HashSet<>();
+    for (Long mappingId : newMapping.values()) {
+      ColumnEntity previous = mapped.get(mappingId);
+      if (previous != null) {
+        reserved.add(previous.id());
       }
     }
     List<ColumnEntity> result = new ArrayList<>();
@@ -62,9 +71,16 @@ final class DeltaColumnIdentities {
       Long mappingId = newMapping.get(column.name());
       ColumnEntity previous = mappingId == null ? names.get(column.name()) : mapped.get(mappingId);
       // A newly assigned/different valid mapping identity cannot reuse the old mapped identity.
-      if (previous == null && mappingId != null && !oldMapping.containsKey(column.name()))
+      if (previous == null && mappingId != null && !oldMapping.containsKey(column.name())) {
         previous = names.get(column.name());
-      if (previous != null && !used.add(previous.id())) previous = null;
+      }
+      boolean mappedMatch = mappingId != null && mapped.containsKey(mappingId);
+      if (previous != null && !mappedMatch && reserved.contains(previous.id())) {
+        previous = null;
+      }
+      if (previous != null && !used.add(previous.id())) {
+        previous = null;
+      }
       result.add(
           ColumnEntity.toColumnEntity(
               column,
@@ -84,7 +100,9 @@ final class DeltaColumnIdentities {
       for (JsonNode field : DeltaRegistrationState.JSON.readTree(schema).get("fields")) {
         JsonNode id = field.path("metadata").get("delta.columnMapping.id");
         if (id != null && id.isIntegralNumber() && id.canConvertToLong() && id.longValue() > 0) {
-          if (!seen.add(id.longValue())) duplicates.add(id.longValue());
+          if (!seen.add(id.longValue())) {
+            duplicates.add(id.longValue());
+          }
           result.put(field.get("name").textValue(), id.longValue());
         }
       }

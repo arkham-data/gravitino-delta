@@ -64,8 +64,9 @@ final class DeltaRegistrationStore {
     TableEntity detached = next.entity();
     if (!expected.id().equals(detached.id())
         || !expected.name().equals(detached.name())
-        || !expected.namespace().equals(detached.namespace()))
+        || !expected.namespace().equals(detached.namespace())) {
       throw new IllegalArgumentException("REGISTRATION_IDENTITY_CHANGED");
+    }
     DeltaStorageAdmission.checkTableCandidate(detached);
     NameIdentifier ident = NameIdentifier.of(expected.namespace(), expected.name());
     try {
@@ -75,8 +76,9 @@ final class DeltaRegistrationStore {
               TableEntity.class,
               Entity.EntityType.TABLE,
               current -> {
-                if (!current.equals(expected))
+                if (!current.equals(expected)) {
                   throw new IllegalStateException("REGISTRATION_CHANGED");
+                }
                 return detached;
               }));
     } catch (IOException e) {

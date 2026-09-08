@@ -34,6 +34,8 @@ import org.apache.gravitino.meta.TableEntity;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class TestDeltaColumnIdentities {
   @TempDir Path temp;
@@ -89,6 +91,48 @@ class TestDeltaColumnIdentities {
     assertEquals(102L, changed.get(1).id());
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "a:0,renamed:1", "renamed:1,a:0",
+        "a,renamed:1", "renamed:1,a",
+        "a:2,other:2,renamed:1", "renamed:1,a:2,other:2"
+      })
+  void mappedRenameOwnsPriorIdentityBeforeNameFallback(String fields) throws Exception {
+    DeltaRegistrationState prior = prior(observation("first", "uuid", "a:1"));
+    List<ColumnEntity> changed =
+        DeltaColumnIdentities.project(
+            prior,
+            observation("second", "uuid", fields),
+            ids::incrementAndGet,
+            TestDeltaRegistrationOperations.AUDIT);
+    String[] orderedFields = fields.split(",");
+    for (int i = 0; i < changed.size(); i++) {
+      ColumnEntity column = changed.get(i);
+      assertEquals(orderedFields[i].split(":")[0], column.name());
+      assertEquals(i, column.position());
+      if (column.name().equals("renamed")) {
+        assertEquals(101L, column.id());
+        assertEquals(prior.entity().columns().get(0).auditInfo(), column.auditInfo());
+      } else {
+        assertNotEquals(101L, column.id());
+      }
+    }
+    assertEquals(changed.size(), changed.stream().map(ColumnEntity::id).distinct().count());
+  }
+
+  @Test
+  void differentValidMappingDoesNotInheritMappedIdentityByName() throws Exception {
+    DeltaRegistrationState prior = prior(observation("first", "uuid", "a:1"));
+    List<ColumnEntity> changed =
+        DeltaColumnIdentities.project(
+            prior,
+            observation("second", "uuid", "a:2"),
+            ids::incrementAndGet,
+            TestDeltaRegistrationOperations.AUDIT);
+    assertNotEquals(101L, changed.get(0).id());
+  }
+
   private DeltaRegistrationState prior(DeltaNativeObservation observed) {
     DeltaRegistrationState initial =
         DeltaRegistrationState.initial(
@@ -113,15 +157,18 @@ class TestDeltaColumnIdentities {
     Path log = Files.createDirectories(table.resolve("_delta_log"));
     StringBuilder schema = new StringBuilder("{\"type\":\"struct\",\"fields\":[");
     for (String field : fields.split(",")) {
-      if (schema.charAt(schema.length() - 1) != '[') schema.append(',');
+      if (schema.charAt(schema.length() - 1) != '[') {
+        schema.append(',');
+      }
       String[] parts = field.split(":");
       schema
           .append("{\"name\":\"")
           .append(parts[0])
-          .append(
-              "\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{\"delta.columnMapping.id\":")
-          .append(parts[1])
-          .append("}}");
+          .append("\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{");
+      if (parts.length == 2) {
+        schema.append("\"delta.columnMapping.id\":").append(parts[1]);
+      }
+      schema.append("}}");
     }
     schema.append("]}");
     Map<String, Object> metadata =

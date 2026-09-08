@@ -88,13 +88,18 @@ final class DeltaRegistrationState {
   private DeltaRegistrationState(TableEntity source) {
     try {
       DeltaStorageAdmission.checkTableCandidate(source);
-      if (source.properties().size() != 1 || !source.properties().containsKey(PROPERTY))
+      if (source.properties().size() != 1 || !source.properties().containsKey(PROPERTY)) {
         throw invalid();
+      }
       JsonNode parsed = JSON.readTree(source.properties().get(PROPERTY));
-      if (!(parsed instanceof ObjectNode)) throw invalid();
+      if (!(parsed instanceof ObjectNode)) {
+        throw invalid();
+      }
       data = (ObjectNode) parsed;
       fields(data, REQUIRED, OPTIONAL);
-      if (number(data, "version") != 1 || number(data, "id") != source.id()) throw invalid();
+      if (number(data, "version") != 1 || number(data, "id") != source.id()) {
+        throw invalid();
+      }
       Operation kind = Operation.valueOf(text(data, "kind"));
       State state = State.valueOf(text(data, "state"));
       Evidence evidence = Evidence.valueOf(text(data, "evidence"));
@@ -106,29 +111,39 @@ final class DeltaRegistrationState {
       // Commands already enforce catalog roots. Retained rows must independently retain the
       // provider's canonical S3 transport shape before any later native read.
       if (!location.equals(
-          new DeltaLocationPolicy(location, List.of(location)).admittedExistingLocation(location)))
+          new DeltaLocationPolicy(location, List.of(location))
+              .admittedExistingLocation(location))) {
         throw invalid();
+      }
       DeltaRegistrationCommand opening = DeltaRegistrationCommand.decode(text(data, "opening"));
-      if (opening.operation() != kind || !opening.runId().orElseThrow().equals(text(data, "run")))
+      if (opening.operation() != kind || !opening.runId().orElseThrow().equals(text(data, "run"))) {
         throw invalid();
+      }
       if (kind == Operation.BEGIN_REPLACE) {
         DeltaRegistrationIdentity old = opening.expected().orElseThrow();
         if (old.id() != source.id()
             || Math.addExact(old.generation(), 1) != identity.generation()
             || !opening.replacementToken().orElseThrow().equals(identity.token())
-            || old.token().equals(identity.token())) throw invalid();
+            || old.token().equals(identity.token())) {
+          throw invalid();
+        }
       } else if (identity.generation() != 0
-          || !opening.token().orElseThrow().equals(identity.token())) throw invalid();
+          || !opening.token().orElseThrow().equals(identity.token())) {
+        throw invalid();
+      }
       DeltaOperationMarker marker = null;
       if (kind == Operation.ADOPT) {
-        if (data.has("marker") || !location.equals(opening.location().orElseThrow()))
+        if (data.has("marker") || !location.equals(opening.location().orElseThrow())) {
           throw invalid();
+        }
       } else {
         marker = DeltaOperationMarker.decode(text(data, "marker"));
         if (marker.id() != source.id()
             || marker.generation() != identity.generation()
             || !marker.token().equals(identity.token())
-            || !marker.normalizedLocation().equals(location)) throw invalid();
+            || !marker.normalizedLocation().equals(location)) {
+          throw invalid();
+        }
         DeltaOperationMarker expected =
             marker(
                 opening,
@@ -136,48 +151,68 @@ final class DeltaRegistrationState {
                 location,
                 marker.baseVersion().orElse(-1),
                 marker.baseUuid().orElse(""));
-        if (!expected.encode().equals(marker.encode())) throw invalid();
+        if (!expected.encode().equals(marker.encode())) {
+          throw invalid();
+        }
       }
       boolean pendingOrigin =
           state == State.QUARANTINED
               && "PENDING_PUBLICATION".equals(text(data, "quarantineOrigin"));
       if (state == State.QUARANTINED) {
         String origin = text(data, "quarantineOrigin");
-        if (!origin.equals("PENDING_PUBLICATION") && !origin.equals("PUBLISHED_REFRESH"))
+        if (!origin.equals("PENDING_PUBLICATION") && !origin.equals("PUBLISHED_REFRESH")) {
           throw invalid();
-        if (pendingOrigin != (evidence == Evidence.UNRESOLVED)) throw invalid();
-      } else if (data.has("quarantineOrigin")) throw invalid();
+        }
+        if (pendingOrigin != (evidence == Evidence.UNRESOLVED)) {
+          throw invalid();
+        }
+      } else if (data.has("quarantineOrigin")) {
+        throw invalid();
+      }
       if (data.has("handoff")) {
         JsonNode handoff = data.get("handoff");
         fields(handoff, Set.of("actor", "time", "reference", "run"), Set.of());
         text(handoff, "actor");
         text(handoff, "reference");
         Instant.parse(text(handoff, "time"));
-        if (!text(handoff, "run").equals(text(data, "run"))) throw invalid();
+        if (!text(handoff, "run").equals(text(data, "run"))) {
+          throw invalid();
+        }
       }
       if (data.has("recoveryActor")) {
         text(data, "recoveryActor");
-        if (!data.has("handoff")) throw invalid();
+        if (!data.has("handoff")) {
+          throw invalid();
+        }
       }
-      if (state == State.ABANDONED && (!data.has("handoff") || !data.has("recoveryActor")))
+      if (state == State.ABANDONED && (!data.has("handoff") || !data.has("recoveryActor"))) {
         throw invalid();
+      }
       boolean published = state == State.PUBLISHED;
       JsonNode observation = data.get("observation");
-      if (observation != null) validateObservation(observation, location);
+      if (observation != null) {
+        validateObservation(observation, location);
+      }
       if ((kind == Operation.ADOPT
               || kind == Operation.BEGIN_REPLACE
               || published
               || state == State.QUARANTINED && !pendingOrigin)
-          && observation == null) throw invalid();
+          && observation == null) {
+        throw invalid();
+      }
       if (kind == Operation.BEGIN_REPLACE) {
         boolean completed = evidence == Evidence.EXACT_NATIVE_COMMIT;
         long nativeVersion = number(observation, "version");
         String nativeId = text(observation, "uuid");
         if (completed) {
           if (nativeVersion <= marker.baseVersion().orElseThrow()
-              || nativeId.equals(marker.baseUuid().orElseThrow())) throw invalid();
+              || nativeId.equals(marker.baseUuid().orElseThrow())) {
+            throw invalid();
+          }
         } else if (nativeVersion != marker.baseVersion().orElseThrow()
-            || !nativeId.equals(marker.baseUuid().orElseThrow())) throw invalid();
+            || !nativeId.equals(marker.baseUuid().orElseThrow())) {
+          throw invalid();
+        }
       }
       receipt =
           DeltaRegistrationReceipt.of(
@@ -202,7 +237,9 @@ final class DeltaRegistrationState {
             || column.position() >= source.columns().size()
             || !positions.add(column.position())
             || !ids.add(column.id())
-            || !names.add(column.name())) throw invalid();
+            || !names.add(column.name())) {
+          throw invalid();
+        }
       }
       row = detach(source);
     } catch (Exception e) {
@@ -270,7 +307,7 @@ final class DeltaRegistrationState {
             .put("opening", command.encode())
             .put("evidence", "NONE")
             .put("reason", "NONE");
-    if (!adopt)
+    if (!adopt) {
       data.put(
           "marker",
           marker(
@@ -280,7 +317,10 @@ final class DeltaRegistrationState {
                   -1,
                   "")
               .encode());
-    if (observed != null) data.set("observation", observation(observed));
+    }
+    if (observed != null) {
+      data.set("observation", observation(observed));
+    }
     TableEntity row =
         TableEntity.builder()
             .withId(id)
@@ -321,7 +361,9 @@ final class DeltaRegistrationState {
     protocol.set(
         "writerFeatures", JSON.valueToTree(new TreeSet<>(value.protocol().writerFeatures())));
     value.description().ifPresent(v -> result.put("description", v));
-    if (value.createdTime().isPresent()) result.put("createdTime", value.createdTime().getAsLong());
+    if (value.createdTime().isPresent()) {
+      result.put("createdTime", value.createdTime().getAsLong());
+    }
     value.markerDigest().ifPresent(v -> result.put("markerDigest", v));
     // Normalize numeric nodes exactly as the durable JSON decoder does. IntNode and LongNode
     // compare unequal even when they encode the same native version or creation timestamp.
@@ -343,7 +385,7 @@ final class DeltaRegistrationState {
             ? command.schemaContract().orElseThrow().requiredSchemaJson()
             : command.exactSchemaJson().orElseThrow();
     DeltaStorageAdmission.checkDesiredSchema(schema);
-    if (command.operation() == Operation.RESERVE)
+    if (command.operation() == Operation.RESERVE) {
       return command.schemaContract().isPresent()
           ? DeltaOperationMarker.createWithSchemaContract(
               identity.id(),
@@ -353,6 +395,7 @@ final class DeltaRegistrationState {
               command.schemaContract().orElseThrow())
           : DeltaOperationMarker.create(
               identity.id(), identity.generation(), identity.token(), location, schema);
+    }
     return command.schemaContract().isPresent()
         ? DeltaOperationMarker.replaceWithSchemaContract(
             identity.id(),
@@ -435,7 +478,9 @@ final class DeltaRegistrationState {
 
   static String text(JsonNode node, String field) {
     JsonNode value = node == null ? null : node.get(field);
-    if (value == null || !value.isTextual() || value.textValue().isBlank()) throw invalid();
+    if (value == null || !value.isTextual() || value.textValue().isBlank()) {
+      throw invalid();
+    }
     return value.textValue();
   }
 
@@ -449,17 +494,27 @@ final class DeltaRegistrationState {
     if (value == null
         || !value.isIntegralNumber()
         || !value.canConvertToLong()
-        || value.longValue() < 0) throw invalid();
+        || value.longValue() < 0) {
+      throw invalid();
+    }
     return value.longValue();
   }
 
   private static void fields(JsonNode node, Set<String> required, Set<String> optional) {
-    if (node == null || !node.isObject()) throw invalid();
-    for (String field : required) if (!node.hasNonNull(field)) throw invalid();
+    if (node == null || !node.isObject()) {
+      throw invalid();
+    }
+    for (String field : required) {
+      if (!node.hasNonNull(field)) {
+        throw invalid();
+      }
+    }
     node.fieldNames()
         .forEachRemaining(
             field -> {
-              if (!required.contains(field) && !optional.contains(field)) throw invalid();
+              if (!required.contains(field) && !optional.contains(field)) {
+                throw invalid();
+              }
             });
   }
 
@@ -478,27 +533,38 @@ final class DeltaRegistrationState {
             "protocol"),
         Set.of("description", "createdTime", "markerDigest"));
     if (!location.equals(text(node, "location"))
-        || !text(node, "digest").matches("sha256-v1:[0-9a-f]{64}")) throw invalid();
+        || !text(node, "digest").matches("sha256-v1:[0-9a-f]{64}")) {
+      throw invalid();
+    }
     number(node, "version");
     text(node, "uuid");
     if (!JSON.readTree(text(node, "schema")).isObject()
         || !node.get("partitions").isArray()
-        || !node.get("safe").isObject()) throw invalid();
+        || !node.get("safe").isObject()) {
+      throw invalid();
+    }
     if (node.has("description") && !node.get("description").isTextual()
         || node.has("createdTime")
             && (!node.get("createdTime").isIntegralNumber()
-                || !node.get("createdTime").canConvertToLong())) throw invalid();
+                || !node.get("createdTime").canConvertToLong())) {
+      throw invalid();
+    }
     String provenance = text(node, "markerProvenance");
     if (!Set.of("ABSENT", "VALID_V1", "VALID_V2").contains(provenance)
-        || provenance.equals("ABSENT") == node.has("markerDigest")) throw invalid();
-    if (node.has("markerDigest") && !text(node, "markerDigest").matches("sha256-v1:[0-9a-f]{64}"))
+        || provenance.equals("ABSENT") == node.has("markerDigest")) {
       throw invalid();
+    }
+    if (node.has("markerDigest") && !text(node, "markerDigest").matches("sha256-v1:[0-9a-f]{64}")) {
+      throw invalid();
+    }
     JsonNode protocol = node.get("protocol");
     fields(protocol, Set.of("reader", "writer", "readerFeatures", "writerFeatures"), Set.of());
     if (number(protocol, "reader") < 1
         || number(protocol, "writer") < 1
         || !protocol.get("readerFeatures").isArray()
-        || !protocol.get("writerFeatures").isArray()) throw invalid();
+        || !protocol.get("writerFeatures").isArray()) {
+      throw invalid();
+    }
     Set<String> safe =
         Set.of(
             "delta.columnMapping.mode",
@@ -510,14 +576,22 @@ final class DeltaRegistrationState {
         .fields()
         .forEachRemaining(
             entry -> {
-              if (!safe.contains(entry.getKey()) || !entry.getValue().isTextual()) throw invalid();
+              if (!safe.contains(entry.getKey()) || !entry.getValue().isTextual()) {
+                throw invalid();
+              }
               String key = entry.getKey();
               String value = entry.getValue().textValue();
               if (key.equals("delta.columnMapping.mode")) {
-                if (!Set.of("none", "name", "id").contains(value)) throw invalid();
+                if (!Set.of("none", "name", "id").contains(value)) {
+                  throw invalid();
+                }
               } else if (key.equals("delta.columnMapping.maxColumnId")) {
-                if (!value.matches("0|[1-9][0-9]*") || Long.parseLong(value) < 0) throw invalid();
-              } else if (!value.equals("true") && !value.equals("false")) throw invalid();
+                if (!value.matches("0|[1-9][0-9]*") || Long.parseLong(value) < 0) {
+                  throw invalid();
+                }
+              } else if (!value.equals("true") && !value.equals("false")) {
+                throw invalid();
+              }
             });
   }
 
