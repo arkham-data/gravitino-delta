@@ -19,19 +19,22 @@
 - Java8-compatible source on JDK17; normal imports, public/protected Javadoc, resource cleanup and repository formatting.
 - Preserve original RED/GREEN XML, exact commands/exits, loaded versions, endpoint/image evidence and honest limitations. Setup failures are not behavioral RED.
 
+**Local endpoint gate:** The root macOS Docker gate requires macDockerConnector or OrbStack even when skipDockerTests=false. Supplied localhost endpoints do not require a container-IP bridge. The root initTestParam hook may recognize a task-scoped gravitinoExternalTestEndpoints marker to omit only the gravitino-docker-test exclusion. Each live-test module sets it only when its opt-in is true and skipDockerTests=false with required inputs. Preserve the tag and verify ordinary default exclusions. This minimal shared test-infrastructure change avoids global Docker flags or action-order hacks; do not spoof platform detection.
+
 ## Task 1: Named Delta lifecycle on MinIO
 
 **Files:**
 - Modify `spark-connector/v3.5/spark/src/test/java/org/apache/gravitino/spark/connector/integration/test/delta/NamedDeltaCatalog.java`.
 - Add `TestDeltaS3Contract.java` in that package.
-- Modify `spark-connector/v3.5/spark/build.gradle.kts` only for opt-in input forwarding/validation.
+- Modify `spark-connector/v3.5/spark/build.gradle.kts` for opt-in input forwarding/validation and the task marker.
+- Modify root `build.gradle.kts` only for the task-scoped external-endpoint tag hook above.
 - Add `docs/delta-s3-contract-results.md`.
 
 **Interfaces:** Extend the existing BaseIT pattern in TestDeltaNamedCatalogGate. Use registry alias delta_a, direct=false, lakehouse-generic registration and unique metalake/schema/prefix. Forward deltaS3Enabled, deltaS3Endpoint, deltaS3Bucket, deltaS3CredentialsFile to gravitino.delta.test.s3.enabled/endpoint/bucket/credentialsFile. When enabled, require existing Delta runtime opt-in and nonblank required inputs. Read MINIO_ROOT_USER and MINIO_ROOT_PASSWORD from the private properties file. Configure S3A endpoint, path style, SSL false and SimpleAWSCredentialsProvider. No new S3 dependency expected.
 
 1. Write the actual live CTAS test first against a schema location under s3a://<bucket>/gravitino-delta-contract/<UUID>/. Run Spark3.5.4/Delta3.3.0 before fixing NamedDeltaCatalog.location. Preserve an executed failure attributable to host-filesystem URI joining, or record real characterization if it already works. Never manufacture RED by changing reviewed code to be wrong.
 2. Replace local-only Paths.get location joining with Hadoop Path where the live failure supports it. Keep local behavior and unaltered native negative controls.
-3. Complete one sequential lifecycle test: named CTAS, append, MERGE update+insert, copy CTAS, RTAS, DESCRIBE HISTORY and Spark stop/restart. Assert exact ordered rows after mutations; Gravitino registration ID, exact registered s3a URI, native Delta metadata ID and advancing/retained history across replacement and session restart. Verify actual _delta_log via S3A. Explicitly close named-catalog clients and Spark sessions; delete only the UUID-owned S3 prefix and test metadata.
+3. Complete one sequential lifecycle test: named CTAS, append, MERGE update+insert, copy CTAS, RTAS, DESCRIBE HISTORY and Spark stop/restart. Assert exact ordered rows after mutations; Gravitino registration ID and exact registered s3a URI remain stable across replacement and session restart. Native Delta UUID changes across RTAS as in the existing native characterization; record both values, then require the post-replacement UUID to survive Spark restart. History must advance across replacement and remain available after restart. Verify actual _delta_log via S3A. Explicitly close named-catalog clients and Spark sessions; delete only the UUID-owned S3 prefix and test metadata.
 4. Run all four runtime combinations selecting TestDeltaS3Contract, with -PskipDockerTests=false and no -PskipITs (would exclude the package). Run existing local TestDeltaNamedCatalogGate across the four combinations because shared NamedDeltaCatalog changes. Combine selectors per matrix run when practical. Record actual loaded versions and nonzero test counts; no stale XML. Run scoped spotlessApply/Check.
 5. Document exact commands, counts, URI fix, pinned local MinIO and limitations. Commit only owned files and report for independent review. This test does not join the managed reservation fixture to native commits, prove S3 IAM/TLS, production identity or full Delta operation support.
 
