@@ -21,6 +21,7 @@ package org.apache.gravitino.catalog.lakehouse.delta.metadata;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -30,6 +31,7 @@ import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaCommitEvid
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaOperationMarker;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaProtocolDescriptor;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaSchemaSnapshot;
+import org.apache.gravitino.rel.Column;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
@@ -47,6 +49,29 @@ public final class DeltaMetadataReader implements AutoCloseable {
   public DeltaMetadataReader(Configuration trustedConfiguration) {
     DeltaKernel33MetadataAdapter.validateRuntime();
     storage = new DeltaStorageContext(trustedConfiguration);
+  }
+
+  /**
+   * Projects a bounded desired command schema without storage I/O.
+   *
+   * @param rawSchemaJson authoritative command schema, at most 128 KiB in UTF-8
+   * @return immutable defensive columns
+   * @throws DeltaMetadataException if schema or runtime cannot be admitted
+   */
+  public static List<Column> projectSchema(String rawSchemaJson) {
+    return DeltaKernel33MetadataAdapter.projectSchema(rawSchemaJson);
+  }
+
+  /**
+   * Detaches a native observational projection, including mutable nested struct arrays, without
+   * storage I/O. Native projections have unset defaults and no auto-increment; this is not a
+   * general-purpose clone of arbitrary mutable default expressions.
+   *
+   * @param columns existing projected columns
+   * @return immutable defensive columns, without imposing command schema size limits
+   */
+  public static List<Column> copyColumns(List<Column> columns) {
+    return DeltaSchemaProjection.copyColumns(columns);
   }
 
   /**

@@ -28,12 +28,15 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import javax.annotation.Nullable;
+import org.apache.gravitino.rel.Column;
 
 /** The sole compatibility seam for the exact Kernel 3.3.0 and 3.3.2 metadata implementation. */
 final class DeltaKernel33MetadataAdapter {
@@ -48,6 +51,23 @@ final class DeltaKernel33MetadataAdapter {
   static void validateVersions(@Nullable String api, @Nullable String defaults) {
     if (!("3.3.0".equals(api) || "3.3.2".equals(api)) || !api.equals(defaults)) {
       throw new DeltaMetadataException("UNSUPPORTED_RUNTIME", "VALIDATE_RUNTIME");
+    }
+  }
+
+  static List<Column> projectSchema(String rawSchemaJson) {
+    validateRuntime();
+    try {
+      if (rawSchemaJson == null
+          || rawSchemaJson.length() > 128 * 1024
+          || rawSchemaJson.getBytes(StandardCharsets.UTF_8).length > 128 * 1024) {
+        throw new DeltaMetadataException("INVALID_DESIRED_SCHEMA", "PROJECT_SCHEMA");
+      }
+      return DeltaSchemaProjection.copyColumns(
+          DeltaSchemaProjection.columns(DataTypeJsonSerDe.deserializeStructType(rawSchemaJson)));
+    } catch (RuntimeException e) {
+      throw new DeltaMetadataException("INVALID_DESIRED_SCHEMA", "PROJECT_SCHEMA");
+    } catch (LinkageError e) {
+      throw new DeltaMetadataException("UNSUPPORTED_RUNTIME", "PROJECT_SCHEMA");
     }
   }
 

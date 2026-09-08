@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Delta native metadata reader
+# Delta metadata reader and trusted provider policy
 
 `DeltaMetadataReader` eagerly reads authoritative Delta metadata through Kernel's
 public snapshot APIs. It exposes latest and retained as-of observations and exact
@@ -112,9 +112,9 @@ allowlisted server storage settings and capture authorization outside this scope
 Tracking-filesystem tests establish cache separation, close isolation, concurrent
 read draining and scoped lazy checkpoint reads locally. They do not establish
 S3/MinIO endpoint/credential isolation, packaged provider acceptance, or Spark
-feature conformance; those remain separate acceptance stages. This subcomponent
-does not yet bundle `hadoop-aws`/S3A; that connector, credential integration and
-distribution wiring belong to the following provider packaging task.
+feature conformance; those remain separate acceptance stages. The provider now bundles aligned `hadoop-aws`/S3A and constructs its configuration
+from the trusted settings below. Distribution wiring and endpoint-isolation acceptance
+remain later integration stages.
 
 Run the module matrix with JDK 17:
 
@@ -144,3 +144,170 @@ V1 verification keeps its original overload and semantics; latest/as-of metadata
 remain broader than the bounded registration schema contract. The new mapped CREATE/REPLACE tests
 are protocol-shaped controls, including fresh replacement IDs and a reduced maximum; they are
 not native Kernel marker writes or Spark entrypoint qualification.
+
+## Trusted catalog configuration
+
+These provider-local helpers are the admission boundary consumed by the following
+registration and catalog-SPI tasks. They do not yet install a provider or mutate
+registration rows. Catalog administrators choose storage policy; table and schema
+requests cannot override it. Configuration passed to `DeltaCatalogConfig.from`
+must already have secret references resolved by Gravitino's existing secret manager.
+Its Hadoop configuration is fresh, allowlisted, defensively copied, and must never
+be logged. Unknown configuration keys, arbitrary `fs.*` properties, log-store
+settings and caller-selected credential classes are rejected. Shared base catalog
+metadata such as authorization provider and package settings remains available.
+
+| Catalog key | Required/default | Meaning |
+| --- | --- | --- |
+| `delta.warehouse` | Required | Canonical S3 root for new tables |
+| `delta.adoption-roots` | `[]` | Strict JSON string array of admitted existing roots |
+| `delta.recovery-principals` | `[]` | Strict JSON string array for recovery-specific callers |
+| `delta.storage-credential-mode` | `instance` | Exactly `static`, `session`, or `instance` |
+| `s3-endpoint` | Unset | Explicit administrator-selected HTTP(S) endpoint |
+| `s3-region` | Unset | S3 endpoint region |
+| `s3-path-style-access` | `false` | Exactly `true` or `false` |
+| `s3-access-key-id` | Mode dependent; hidden | Resolved access key |
+| `s3-secret-access-key` | Mode dependent; hidden | Resolved secret key |
+| `s3-session-token` | Session mode; hidden | Resolved session token |
+
+All listed settings are immutable, including endpoint, region, path style and
+credentials. Static mode requires both keys and uses S3A's
+`SimpleAWSCredentialsProvider`. Session mode additionally requires a token and uses
+`TemporaryAWSCredentialsProvider`. Instance mode rejects all supplied static/session
+credentials and uses `auth.IAMInstanceCredentialsProvider`. No plaintext endpoint
+is synthesized. Explicit HTTP is for trusted local/test setups, including
+`http://localhost:9000` or `http://minio:9000`; hostname spelling does not prove
+network locality. Production administrators should select HTTPS. Endpoint userinfo,
+query strings and fragments are forbidden.
+
+An illustrative catalog-create payload fragment uses the existing typed secret
+references (the registered provider and locator attributes depend on deployment):
+
+```json
+{
+  "properties": {
+    "delta.warehouse": "s3a://warehouse/tables",
+    "delta.adoption-roots": "[\"s3a://warehouse/admitted\"]",
+    "delta.recovery-principals": "[\"delta-recovery-operator\"]",
+    "delta.storage-credential-mode": "static",
+    "s3-endpoint": "https://s3.example.internal",
+    "s3-region": "us-east-1",
+    "s3-path-style-access": "true"
+  },
+  "secretReferences": {
+    "s3-access-key-id": {
+      "provider": "configured-secret-provider",
+      "attributes": {"key": "delta-reader-access-key"}
+    },
+    "s3-secret-access-key": {
+      "provider": "configured-secret-provider",
+      "attributes": {"key": "delta-reader-secret-key"}
+    }
+  }
+}
+```
+
+Do not send raw secret URNs in request properties. Hidden metadata masks credentials;
+the following SPI integration must also disable `BaseCatalog.shouldBackfillCredential`
+so legacy credential backfill cannot expose resolved values in catalog responses.
+
+Both `s3` and `s3a` inputs normalize once to `s3a`, with lowercase DNS bucket names
+and a consistently removed trailing root slash. Ports, userinfo, query/fragment,
+percent escapes, empty/dot path segments, traversal and other schemes are rejected.
+New locations are `${warehouse}/${schema}/${positiveTableId}`; schema path segments
+are restricted to ASCII letters, digits, underscore and hyphen, starting with a
+letter, digit or underscore. Admission of an existing path requires an exact bucket
+and complete path-segment prefix boundary. A configured `/allowed` root cannot
+admit `/allowed2`. Empty adoption roots admit nothing. No production local-filesystem
+policy flag exists; direct native-reader unit fixtures still use local storage.
+Administrators/platform admission must attest location exclusivity and arrange
+cutover, serialized request completion and writer drain; root membership is not a
+global uniqueness guarantee or a fence against outside writers.
+
+## Authorization and request properties
+
+Registration authorization captures Gravitino's authenticated principal, including
+groups, before storage UGI entry. Anonymous or blank actors fail. Privileged paths
+require enabled authorization, live internal ACL and owner dispatchers, and a real
+service-admin, catalog-owner or metalake-owner decision. The known pass-through
+authorizer and its subclasses fail even when the enable flag is true. Custom
+administrator-selected authorizers remain inside the trusted server boundary.
+Checking another stored actor cannot borrow the current Subject's admin authority.
+Recovery-principal configuration alone grants neither ADOPT nor configuration rights.
+Existing REST CREATE/MODIFY authorization remains required.
+
+Initial publication requires any valid persisted USER or GROUP owner; ownership
+need not equal the operation actor. Pending creator replay requires the exact
+current creator and either no persisted owner or that exact USER owner. A GROUP
+with the creator's name is insufficient. Missing dispatchers and owner lookup
+failures are failures, never evidence of absent ownership. These helpers never set
+an owner. Authorization-disabled publication is unsupported.
+
+Schema property requests must be empty. Table property requests contain only
+`delta.registration.command`, which is mutable and nonreserved operation transport;
+registration operations must consume it without persisting it as an ordinary table
+property. `delta.registration.internal.` is reserved and hidden;
+`delta.registration.receipt.` is reserved and visible. Strict provider request
+validation is necessary because generic metadata helpers ignore unknown properties.
+Ordinary property, location, credential and root alterations are rejected.
+
+## Native reduction and durable admission
+
+`DeltaNativeObservation` retains raw schema, ordered partitions, native ID/version,
+protocol, optional description and opaque optional creation time (including negative
+values). It never retains `DeltaSnapshotMetadata` or its raw configuration. Native
+protocol uses shared 4096-feature/8192-byte-name admission; native IDs obey the
+receipt's 8192-byte bound without truncation. Native projected nested types are
+copied defensively using the existing projection implementation.
+
+| Persisted safe configuration key | Accepted syntax |
+| --- | --- |
+| `delta.columnMapping.mode` | `none`, `name`, `id` |
+| `delta.columnMapping.maxColumnId` | Canonical nonnegative signed-long decimal |
+| `delta.appendOnly` | `true`, `false` |
+| `delta.enableChangeDataFeed` | `true`, `false` |
+| `delta.enableDeletionVectors` | `true`, `false` |
+
+Absent safe keys remain absent; no prefix copying occurs. The full configuration
+digest includes every reader-bounded entry. Its value is `sha256-v1:` followed by
+64 lowercase hex digits. SHA-256 input begins with UTF-8 bytes of the exact domain
+`gravitino.delta.configuration.v1` (no terminator), then entries sorted using Java
+`String.compareTo` (UTF-16 lexicographic order). Each key and value contributes an
+unsigned nonnegative 32-bit big-endian UTF-8 byte length followed by those bytes.
+Malformed UTF-16 is rejected. The versioned digest is durable comparison data, not
+a signature. Tests freeze ordering across BMP/non-BMP keys and insertion orders.
+
+A present transient native operation marker must strictly decode as v1 or finalized
+v2; malformed markers fail with a sanitized error before any caller should store
+ADOPTING. Only a digest of the singleton marker configuration and provenance
+`ABSENT`, `VALID_V1`, or `VALID_V2` remain in the observation. Foreign marker tokens
+must never be copied into receipts. The full digest still includes the marker.
+
+`DeltaMetadataReader.projectSchema` validates the exact supported runtime and
+projects desired command schema with the sole internal adapter/parser, without
+I/O, under the existing 128 KiB UTF-8 command limit. Its `copyColumns` facade copies
+native observational projections without that command limit; it is not a general
+mutable-expression clone.
+
+`DeltaStorageAdmission` measures core's actual `JsonUtils.anyFieldMapper` output,
+including default expressions converted with `DTOConverters.toFunctionArg` (unset
+stays SQL NULL). Its bounded UTF-8 Writer counts escaping, multibyte characters and
+surrogate pairs across writes without constructing unbounded serialized strings.
+Direct names allow 128 UTF-16 units, schema comments 256, top-level column comments
+4096, and table format 64. Actual NUL and malformed surrogates in direct strings
+fail. Nested names/comments are governed by serialized type size, not separate
+VARCHAR limits. Serialized types/defaults allow 65535 bytes; table/schema JSON and
+audit fields plus direct table comments allow 16777215 bytes per field. These are
+portable schema ceilings, not guarantees about deployment packet/memory limits.
+
+The following registration lifecycle must check desired projection before
+RESERVE/BEGIN_REPLACE, observed projection before ADOPT, and every complete schema
+or table candidate before put/update. Internal state encoding and the final
+containing properties map both need checks because embedded schema/markers escape
+again. A native 300 KB top-level comment remains observable but is rejected for
+durable storage. PUBLISH/refresh must recheck actual observations; unrepresentable
+metadata requires a representable full-row-CAS diagnostic with
+`UNREPRESENTABLE_NATIVE_METADATA`, retaining the last representable observation and
+correlation. If that diagnostic cannot fit, keep the old row and fail closed.
+Current tests cover helper admission and final candidate bounds; actual no-row and
+quarantine lifecycle assertions belong to the subsequent state-machine task.

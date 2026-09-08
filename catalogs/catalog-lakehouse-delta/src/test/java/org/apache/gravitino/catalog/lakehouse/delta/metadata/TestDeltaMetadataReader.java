@@ -584,4 +584,23 @@ class TestDeltaMetadataReader {
     assertEquals(
         kind.startsWith("v2") ? Set.of("v2Checkpoint") : Set.of(), actual.writerFeatures());
   }
+
+  @Test
+  void desiredSchemaFacadeIsBoundedSanitizedAndDefensive() {
+    String schema =
+        "{\"type\":\"struct\",\"fields\":[{\"name\":\"c\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}";
+    String boundary = schema + " ".repeat(128 * 1024 - schema.length());
+    assertEquals("c", DeltaMetadataReader.projectSchema(boundary).get(0).name());
+    assertThrows(
+        DeltaMetadataException.class, () -> DeltaMetadataReader.projectSchema(boundary + " "));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> DeltaMetadataReader.projectSchema(schema).clear());
+    for (String invalid : List.of("fixture-secret", "{}", "{\"type\":\"struct\",\"fields\":[]}")) {
+      DeltaMetadataException error =
+          assertThrows(
+              DeltaMetadataException.class, () -> DeltaMetadataReader.projectSchema(invalid));
+      assertEquals("INVALID_DESIRED_SCHEMA", error.reason());
+    }
+  }
 }
