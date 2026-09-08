@@ -393,7 +393,19 @@ class TestDeltaRegistrationRest {
         () -> assertEquals(before, after),
         () -> assertEquals(ownerBefore.name(), ownerAfter.name()),
         () -> assertEquals(ownerBefore.type(), ownerAfter.type()),
-        () -> assertNotNull(observedFailure, "Published CREATE replay must be rejected"),
+        () -> {
+          assertNotNull(observedFailure, "Published CREATE replay must be rejected");
+          assertEquals(RuntimeException.class, observedFailure.getClass());
+          String[] responseLines = observedFailure.getMessage().split("\n", 3);
+          assertEquals(
+              "Failed to operate object [transferred] operation [CREATE] under ["
+                  + schema
+                  + "], reason [Name is already reserved with different content or state]",
+              responseLines[0]);
+          assertEquals(
+              "java.lang.IllegalStateException: Name is already reserved with different content or state",
+              responseLines[1]);
+        },
         () -> assertEquals(creates + 1, RegistrationTestCatalog.CANDIDATES.size()),
         () -> assertEquals(1, RegistrationTestCatalog.VERIFICATIONS.get()));
   }

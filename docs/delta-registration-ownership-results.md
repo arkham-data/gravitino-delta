@@ -41,9 +41,10 @@ since the raw owner implementation has no value equality.
 Baseline: `8eb20098561e595c9077f76e32bf136442114830`. Runtime is JDK 17.0.16;
 new code uses Java 8 APIs. Real MiniGravitino HTTP, Java clients, simple named
 principals, JCasbin, file-backed H2, disabled cache and disabled catalog isolation
-are retained. REST teardown restores the prior metrics object as well as config,
-so a REST-first combined run does not leave a closed metrics object affecting
-lifecycle store reopen.
+are retained. REST teardown now restores the prior metrics object as well as
+config. This is a source fix for the observed REST-first lifecycle reopen failure;
+the successful combined run executed lifecycle before REST, and explicit
+REST-first re-verification was not performed.
 
 ```bash
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
@@ -54,9 +55,11 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
   :catalogs:catalog-lakehouse-generic:spotlessCheck
 ```
 
-The final run passed **39 lifecycle + 25 REST tests (64 total), zero failures,
+The covering run passed **39 lifecycle + 25 REST tests (64 total), zero failures,
 errors or skips**, and scoped Spotless passed. Original final XML is in
-`run-8-focused-green-xml/`; the command exited 0.
+`run-8-focused-green-xml/`; the command exited 0. After review, the tightened
+replay assertion and scoped Spotless also passed: one test, zero failures, errors
+or skips, exit 0 (`run-9-review-replay-assertion-green-xml/`).
 
 Local evidence is under `build/delta-native-registration-evidence/task-1/`.
 Each run preserves exact command arguments, JDK path, timestamps, exit code, log,
