@@ -77,6 +77,7 @@ if (hasProperty("excludePackagesForSparkConnector")) {
 
 dependencies {
   if (deltaTestVersion != null) {
+    testImplementation(project(":catalogs:catalog-lakehouse-delta"))
     testImplementation(project(":catalogs:catalog-lakehouse-generic", "registrationTestArtifacts"))
     testImplementation(project(":catalogs:catalog-lakehouse-generic"))
     testImplementation(project(":delta:delta-common"))
@@ -268,6 +269,7 @@ tasks.test {
   } else {
     dependsOn(":catalogs:catalog-lakehouse-generic:jar")
     systemProperty("gravitino.delta.test.evidence", rootProject.layout.buildDirectory.dir("delta-native-registration-evidence/task-3").get().asFile.absolutePath)
+    systemProperty("gravitino.delta.test.schemaEvidence", rootProject.layout.buildDirectory.dir("delta-schema-contract-evidence/native").get().asFile.absolutePath)
     systemProperty("gravitino.delta.test.sparkVersion", deltaTestSparkVersion)
     systemProperty("gravitino.delta.test.deltaVersion", requireNotNull(deltaTestVersion))
   }
