@@ -288,6 +288,120 @@ class TestDeltaRegistrationLifecycle {
   }
 
   @Test
+  void testActualBaseIsSeparateAndCompleteRowOccProtectsInspection() throws Exception {
+    reserve(1001L, "token", "schema");
+    outcome = syntheticMatched(0L, "first-uuid", "first");
+    transition(RegistrationCommand.publish(1001L, 0L, "token", 0L));
+    TableEntity published = raw();
+    RegistrationReplacementBaseReader reader =
+        row -> {
+          try {
+            store.update(
+                IDENT,
+                TableEntity.class,
+                Entity.EntityType.TABLE,
+                current -> {
+                  Map<String, String> changed = new HashMap<>(current.properties());
+                  changed.put(
+                      RegistrationCommand.INTERNAL + "reason", "concurrent retained-row change");
+                  return RegistrationLifecycleFixture.copy(current, changed, current.columns());
+                });
+          } catch (IOException failure) {
+            throw new RuntimeException(failure);
+          }
+          return new RegistrationReplacementBaseReader.BaseObservation(
+              1L,
+              "first-uuid",
+              published
+                  .properties()
+                  .get(RegistrationCommand.INTERNAL + "native.schemaFingerprint"));
+        };
+    ops =
+        new RegistrationLifecycleFixture(
+            store,
+            schemas,
+            idGenerator,
+            () -> actor,
+            "recovery",
+            () -> handoff,
+            (row, version) -> outcome,
+            reader,
+            false);
+    Assertions.assertThrows(
+        IllegalStateException.class,
+        () ->
+            transition(RegistrationCommand.beginReplace(1001L, 0L, "token", "next", "new-schema")));
+    Assertions.assertEquals("PUBLISHED", state());
+    Assertions.assertFalse(
+        raw().properties().containsKey(RegistrationCommand.INTERNAL + "replacement.base.version"));
+    ops =
+        new RegistrationLifecycleFixture(
+            store,
+            schemas,
+            idGenerator,
+            () -> actor,
+            "recovery",
+            () -> handoff,
+            (row, version) -> outcome,
+            row ->
+                new RegistrationReplacementBaseReader.BaseObservation(
+                    1L,
+                    "first-uuid",
+                    published
+                        .properties()
+                        .get(RegistrationCommand.INTERNAL + "native.schemaFingerprint")),
+            false);
+    transition(RegistrationCommand.beginReplace(1001L, 0L, "token", "next", "new-schema"));
+    Assertions.assertEquals(
+        "1", raw().properties().get(RegistrationCommand.INTERNAL + "replacement.base.version"));
+    Assertions.assertEquals(
+        "0", raw().properties().get(RegistrationCommand.INTERNAL + "native.version"));
+    Assertions.assertEquals(published.auditInfo(), raw().auditInfo());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"version", "uuid", "schemaFingerprint", "all"})
+  void testMissingActualBaseCannotPublish(String missing) throws Exception {
+    ops =
+        new RegistrationLifecycleFixture(
+            store,
+            schemas,
+            idGenerator,
+            () -> actor,
+            "recovery",
+            () -> handoff,
+            (row, version) -> outcome,
+            row ->
+                new RegistrationReplacementBaseReader.BaseObservation(
+                    1L, "first-uuid", "synthetic-schema"),
+            false);
+    reserve(1001L, "token", "schema");
+    outcome = syntheticMatched(0L, "first-uuid", "first");
+    transition(RegistrationCommand.publish(1001L, 0L, "token", 0L));
+    transition(RegistrationCommand.beginReplace(1001L, 0L, "token", "next", "new-schema"));
+    store.update(
+        IDENT,
+        TableEntity.class,
+        Entity.EntityType.TABLE,
+        row -> {
+          Map<String, String> properties = new HashMap<>(row.properties());
+          if (missing.equals("all"))
+            properties
+                .keySet()
+                .removeIf(
+                    key -> key.startsWith(RegistrationCommand.INTERNAL + "replacement.base."));
+          else properties.remove(RegistrationCommand.INTERNAL + "replacement.base." + missing);
+          return RegistrationLifecycleFixture.copy(row, properties, row.columns());
+        });
+    TableEntity corrupt = raw();
+    outcome = syntheticMatched(2L, "new-uuid", "new");
+    Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> transition(RegistrationCommand.publish(1001L, 1L, "next", 2L)));
+    Assertions.assertEquals(corrupt, raw());
+  }
+
+  @Test
   void testReplacementAndStaleGeneration() throws Exception {
     reserve(1001L, "token", "schema");
     outcome = syntheticMatched(0L, "first-uuid", "first");

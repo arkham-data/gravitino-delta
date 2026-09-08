@@ -77,6 +77,11 @@ if (hasProperty("excludePackagesForSparkConnector")) {
 
 dependencies {
   if (deltaTestVersion != null) {
+    testImplementation(project(":catalogs:catalog-lakehouse-generic", "registrationTestArtifacts"))
+    testImplementation(project(":catalogs:catalog-lakehouse-generic"))
+    testImplementation(project(":catalogs:catalog-lakehouse-delta"))
+    testImplementation("io.delta:delta-kernel-api:$deltaTestVersion")
+    testImplementation("io.delta:delta-kernel-defaults:$deltaTestVersion")
     testImplementation("io.delta:delta-spark_$scalaVersion:$deltaTestVersion")
     testImplementation("org.apache.kyuubi:kyuubi-spark-authz_$scalaVersion:${libs.versions.kyuubi4authz.get()}") { exclude("org.apache.hadoop") }
     testImplementation("org.apache.ranger:ranger-plugins-common:2.8.0") { exclude("org.apache.hadoop") }
@@ -262,6 +267,7 @@ tasks.test {
     exclude("**/integration/test/delta/**")
   } else {
     dependsOn(":catalogs:catalog-lakehouse-generic:jar")
+    systemProperty("gravitino.delta.test.evidence", rootProject.layout.buildDirectory.dir("delta-native-registration-evidence/task-3").get().asFile.absolutePath)
     systemProperty("gravitino.delta.test.sparkVersion", deltaTestSparkVersion)
     systemProperty("gravitino.delta.test.deltaVersion", requireNotNull(deltaTestVersion))
   }
@@ -331,4 +337,19 @@ tasks.withType<ScalaCompile>().configureEach {
   doFirst {
     logger.lifecycle("DELTA SCALA compilerClasspath={} target=jvm-1.8 java={}", scalaClasspath.files, System.getProperty("java.version"))
   }
+}
+
+if (deltaTestVersion != null) {
+  configurations.matching { it.name == "testCompileClasspath" || it.name == "testRuntimeClasspath" }.configureEach {
+    resolutionStrategy.eachDependency {
+      if (requested.group == "io.delta" && requested.name in setOf("delta-kernel-api", "delta-kernel-defaults", "delta-storage")) {
+        useVersion(deltaTestVersion)
+      }
+    }
+  }
+}
+
+if (deltaTestVersion != null) {
+  tasks.named("compileTestJava") { dependsOn(":catalogs:catalog-lakehouse-generic:runtimeJars") }
+  tasks.named("compileTestScala") { dependsOn(":catalogs:catalog-lakehouse-generic:runtimeJars") }
 }

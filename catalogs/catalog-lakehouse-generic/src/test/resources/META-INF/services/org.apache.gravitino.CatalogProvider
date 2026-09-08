@@ -17,3 +17,4 @@
 # under the License.
 #
 org.apache.gravitino.catalog.lakehouse.delta.registration.RegistrationTestCatalog
+org.apache.gravitino.catalog.lakehouse.delta.registration.NativeRegistrationTestCatalog

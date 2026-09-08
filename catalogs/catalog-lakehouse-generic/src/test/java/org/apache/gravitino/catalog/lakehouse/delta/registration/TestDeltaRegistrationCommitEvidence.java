@@ -68,6 +68,23 @@ class TestDeltaRegistrationCommitEvidence {
   @TempDir Path directory;
 
   @Test
+  void testNativeReaderRejectsUnsupportedBaseAndNeverTreatsAbsenceAsNotCommitted() {
+    NativeRegistrationCommitVerifier reader =
+        new NativeRegistrationCommitVerifier(new Configuration());
+    StructType unsupported = new StructType().add("flag", BooleanType.BOOLEAN, true);
+    Path nativePath = directory.resolve("unsupported-native-base");
+    createDeltaTable(nativePath, unsupported);
+    Assertions.assertThrows(
+        IllegalStateException.class,
+        () -> reader.read(reservation(nativePath, unsupported.toJson(), 0L)));
+    RegistrationCommitVerifier.Result absent =
+        reader.verify(
+            reservation(directory.resolve("absent-native"), unsupported.toJson(), null), -1);
+    Assertions.assertEquals(RegistrationCommitVerifier.Kind.AMBIGUOUS, absent.kind());
+    Assertions.assertNull(absent.observation());
+  }
+
+  @Test
   void testValidSnapshotWithoutCorrelationIsAmbiguous() {
     assertLoadedKernelArtifacts();
     StructType schema =

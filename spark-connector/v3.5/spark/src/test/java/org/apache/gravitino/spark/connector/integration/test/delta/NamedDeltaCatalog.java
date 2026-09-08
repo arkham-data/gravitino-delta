@@ -255,6 +255,30 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
     return GravitinoAdminClient.builder(uri).build();
   }
 
+  /**
+   * @return native test delegate, preserving loaded native Delta table types
+   */
+  protected DeltaCatalog nativeDelegate() {
+    return nativeCatalog;
+  }
+
+  /**
+   * @return remote registration catalog owned by this test facade
+   */
+  protected Catalog registrationCatalog() {
+    return registry;
+  }
+
+  /**
+   * Resolves the test schema location or published registration.
+   *
+   * @param id named Spark identifier
+   * @return server-owned location
+   */
+  protected String registrationLocation(Identifier id) {
+    return location(id);
+  }
+
   private Table loadRegistered(Identifier id) throws NoSuchTableException {
     try {
       String location =

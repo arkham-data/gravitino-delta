@@ -77,6 +77,8 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
   private final String recoveryPrincipal;
   private final BooleanSupplier writerHandoff;
   private final RegistrationCommitVerifier verifier;
+  @Nullable private final RegistrationReplacementBaseReader baseReader;
+  private final boolean nativeProjection;
 
   RegistrationLifecycleFixture(
       EntityStore store,
@@ -86,6 +88,21 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
       String recoveryPrincipal,
       BooleanSupplier writerHandoff,
       RegistrationCommitVerifier verifier) {
+    this(store, schemas, ids, principal, recoveryPrincipal, writerHandoff, verifier, null, false);
+  }
+
+  RegistrationLifecycleFixture(
+      EntityStore store,
+      SupportsSchemas schemas,
+      IdGenerator ids,
+      Supplier<String> principal,
+      String recoveryPrincipal,
+      BooleanSupplier writerHandoff,
+      RegistrationCommitVerifier verifier,
+      @Nullable RegistrationReplacementBaseReader baseReader,
+      boolean nativeProjection) {
+    this.baseReader = baseReader;
+    this.nativeProjection = nativeProjection;
     this.entityStore = store;
     this.schemaOperations = schemas;
     this.ids = ids;
@@ -138,6 +155,7 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
     // excluded.
     stored.put(INTERNAL + "request", command.encode());
     stored.put(INTERNAL + "operation", "RESERVE");
+    if (baseReader != null) stored.put(INTERNAL + "actualBaseRequired", "true");
     TableEntity candidate =
         TableEntity.builder()
             .withId(id)
@@ -198,6 +216,16 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
       throw new IllegalStateException("Explicit test writer handoff is required");
     }
     validateTransition(inspected, command);
+    RegistrationReplacementBaseReader.BaseObservation actualBase =
+        command.operation == RegistrationCommand.Operation.BEGIN_REPLACE && baseReader != null
+            ? baseReader.read(inspected)
+            : null;
+    if (actualBase != null
+        && (actualBase.version < Long.parseLong(value(inspected, "native.version"))
+            || !actualBase.uuid.equals(value(inspected, "native.uuid"))
+            || !actualBase.schemaJson.equals(value(inspected, "native.schemaFingerprint")))) {
+      throw new IllegalStateException("Actual replacement base disagrees with publication lineage");
+    }
     RegistrationCommitVerifier.Result evidence =
         command.operation == RegistrationCommand.Operation.BEGIN_REPLACE
             ? RegistrationCommitVerifier.Result.notCommitted("No inspection for begin replacement")
@@ -226,7 +254,8 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
                   throw new IllegalStateException("Reservation changed during evidence inspection");
                 }
                 TableEntity candidate =
-                    applyVerifiedTransition(current, command, evidence, observedColumns);
+                    applyVerifiedTransition(
+                        current, command, evidence, observedColumns, actualBase);
                 state(candidate);
                 return candidate;
               }));
@@ -354,7 +383,8 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
       TableEntity current,
       RegistrationCommand command,
       RegistrationCommitVerifier.Result evidence,
-      List<ColumnEntity> observedColumns) {
+      List<ColumnEntity> observedColumns,
+      @Nullable RegistrationReplacementBaseReader.BaseObservation actualBase) {
     Map<String, String> properties = new HashMap<>(current.properties());
     if (command.operation == RegistrationCommand.Operation.BEGIN_REPLACE) {
       current
@@ -365,6 +395,11 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
                   properties.put(PRIOR + key.substring(INTERNAL.length()), value);
                 }
               });
+      if (actualBase != null) {
+        properties.put(INTERNAL + "replacement.base.version", Long.toString(actualBase.version));
+        properties.put(INTERNAL + "replacement.base.uuid", actualBase.uuid);
+        properties.put(INTERNAL + "replacement.base.schemaFingerprint", actualBase.schemaJson);
+      }
       properties.put(INTERNAL + "state", State.REPLACING.name());
       properties.put(INTERNAL + "generation", Long.toString(Math.addExact(command.generation, 1)));
       properties.put(INTERNAL + "token", command.replacementToken);
@@ -381,7 +416,9 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
       if (base != null && observation.nativeVersion() <= Long.parseLong(base)) {
         throw new IllegalStateException("Verified replacement does not advance the stored base");
       }
-      properties.keySet().removeIf(key -> key.startsWith(PRIOR));
+      properties
+          .keySet()
+          .removeIf(key -> key.startsWith(PRIOR) || key.startsWith(INTERNAL + "replacement.base."));
       properties.put(INTERNAL + "state", State.PUBLISHED.name());
       properties.put(INTERNAL + "native.version", Long.toString(observation.nativeVersion()));
       properties.put(INTERNAL + "native.uuid", observation.nativeUuid());
@@ -441,6 +478,23 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
       }
       value(entity, "native.uuid");
       value(entity, "native.schemaFingerprint");
+    }
+    boolean pendingReplace =
+        state == State.REPLACING || (state == State.QUARANTINED && "REPLACE".equals(operation));
+    boolean anyBase =
+        entity.properties().keySet().stream()
+            .anyMatch(key -> key.startsWith(INTERNAL + "replacement.base."));
+    if (anyBase
+        || (pendingReplace
+            && "true".equals(entity.properties().get(INTERNAL + "actualBaseRequired")))) {
+      if (!pendingReplace
+          || Long.parseLong(value(entity, "replacement.base.version"))
+              < Long.parseLong(value(entity, "native.version"))
+          || !value(entity, "replacement.base.uuid").equals(value(entity, "native.uuid"))
+          || !value(entity, "replacement.base.schemaFingerprint")
+              .equals(value(entity, "native.schemaFingerprint"))) {
+        throw new IllegalArgumentException("Invalid actual replacement base");
+      }
     }
     validatePriorPublication(entity, state, operation);
     return state;
@@ -516,12 +570,22 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
     return value;
   }
 
-  private static Table receipt(TableEntity entity) {
+  private Table receipt(TableEntity entity) {
     Map<String, String> properties = new HashMap<>();
     properties.put(RECEIPT + "id", Long.toString(entity.id()));
     properties.put(RECEIPT + "generation", value(entity, "generation"));
     properties.put(RECEIPT + "token", value(entity, "token"));
     properties.put(RECEIPT + "state", state(entity).name());
+    if (nativeProjection) {
+      if (state(entity) == State.PUBLISHED) {
+        properties.put("location", value(entity, "location"));
+        properties.put(RECEIPT + "native.version", value(entity, "native.version"));
+        properties.put(RECEIPT + "native.uuid", value(entity, "native.uuid"));
+      } else {
+        properties.put(
+            RECEIPT + "marker", NativeRegistrationCommitVerifier.marker(entity).encode());
+      }
+    }
     return GenericTable.builder()
         .withName(entity.name())
         .withComment(entity.comment())

@@ -59,7 +59,7 @@ import org.apache.gravitino.rel.indexes.Index;
 import org.apache.gravitino.utils.PrincipalUtils;
 
 /** ServiceLoader provider used only by the real managed-registration HTTP experiment. */
-public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestCatalog> {
+public class RegistrationTestCatalog extends BaseCatalog<RegistrationTestCatalog> {
   static final List<Long> CANDIDATES = Collections.synchronizedList(new ArrayList<>());
   static final List<NameIdentifier> SCHEMA_DROPS = Collections.synchronizedList(new ArrayList<>());
   static final AtomicInteger ALTERS = new AtomicInteger();
@@ -81,7 +81,7 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
   /** {@inheritDoc} */
   @Override
   protected CatalogOperations newOps(Map<String, String> config) {
-    return new Operations();
+    return new Operations(this);
   }
 
   /** {@inheritDoc} */
@@ -112,6 +112,27 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
   @Override
   public PropertiesMetadata tablePropertiesMetadata() {
     return new Metadata(true);
+  }
+
+  /**
+   * Constructs test-only guarded lifecycle operations.
+   *
+   * @param store durable test store
+   * @param schemas guarded schema operations
+   * @return managed test lifecycle
+   */
+  protected RegistrationLifecycleFixture createTables(EntityStore store, SupportsSchemas schemas) {
+    return new RegistrationLifecycleFixture(
+        store,
+        schemas,
+        GravitinoEnv.getInstance().idGenerator(),
+        PrincipalUtils::getCurrentUserName,
+        "registration-recovery",
+        () -> handoff,
+        (row, version) -> {
+          VERIFICATIONS.incrementAndGet();
+          return outcome;
+        });
   }
 
   static void reset() {
@@ -163,9 +184,14 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
 
   private static final class Operations
       implements CatalogOperations, SupportsSchemas, TableCatalog {
+    private final RegistrationTestCatalog provider;
     private EntityStore store;
     private ManagedSchemaOperations schemas;
     private RegistrationLifecycleFixture tables;
+
+    private Operations(RegistrationTestCatalog provider) {
+      this.provider = provider;
+    }
 
     /** {@inheritDoc} */
     @Override
@@ -180,18 +206,7 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
               return store;
             }
           };
-      tables =
-          new RegistrationLifecycleFixture(
-              store,
-              schemas,
-              GravitinoEnv.getInstance().idGenerator(),
-              PrincipalUtils::getCurrentUserName,
-              "registration-recovery",
-              () -> handoff,
-              (row, version) -> {
-                VERIFICATIONS.incrementAndGet();
-                return outcome;
-              });
+      tables = provider.createTables(store, schemas);
     }
 
     /** {@inheritDoc} */
@@ -230,7 +245,7 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
     /** {@inheritDoc} */
     @Override
     public boolean dropSchema(NameIdentifier identifier, boolean cascade) {
-      SCHEMA_DROPS.add(identifier);
+      if (provider.getClass() == RegistrationTestCatalog.class) SCHEMA_DROPS.add(identifier);
       Namespace tableNamespace =
           Namespace.of(
               identifier.namespace().level(0), identifier.namespace().level(1), identifier.name());
@@ -268,7 +283,8 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
         Distribution distribution,
         SortOrder[] sortOrders,
         Index[] indexes) {
-      CANDIDATES.add(StringIdentifier.fromProperties(properties).id());
+      if (provider.getClass() == RegistrationTestCatalog.class)
+        CANDIDATES.add(StringIdentifier.fromProperties(properties).id());
       return tables.createTable(
           identifier, columns, comment, properties, partitions, distribution, sortOrders, indexes);
     }
@@ -276,14 +292,14 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
     /** {@inheritDoc} */
     @Override
     public Table alterTable(NameIdentifier identifier, TableChange... changes) {
-      ALTERS.incrementAndGet();
+      if (provider.getClass() == RegistrationTestCatalog.class) ALTERS.incrementAndGet();
       return tables.alterTable(identifier, changes);
     }
 
     /** {@inheritDoc} */
     @Override
     public boolean dropTable(NameIdentifier identifier) {
-      DROPS.incrementAndGet();
+      if (provider.getClass() == RegistrationTestCatalog.class) DROPS.incrementAndGet();
       return tables.dropTable(identifier);
     }
 

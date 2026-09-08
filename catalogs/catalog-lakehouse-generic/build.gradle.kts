@@ -68,6 +68,7 @@ dependencies {
 
   annotationProcessor(libs.lombok)
 
+  testImplementation(project(":catalogs:catalog-lakehouse-delta"))
   testImplementation(project(":api"))
   testImplementation(project(":clients:client-java"))
   testImplementation(project(":common"))
@@ -153,3 +154,15 @@ tasks.test {
 tasks.getByName("generateMetadataFileForMavenJavaPublication") {
   dependsOn("runtimeJars")
 }
+
+// Scoped test-only protocol helpers; no production dependency or publication.
+val registrationTestJar by tasks.registering(Jar::class) {
+  archiveClassifier.set("registration-tests")
+  from(sourceSets.test.get().output) {
+    include("org/apache/gravitino/catalog/lakehouse/delta/registration/**")
+    exclude("**/Test*.class")
+    include("META-INF/services/org.apache.gravitino.CatalogProvider")
+  }
+}
+configurations { create("registrationTestArtifacts") }
+artifacts { add("registrationTestArtifacts", registrationTestJar) }
