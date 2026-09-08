@@ -18,6 +18,7 @@
  */
 package org.apache.gravitino.spark.connector.integration.test.delta;
 
+import com.google.common.collect.ImmutableMap;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -74,7 +75,7 @@ public class TestDeltaNamedCatalogGate extends BaseIT {
 
   @Test
   void characterizeNamedLifecycleAndPublicationFailures() throws Exception {
-    metalake = client.createMetalake("delta_gate", "", Map.of());
+    metalake = client.createMetalake("delta_gate", "", ImmutableMap.of());
     for (String name : new String[] {"delta_a", "delta_b"}) {
       Catalog catalog =
           metalake.createCatalog(
@@ -82,11 +83,13 @@ public class TestDeltaNamedCatalogGate extends BaseIT {
               Catalog.Type.RELATIONAL,
               "lakehouse-generic",
               "",
-              Map.of("location", directory.resolve(name).toString()));
+              ImmutableMap.of("location", directory.resolve(name).toString()));
       catalog
           .asSchemas()
           .createSchema(
-              "sales", "", Map.of("location", directory.resolve(name).resolve("sales").toString()));
+              "sales",
+              "",
+              ImmutableMap.of("location", directory.resolve(name).resolve("sales").toString()));
     }
     startSpark(true);
     for (String name : new String[] {"delta_a", "delta_b"}) {
@@ -104,7 +107,7 @@ public class TestDeltaNamedCatalogGate extends BaseIT {
               NameIdentifier.of("sales", "registered"),
               columns(),
               "",
-              Map.of("format", "delta", "external", "true", "location", location));
+              ImmutableMap.of("format", "delta", "external", "true", "location", location));
       Assertions.assertEquals(
           amount, spark.sql("SELECT amount FROM " + name + ".sales.registered").head().getLong(0));
       Assertions.assertInstanceOf(
@@ -449,7 +452,8 @@ public class TestDeltaNamedCatalogGate extends BaseIT {
                 id,
                 new Column[] {Column.of("id", Types.LongType.get())},
                 "explicit recovery probe",
-                Map.of("format", "delta", "external", "true", "location", location.toString()));
+                ImmutableMap.of(
+                    "format", "delta", "external", "true", "location", location.toString()));
       }
     } else {
       sql(statement);

@@ -18,8 +18,8 @@
  */
 package org.apache.gravitino.spark.connector.integration.test.delta;
 
+import com.google.common.collect.ImmutableMap;
 import java.nio.file.Path;
-import java.util.Map;
 import org.apache.spark.sql.SaveMode;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
@@ -102,7 +102,7 @@ public class TestDeltaReplacementStage {
             Identifier.of(new String[] {"default"}, "copied"),
             schema,
             new Transform[0],
-            Map.of("provider", "delta"));
+            ImmutableMap.of("provider", "delta"));
     WriteBuilder builder =
         ((SupportsWrite) stage)
             .newWriteBuilder(
@@ -122,7 +122,7 @@ public class TestDeltaReplacementStage {
                   /** {@inheritDoc} */
                   @Override
                   public CaseInsensitiveStringMap options() {
-                    return new CaseInsensitiveStringMap(Map.of());
+                    return new CaseInsensitiveStringMap(ImmutableMap.of());
                   }
                 });
     ((SupportsTruncate) builder).truncate();

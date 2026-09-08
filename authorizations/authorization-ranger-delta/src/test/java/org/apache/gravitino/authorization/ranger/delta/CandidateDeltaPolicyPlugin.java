@@ -18,6 +18,7 @@
  */
 package org.apache.gravitino.authorization.ranger.delta;
 
+import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,7 +46,7 @@ class CandidateDeltaPolicyPlugin extends RangerAuthorizationHadoopSQLPlugin {
   /** {@inheritDoc} */
   @Override
   public List<String> policyResourceDefinesRule() {
-    return List.of("catalog", "database", "table", "column");
+    return ImmutableList.of("catalog", "database", "table", "column");
   }
 
   /** {@inheritDoc} */
@@ -59,7 +60,7 @@ class CandidateDeltaPolicyPlugin extends RangerAuthorizationHadoopSQLPlugin {
                 privilege.name() != Privilege.Name.SELECT_TABLE
                     || privilege.condition() != Privilege.Condition.ALLOW))
       throw new UnsupportedOperationException("Only SELECT_TABLE allow is characterized");
-    List<String> names = new ArrayList<>(List.of(object.fullName().split("\\.")));
+    List<String> names = new ArrayList<>(ImmutableList.copyOf(object.fullName().split("\\.")));
     names.add("*");
     List<AuthorizationPrivilege> privileges =
         object.privileges().stream()
@@ -68,7 +69,7 @@ class CandidateDeltaPolicyPlugin extends RangerAuthorizationHadoopSQLPlugin {
                     new RangerPrivileges.RangerHivePrivilegeImpl(
                         RangerPrivileges.RangerHadoopSQLPrivilege.SELECT, privilege.condition()))
             .collect(Collectors.toList());
-    return List.of(new Resource(names, privileges));
+    return ImmutableList.of(new Resource(names, privileges));
   }
 
   /** {@inheritDoc} */
@@ -120,7 +121,7 @@ class CandidateDeltaPolicyPlugin extends RangerAuthorizationHadoopSQLPlugin {
   }
 
   private List<String> labels() {
-    return List.of(
+    return ImmutableList.of(
         "gravitino-managed",
         "gravitino-metalake-id:" + metalakeId,
         "gravitino-catalog-id:" + catalogId);

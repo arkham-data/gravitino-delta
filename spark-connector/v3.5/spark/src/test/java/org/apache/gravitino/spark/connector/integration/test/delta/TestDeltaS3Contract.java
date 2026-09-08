@@ -20,13 +20,13 @@ package org.apache.gravitino.spark.connector.integration.test.delta;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
+import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import org.apache.gravitino.Catalog;
@@ -88,15 +88,15 @@ public class TestDeltaS3Contract extends BaseIT {
     String ordersLocation = schemaLocation + "/orders/";
     String copyLocation = schemaLocation + "/copy/";
 
-    metalake = client.createMetalake(metalakeName, "", Map.of());
+    metalake = client.createMetalake(metalakeName, "", ImmutableMap.of());
     registry =
         metalake.createCatalog(
             CATALOG_NAME,
             Catalog.Type.RELATIONAL,
             "lakehouse-generic",
             "",
-            Map.of("location", ownedPrefix + "/" + CATALOG_NAME));
-    registry.asSchemas().createSchema(SCHEMA_NAME, "", Map.of("location", schemaLocation));
+            ImmutableMap.of("location", ownedPrefix + "/" + CATALOG_NAME));
+    registry.asSchemas().createSchema(SCHEMA_NAME, "", ImmutableMap.of("location", schemaLocation));
     startSpark(endpoint, accessKey, secretKey);
     fileSystem = new Path(ownedPrefix).getFileSystem(spark.sparkContext().hadoopConfiguration());
 
@@ -310,7 +310,7 @@ public class TestDeltaS3Contract extends BaseIT {
 
   private String requireProperty(String name) {
     String value = System.getProperty(name);
-    if (value == null || value.isBlank()) {
+    if (value == null || value.trim().isEmpty()) {
       throw new IllegalStateException("Missing required system property " + name);
     }
     return value;
@@ -318,7 +318,7 @@ public class TestDeltaS3Contract extends BaseIT {
 
   private String requireCredential(Properties credentials, String name) {
     String value = credentials.getProperty(name);
-    if (value == null || value.isBlank()) {
+    if (value == null || value.trim().isEmpty()) {
       throw new IllegalStateException("Missing required credential " + name);
     }
     return value;

@@ -18,6 +18,7 @@
  */
 package org.apache.gravitino.spark.connector.integration.test.delta;
 
+import com.google.common.collect.ImmutableMap;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -298,7 +299,7 @@ public class NamedDeltaCatalog implements StagingTableCatalog, SupportsNamespace
             gravitinoId(id),
             columns,
             "",
-            Map.of("format", "delta", "external", "true", "location", location));
+            ImmutableMap.of("format", "delta", "external", "true", "location", location));
   }
 
   private void precheck(Identifier id)

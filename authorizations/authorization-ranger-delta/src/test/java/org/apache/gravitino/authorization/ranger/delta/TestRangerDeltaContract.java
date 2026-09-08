@@ -18,6 +18,8 @@
  */
 package org.apache.gravitino.authorization.ranger.delta;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -66,9 +68,10 @@ class TestRangerDeltaContract {
           new RangerAuthorizationHadoopSQLPlugin("lake", config());
       RangerPolicy owned = policy(1, 0);
       owned.setPolicyLabels(
-          List.of("gravitino-managed", "gravitino-metalake-id:10", "gravitino-catalog-id:20"));
+          ImmutableList.of(
+              "gravitino-managed", "gravitino-metalake-id:10", "gravitino-catalog-id:20"));
       Mockito.when(plugin.getRangerClient().findPolicies(Mockito.anyMap()))
-          .thenReturn(List.of(owned, policy(2, 0), policy(3, 1), policy(4, 2)));
+          .thenReturn(ImmutableList.of(owned, policy(2, 0), policy(3, 1), policy(4, 2)));
       Assertions.assertThrows(
           AuthorizationPluginException.class,
           () ->
@@ -86,14 +89,14 @@ class TestRangerDeltaContract {
           new RangerAuthorizationHadoopSQLPlugin("lake", config());
       RangerPolicy mask = policy(3, 1);
       Mockito.when(plugin.getRangerClient().findPolicies(Mockito.anyMap()))
-          .thenReturn(List.of(mask));
+          .thenReturn(ImmutableList.of(mask));
       Role role = Mockito.mock(Role.class);
       Mockito.when(role.name()).thenReturn("reader_role");
       SecurableObject object =
           SecurableObjects.parse(
               "delta_a.sales.orders",
               MetadataObject.Type.TABLE,
-              List.of(Privileges.SelectTable.allow()));
+              ImmutableList.of(Privileges.SelectTable.allow()));
       plugin.onRoleUpdated(role, RoleChange.removeSecurableObject(role.name(), object));
       Mockito.verify(plugin.getRangerClient(), Mockito.times(2)).deletePolicy(3L);
     }
@@ -105,10 +108,10 @@ class TestRangerDeltaContract {
         Mockito.mockConstruction(RangerClientExtension.class)) {
       RangerAuthorizationHadoopSQLPlugin plugin = candidate();
       List<RangerPolicy> policies =
-          new ArrayList<>(List.of(policy(2, 0), policy(3, 1), policy(4, 2)));
+          new ArrayList<>(ImmutableList.of(policy(2, 0), policy(3, 1), policy(4, 2)));
       for (RangerPolicy policy : policies)
         policy.setResources(
-            Map.of(
+            ImmutableMap.of(
                 "catalog",
                 new RangerPolicy.RangerPolicyResource("delta_a"),
                 "database",
@@ -143,7 +146,7 @@ class TestRangerDeltaContract {
           SecurableObjects.parse(
               "delta_a.sales.orders",
               MetadataObject.Type.TABLE,
-              List.of(Privileges.SelectTable.allow()));
+              ImmutableList.of(Privileges.SelectTable.allow()));
       RoleChange grant = RoleChange.addSecurableObject(role.name(), object);
       RoleChange revoke = RoleChange.removeSecurableObject(role.name(), object);
       Assertions.assertTrue(plugin.onRoleUpdated(role, grant));
@@ -153,12 +156,12 @@ class TestRangerDeltaContract {
       Assertions.assertTrue(managed.getDenyPolicyItems().isEmpty());
       Assertions.assertEquals(1, managed.getPolicyItems().size());
       RangerPolicy.RangerPolicyItem item = managed.getPolicyItems().get(0);
-      Assertions.assertEquals(List.of("GRAVITINO_reader_role"), item.getRoles());
+      Assertions.assertEquals(ImmutableList.of("GRAVITINO_reader_role"), item.getRoles());
       Assertions.assertEquals(1, item.getAccesses().size());
       Assertions.assertEquals("select", item.getAccesses().get(0).getType());
       Assertions.assertEquals(Boolean.TRUE, item.getAccesses().get(0).getIsAllowed());
       Assertions.assertEquals(
-          List.of("delta_a"), managed.getResources().get("catalog").getValues());
+          ImmutableList.of("delta_a"), managed.getResources().get("catalog").getValues());
       Assertions.assertTrue(managed.getPolicyLabels().contains("gravitino-catalog-id:20"));
       Assertions.assertTrue(plugin.onRoleUpdated(role, revoke));
       Assertions.assertTrue(plugin.onRoleUpdated(role, revoke));
@@ -177,16 +180,17 @@ class TestRangerDeltaContract {
           SecurableObjects.parse(
               "delta_a.sales.orders",
               MetadataObject.Type.TABLE,
-              List.of(Privileges.SelectTable.allow()));
+              ImmutableList.of(Privileges.SelectTable.allow()));
       AuthorizationSecurableObject resource = plugin.translatePrivilege(table).get(0);
       RangerPolicy owned = plugin.createPolicyAddResources(resource);
       RangerPolicy duplicate = plugin.createPolicyAddResources(resource);
       Mockito.when(plugin.getRangerClient().findPolicies(Mockito.anyMap()))
-          .thenReturn(List.of(owned, duplicate));
+          .thenReturn(ImmutableList.of(owned, duplicate));
       Assertions.assertThrows(
           AuthorizationPluginException.class, () -> plugin.findManagedPolicy(resource));
       duplicate.setPolicyLabels(
-          List.of("gravitino-managed", "gravitino-metalake-id:10", "gravitino-catalog-id:21"));
+          ImmutableList.of(
+              "gravitino-managed", "gravitino-metalake-id:10", "gravitino-catalog-id:21"));
       Assertions.assertSame(owned, plugin.findManagedPolicy(resource));
       duplicate.setPolicyLabels(owned.getPolicyLabels());
       duplicate.setPolicyType(RangerPolicy.POLICY_TYPE_DATAMASK);
@@ -214,25 +218,25 @@ class TestRangerDeltaContract {
     policy.setPolicyType(type);
     if (type == RangerPolicy.POLICY_TYPE_ACCESS) {
       RangerPolicy.RangerPolicyItem item = new RangerPolicy.RangerPolicyItem();
-      item.setUsers(List.of("ranger_reader"));
-      item.setAccesses(List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
-      policy.setPolicyItems(List.of(item));
+      item.setUsers(ImmutableList.of("ranger_reader"));
+      item.setAccesses(ImmutableList.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+      policy.setPolicyItems(ImmutableList.of(item));
     } else if (type == RangerPolicy.POLICY_TYPE_DATAMASK) {
       RangerPolicy.RangerDataMaskPolicyItem item = new RangerPolicy.RangerDataMaskPolicyItem();
-      item.setUsers(List.of("ranger_reader"));
-      item.setAccesses(List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+      item.setUsers(ImmutableList.of("ranger_reader"));
+      item.setAccesses(ImmutableList.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
       item.setDataMaskInfo(
           new RangerPolicy.RangerPolicyItemDataMaskInfo("CUSTOM", null, "'MASKED'"));
-      policy.setDataMaskPolicyItems(List.of(item));
+      policy.setDataMaskPolicyItems(ImmutableList.of(item));
     } else {
       RangerPolicy.RangerRowFilterPolicyItem item = new RangerPolicy.RangerRowFilterPolicyItem();
-      item.setUsers(List.of("ranger_reader"));
-      item.setAccesses(List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+      item.setUsers(ImmutableList.of("ranger_reader"));
+      item.setAccesses(ImmutableList.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
       item.setRowFilterInfo(new RangerPolicy.RangerPolicyItemRowFilterInfo("id = 1"));
-      policy.setRowFilterPolicyItems(List.of(item));
+      policy.setRowFilterPolicyItems(ImmutableList.of(item));
     }
     policy.setResources(
-        Map.of(
+        ImmutableMap.of(
             "database",
             new RangerPolicy.RangerPolicyResource("sales"),
             "table",
@@ -241,23 +245,16 @@ class TestRangerDeltaContract {
   }
 
   private static Map<String, String> config() {
-    return Map.of(
-        "authorization.ranger.admin.url",
-        "http://127.0.0.1:1",
-        "authorization.ranger.service.type",
-        "hive",
-        "authorization.ranger.service.name",
-        "delta_local",
-        "authorization.ranger.auth.type",
-        "simple",
-        "authorization.ranger.username",
-        "admin",
-        "authorization.ranger.password",
-        "unused-local-fixture",
-        "authorization.metalake.id",
-        "10",
-        "authorization.catalog.id",
-        "20");
+    return ImmutableMap.<String, String>builder()
+        .put("authorization.ranger.admin.url", "http://127.0.0.1:1")
+        .put("authorization.ranger.service.type", "hive")
+        .put("authorization.ranger.service.name", "delta_local")
+        .put("authorization.ranger.auth.type", "simple")
+        .put("authorization.ranger.username", "admin")
+        .put("authorization.ranger.password", "unused-local-fixture")
+        .put("authorization.metalake.id", "10")
+        .put("authorization.catalog.id", "20")
+        .build();
   }
 
   private static void assertRangerArtifact(Class<?> type, String artifact) {

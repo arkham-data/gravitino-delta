@@ -18,10 +18,11 @@
  */
 package org.apache.gravitino.spark.connector.integration.test.delta;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import java.nio.file.Path;
 import java.security.PrivilegedExceptionAction;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.gravitino.Catalog;
@@ -69,7 +70,7 @@ class TestRangerDeltaLocalEngine extends BaseIT {
     assertRangerArtifact(RangerPluginClassLoader.class, "ranger-plugin-classloader");
     assertRangerArtifact(RangerBasePlugin.class, "ranger-plugins-common");
     assertRangerArtifact(UgsyncCommonConstants.class, "ugsync-util");
-    GravitinoMetalake metalake = client.createMetalake("ranger_delta_gate", "", Map.of());
+    GravitinoMetalake metalake = client.createMetalake("ranger_delta_gate", "", ImmutableMap.of());
     SparkSession.Builder builder =
         SparkSession.builder()
             .master("local[2]")
@@ -90,11 +91,13 @@ class TestRangerDeltaLocalEngine extends BaseIT {
               Catalog.Type.RELATIONAL,
               "lakehouse-generic",
               "",
-              Map.of("location", directory.resolve(name).toString()));
+              ImmutableMap.of("location", directory.resolve(name).toString()));
       catalog
           .asSchemas()
           .createSchema(
-              "sales", "", Map.of("location", directory.resolve(name).resolve("sales").toString()));
+              "sales",
+              "",
+              ImmutableMap.of("location", directory.resolve(name).resolve("sales").toString()));
       builder
           .config(
               "spark.sql.catalog." + name,
@@ -123,7 +126,7 @@ class TestRangerDeltaLocalEngine extends BaseIT {
                   Column.of("denied", Types.StringType.get())
                 },
                 "",
-                Map.of("format", "delta", "external", "true", "location", location));
+                ImmutableMap.of("format", "delta", "external", "true", "location", location));
         LogicalRelation scan =
             scan(spark.table(name + ".sales.orders").queryExecution().analyzed());
         LOG.info("NATIVE READ resource={} plan={}", name + ".sales.orders", scan.treeString());
@@ -206,11 +209,11 @@ class TestRangerDeltaLocalEngine extends BaseIT {
                             .collect(Collectors.toList());
                     LOG.info("EXECUTED ALLOWED ROWS {}", rows);
                     Assertions.assertEquals(
-                        List.of("[MASKED]"),
+                        ImmutableList.of("[MASKED]"),
                         rows,
                         "Real Ranger mask and row filter must rewrite executed rows");
                     for (String query :
-                        List.of(
+                        ImmutableList.of(
                             "SELECT denied FROM delta_a.sales.orders",
                             "SELECT * FROM delta_a.sales.orders",
                             "SELECT allowed FROM delta_b.sales.orders"))
@@ -226,13 +229,21 @@ class TestRangerDeltaLocalEngine extends BaseIT {
                     LOG.info(
                         "LOCAL REFRESH version=2 elapsedMs={}",
                         (System.nanoTime() - start) / 1000000);
-                    int requestCount = LocalRangerEngine.requests().size();
+                    List<String> requestSnapshot = LocalRangerEngine.requests();
+                    Assertions.assertThrows(
+                        UnsupportedOperationException.class,
+                        () -> requestSnapshot.add("snapshot must stay immutable"));
+                    int requestCount = requestSnapshot.size();
                     assertDenied(
                         "SELECT allowed FROM delta_a.sales.orders",
                         "Ranger denied reader delta_a/sales/orders/allowed");
+                    Assertions.assertEquals(
+                        requestCount,
+                        requestSnapshot.size(),
+                        "Captured requests must remain a copied snapshot");
+                    List<String> currentRequests = LocalRangerEngine.requests();
                     List<String> refreshedRequests =
-                        LocalRangerEngine.requests()
-                            .subList(requestCount, LocalRangerEngine.requests().size());
+                        currentRequests.subList(requestCount, currentRequests.size());
                     Assertions.assertTrue(
                         refreshedRequests.stream()
                             .anyMatch(
@@ -260,7 +271,7 @@ class TestRangerDeltaLocalEngine extends BaseIT {
       Assertions.assertTrue(
           LocalRangerEngine.requests().stream()
               .anyMatch(request -> request.contains("catalog=delta_b")));
-      for (String kind : List.of("access", "mask", "filter"))
+      for (String kind : ImmutableList.of("access", "mask", "filter"))
         Assertions.assertTrue(
             LocalRangerEngine.requests().stream().anyMatch(request -> request.startsWith(kind)));
     } finally {

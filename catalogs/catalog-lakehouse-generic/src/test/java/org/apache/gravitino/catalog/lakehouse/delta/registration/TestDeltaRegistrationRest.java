@@ -402,7 +402,11 @@ class TestDeltaRegistrationRest {
     assertThrows(ForbiddenException.class, () -> transition(tables(OUTSIDER), "recover", abort));
     assertEquals(calls, RegistrationTestCatalog.ALTERS.get());
     TableCatalog recovery = tables(RECOVERY);
-    assertThrows(RuntimeException.class, () -> transition(recovery, "recover", abort));
+    RuntimeException handoffFailure =
+        assertThrows(RuntimeException.class, () -> transition(recovery, "recover", abort));
+    assertEquals(RuntimeException.class, handoffFailure.getClass());
+    assertTrue(handoffFailure.getMessage().contains("IllegalStateException"));
+    assertTrue(handoffFailure.getMessage().contains("Explicit test writer handoff is required"));
     assertEquals(calls + 1, RegistrationTestCatalog.ALTERS.get());
     assertEquals(before, raw("recover"));
     assertEquals(0, RegistrationTestCatalog.VERIFICATIONS.get());

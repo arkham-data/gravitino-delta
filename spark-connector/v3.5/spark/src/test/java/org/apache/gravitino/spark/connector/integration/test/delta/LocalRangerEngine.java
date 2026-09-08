@@ -18,6 +18,7 @@
  */
 package org.apache.gravitino.spark.connector.integration.test.delta;
 
+import com.google.common.collect.ImmutableList;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
@@ -82,7 +83,7 @@ public final class LocalRangerEngine {
 
   /** Captures immutable request strings for resource and subject assertions. */
   public static List<String> requests() {
-    return List.copyOf(REQUESTS);
+    return ImmutableList.copyOf(REQUESTS);
   }
 
   /**
