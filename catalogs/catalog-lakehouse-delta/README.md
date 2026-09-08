@@ -214,9 +214,12 @@ so legacy credential backfill cannot expose resolved values in catalog responses
 Both `s3` and `s3a` inputs normalize once to `s3a`, with lowercase DNS bucket names
 and a consistently removed trailing root slash. Ports, userinfo, query/fragment,
 percent escapes, empty/dot path segments, traversal and other schemes are rejected.
-New locations are `${warehouse}/${schema}/${positiveTableId}`; schema path segments
-are restricted to ASCII letters, digits, underscore and hyphen, starting with a
-letter, digit or underscore. Admission of an existing path requires an exact bucket
+New locations are `${warehouse}/${schema}/${positiveTableId}`. The schema must
+contribute exactly one admitted path segment; safe punctuation such as `sales.v2`,
+`-sales`, and `sales~archive`, and well-formed Unicode are preserved as supplied.
+Path separators, escapes, dot segments, query/fragment syntax and malformed text
+are rejected. Durable schema-name bounds remain a separate storage admission check.
+Admission of an existing path requires an exact bucket
 and complete path-segment prefix boundary. A configured `/allowed` root cannot
 admit `/allowed2`. Empty adoption roots admit nothing. No production local-filesystem
 policy flag exists; direct native-reader unit fixtures still use local storage.

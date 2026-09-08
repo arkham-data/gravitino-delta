@@ -73,4 +73,51 @@ class TestDeltaLocationPolicy {
         IllegalArgumentException.class,
         () -> policy.admittedExistingLocation("s3a://bucket/root/t"));
   }
+
+  @Test
+  void preservesSafeSchemaSegmentsWithoutNewIdentifierGrammar() {
+    DeltaLocationPolicy policy =
+        new DeltaLocationPolicy("s3a://bucket/root", List.of("s3a://bucket/root"));
+    for (String schema :
+        List.of(
+            "sales.v2",
+            "-sales",
+            "sales~archive",
+            "ventes-é",
+            "销售",
+            "sales😀",
+            "e\u0301",
+            "sales:archive",
+            "sales@archive")) {
+      String expected = "s3a://bucket/root/" + schema + "/42";
+      assertEquals(expected, policy.newTableLocation(NameIdentifier.of("m", "c", schema, "t"), 42));
+      assertEquals(expected, policy.admittedExistingLocation(expected));
+    }
+  }
+
+  @Test
+  void rejectsSchemaSeparatorsEscapesDotSegmentsAndMalformedText() {
+    DeltaLocationPolicy policy =
+        new DeltaLocationPolicy("s3a://bucket/root", List.of("s3a://bucket/root"));
+    for (String schema :
+        List.of(
+            ".",
+            "..",
+            "/",
+            "sales/part",
+            "sales/",
+            "/sales",
+            "sales\\part",
+            "sales%2fpart",
+            "sales?part",
+            "sales#part",
+            "sales\u0000part",
+            "sales\ud800",
+            "sales\udc00",
+            "sales\ud800part")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> policy.newTableLocation(NameIdentifier.of("m", "c", schema, "t"), 42));
+    }
+  }
 }

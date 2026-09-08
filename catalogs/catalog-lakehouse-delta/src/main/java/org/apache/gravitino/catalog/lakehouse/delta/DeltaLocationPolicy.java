@@ -42,10 +42,10 @@ final class DeltaLocationPolicy {
       throw invalid();
     }
     String schema = ident.namespace().level(2);
-    if (!schema.matches("[A-Za-z0-9_][A-Za-z0-9_-]*")) {
+    if (schema.indexOf('/') >= 0) {
       throw invalid();
     }
-    return warehouse + "/" + schema + "/" + tableId;
+    return canonical(warehouse + "/" + schema + "/" + tableId);
   }
 
   String admittedExistingLocation(String location) {
@@ -59,6 +59,7 @@ final class DeltaLocationPolicy {
 
   private static String canonical(String location) {
     try {
+      validateUnicode(location);
       URI uri = new URI(location);
       String scheme = uri.getScheme();
       String authority = uri.getRawAuthority();
@@ -102,6 +103,19 @@ final class DeltaLocationPolicy {
       return "s3a://" + bucket + path;
     } catch (Exception e) {
       throw invalid();
+    }
+  }
+
+  private static void validateUnicode(String value) {
+    for (int i = 0; i < value.length(); i++) {
+      char current = value.charAt(i);
+      if (Character.isHighSurrogate(current)) {
+        if (++i >= value.length() || !Character.isLowSurrogate(value.charAt(i))) {
+          throw invalid();
+        }
+      } else if (Character.isLowSurrogate(current)) {
+        throw invalid();
+      }
     }
   }
 
