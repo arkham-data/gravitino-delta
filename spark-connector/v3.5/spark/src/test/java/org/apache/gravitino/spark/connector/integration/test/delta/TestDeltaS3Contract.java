@@ -71,14 +71,7 @@ public class TestDeltaS3Contract extends BaseIT {
 
   @AfterEach
   void cleanUp() throws Exception {
-    stopSpark();
-    if (fileSystem != null && ownedPrefix != null) {
-      fileSystem.delete(new Path(ownedPrefix), true);
-      fileSystem.close();
-    }
-    if (metalakeName != null && client.metalakeExists(metalakeName)) {
-      client.dropMetalake(metalakeName, true);
-    }
+    DeltaS3Cleanup.runAll(this::stopSpark, this::deleteOwnedPrefix, this::dropMetalake);
   }
 
   @Test
@@ -219,15 +212,47 @@ public class TestDeltaS3Contract extends BaseIT {
   }
 
   private void stopSpark() throws Exception {
-    if (spark != null) {
+    SparkSession currentSpark = spark;
+    spark = null;
+    DeltaS3Cleanup.runAll(
+        () -> closeBridge(currentSpark),
+        () -> {
+          if (currentSpark != null) {
+            currentSpark.stop();
+          }
+        },
+        SparkSession::clearActiveSession,
+        SparkSession::clearDefaultSession);
+  }
+
+  private void closeBridge(SparkSession currentSpark) throws Exception {
+    if (currentSpark != null) {
       NamedDeltaCatalog bridge =
-          (NamedDeltaCatalog) spark.sessionState().catalogManager().catalog(CATALOG_NAME);
+          (NamedDeltaCatalog) currentSpark.sessionState().catalogManager().catalog(CATALOG_NAME);
       bridge.close();
-      spark.stop();
-      spark = null;
     }
-    SparkSession.clearActiveSession();
-    SparkSession.clearDefaultSession();
+  }
+
+  private void deleteOwnedPrefix() throws Exception {
+    FileSystem currentFileSystem = fileSystem;
+    fileSystem = null;
+    DeltaS3Cleanup.runAll(
+        () -> {
+          if (currentFileSystem != null && ownedPrefix != null) {
+            currentFileSystem.delete(new Path(ownedPrefix), true);
+          }
+        },
+        () -> {
+          if (currentFileSystem != null) {
+            currentFileSystem.close();
+          }
+        });
+  }
+
+  private void dropMetalake() throws Exception {
+    if (metalakeName != null && client.metalakeExists(metalakeName)) {
+      client.dropMetalake(metalakeName, true);
+    }
   }
 
   private Properties readCredentials() throws IOException {
