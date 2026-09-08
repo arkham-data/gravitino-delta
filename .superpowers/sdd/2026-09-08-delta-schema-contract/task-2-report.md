@@ -33,7 +33,7 @@ All retained successful XML files have nonzero execution counts and zero skips. 
 | 3.5.4 / 3.3.0 | `native-final-3.5.4-3.3.0.xml` `3/0/0/0`; `native-covering-final-3.5.4-3.3.0.xml` `2/0/0/0`; `native-nested-final-3.5.4-3.3.0.xml` `1/0/0/0` | `d0c0cbca-1637-4f45-b240-3335d11e3e10`, `e6db657b-c002-4e5a-b20f-7a444731cdea`, `2a86c193-0c0f-4b7d-a61b-b03c93ad111d` |
 | 3.5.4 / 3.3.2 | `native-final-3.5.4-3.3.2.xml` `3/0/0/0`; `native-covering-final-3.5.4-3.3.2.xml` `3/0/0/0` | `7ba44895-aa7c-4775-8a35-94efa7de1442`, `67a62185-aba4-4ac5-80f6-fc1880612f3e` |
 | 3.5.6 / 3.3.0 | `native-final-3.5.6-3.3.0.xml` `3/0/0/0`; `native-covering-final-3.5.6-3.3.0.xml` `2/0/0/0`; `native-nested-final-3.5.6-3.3.0.xml` `1/0/0/0` | `1756f2fc-022b-4f81-9d88-c5d312f3c6b0`, `5a8a3d72-198f-428f-9b38-49a328fc7b9e`, `6a8944d3-0a84-4ec7-8239-e4a84da5d9fd` |
-| 3.5.6 / 3.3.2 | `native-final-3.5.6-3.3.2.xml` `4/0/0/0`; exact NOT NULL amendment `native-schema-final-3.5.6-3.3.2.xml` `1/0/0/0`; all reserved write-option branches `native-write-options-final-3.5.6-3.3.2.xml` `1/0/0/0` | `fa4704e3-4701-42cc-aa03-0bb870fae057`, `080b4e49-989d-4931-8214-4f384bbf7995` |
+| 3.5.6 / 3.3.2 | `native-final-3.5.6-3.3.2.xml` `4/0/0/0`; exact NOT NULL amendment `native-schema-final-3.5.6-3.3.2.xml` `1/0/0/0`; all reserved write-option branches `native-write-options-final-3.5.6-3.3.2.xml` `1/0/0/0` | `fa4704e3-4701-42cc-aa03-0bb870fae057`, `080b4e49-989d-4931-8214-4f384bbf7995`, `1f5037ea-b7e7-42f1-9bac-5cb5311f67e7` |
 
 The original XML and Gradle logs are preserved in `/private/tmp/delta-schema-native-task2-evidence`. Artifact directories contain copied `_delta_log/*.json`, detached runtime provenance, and before/after hash manifests. Copied commits and prior `MATCHED` results are review provenance only; each run performed verification against live S3 before cleanup.
 
@@ -55,10 +55,10 @@ The next semantic contract work is to define closed marker versions for generate
 - `native-red-3.5.4-3.3.0.xml` is `3/2/0/0`; both failures were harness-local mutations of immutable property maps before any native commit. Defensive mutable copies fixed them.
 - `native-full-red-3.5.4-3.3.0.xml` is `3/1/0/0`; `INSERT ... DEFAULT VALUES` failed with the actual parser boundary. The test now probes omission and `VALUES(DEFAULT, ...)` separately.
 - `native-red-3.5.6-3.3.0.xml` is `3/1/0/0`; absent SQL CORAS at the then-compiled source line failed with `Table does not support overwrite by expression`. Preserving `V1_BATCH_WRITE`, exposing `TRUNCATE` only on replacement routes, and keeping query COR on native `stageCreateOrReplace` plus `ReplacementStage` fixed both SQL CORAS and DataFrame createOrReplace without adding arbitrary predicate overwrite.
-- `native-feature-assertion-red-3.5.6-3.3.0.xml` is `1/1/0/0`; native Delta correctly raised `DELTA_VIOLATE_CONSTRAINT_WITH_VALUES`, while the provisional assertion expected a generic generated token. The final assertion checks the exact class, error class, SQLState, and generated-column constraint message.
+- `native-feature-assertion-red-3.5.6-3.3.0.xml` is `1/1/0/0`; native Delta correctly raised `DELTA_VIOLATE_CONSTRAINT_WITH_VALUES`, while the provisional assertion expected a generic generated token. The final harness requires a `SparkThrowable` in the cause chain with the exact error class, SQLState, and generated-column constraint message, and records the encountered concrete class as `DeltaInvariantViolationException`.
 - `native-nested-first-attempt-3.5.6-3.3.0.log` is compile-only and executed no test: `StructType.fromJson` returns `DataType` in this API. The explicit checked StructType cast compiled, and the retained focused XML then passed.
 
-No failure was converted into an unsupported-feature success by a catch-all exception handler. Unsupported SQL results are admitted only for the exact observed type, Spark error class, and SQLState; unexpected analysis, I/O, or harness errors are rethrown.
+No failure is converted into an unsupported-feature success by a catch-all exception handler. The final harness classifies an unsupported SQL result only when its terminal throwable belongs to the expected parser or analysis family and has the exact observed Spark error class and SQLState; unexpected analysis, I/O, or harness errors are rethrown. Enforcement assertions independently require a matching `SparkThrowable` cause and record its concrete runtime class.
 
 ## Commands and build isolation
 
@@ -86,3 +86,26 @@ git diff --check
 ```
 
 The formatting check succeeded. Default compile succeeded with the Delta integration-test package excluded. The default `testRuntimeClasspath` report contains no `io.delta`, Delta Kernel, or `catalog-lakehouse-delta` entry, confirming that the provider main artifact and native dependencies remain confined to the existing Delta test opt-in.
+
+## Review fix round 1
+
+Fix base: `8d54f2cd62dd4886ded5e38a9853cd655163852d`
+
+Source/test fix commit: `58812e773` (`test(spark): cover Delta mapping precedence`)
+
+The catalog now resolves the effective mapping mode with native Delta precedence: a case-insensitive explicit `delta.columnMapping.mode` value wins, and the session default is consulted only when the table property is absent. The schema-only native case proves both adversarial directions. With session default `name`, explicit `none` binds a v1 marker and production verification returns `MATCHED`; with session default `none`, explicit `name` binds the closed v2 contract and production verification returns `MATCHED`.
+
+The declared mapped schema now contains ordinary `payload.label STRING NOT NULL`, outside an array or map. The v2 marker is bound from that declared schema before native staging, production verification checks it against the committed metadata, and a null child insert is rejected on every pair. Runtime evidence records the concrete native class `DeltaInvariantViolationException`, error class `DELTA_NOT_NULL_CONSTRAINT_VIOLATED`, SQLState `23502`, and logical constraint path `payload.label`. The assertion requires a `SparkThrowable` in the cause chain with that exact error class, SQLState, and message path; it records rather than predicates success on the concrete implementation class.
+
+The retained behavioral RED is `native-mode-precedence-red-3.5.4-3.3.0.xml`, `1/1/0/0`, 33.658 seconds, with Gradle exit 1. Under session-default name plus explicit none, the pre-fix catalog bound v2 while native Delta committed an unmapped table; live production verification returned `AMBIGUOUS/INVALID_EVIDENCE` instead of `MATCHED`. Its original command output is `fix1-precedence-red-3.5.4-3.3.0.log`, and its owned evidence run is `eb77a10f-968b-41ad-8c9d-789ef44e2a4e`. This is preserved separately from all earlier evidence.
+
+Only `schemaOnlyCreateReplaceAndCorUseRealMappedCommits` was rerun for the amended cases. Each command used the full native command from this report with the method filter, matching `deltaKernelVersion`, no `-PskipITs`, and the same authorized endpoint/bucket/private credential-file path:
+
+| Spark / Delta | Original XML (`tests/failures/errors/skips`, time) | Exit | Credential-free artifact run |
+|---|---|---:|---|
+| 3.5.4 / 3.3.0 | `native-schema-fix1-3.5.4-3.3.0.xml` (`1/0/0/0`, 79.970s) | 0 | `d4a78848-af52-4c12-bd87-ecc695a2ef3d` |
+| 3.5.4 / 3.3.2 | `native-schema-fix1-3.5.4-3.3.2.xml` (`1/0/0/0`, 43.715s) | 0 | `27418793-0e81-4f03-be1d-addc0eba18df` |
+| 3.5.6 / 3.3.0 | `native-schema-fix1-3.5.6-3.3.0.xml` (`1/0/0/0`, 24.852s) | 0 | `d321b632-93f6-4c9e-9811-29869f50374b` |
+| 3.5.6 / 3.3.2 | `native-schema-fix1-3.5.6-3.3.2.xml` (`1/0/0/0`, 22.627s) | 0 | `0b5f4647-9824-43aa-b9e7-1743439bbb84` |
+
+The four original Gradle outputs are `native-schema-fix1-rerun-attempt-3.5.4-3.3.0.log`, `native-schema-fix1-attempt-3.5.4-3.3.2.log`, `native-schema-fix1-attempt-3.5.6-3.3.0.log`, and `native-schema-fix1-attempt-3.5.6-3.3.2.log`. The final opt-in `spotlessJavaCheck` succeeded; its output is retained in `fix-round1-spotless-check.log`. Existing query, feature, and collection suites were not repeated.
