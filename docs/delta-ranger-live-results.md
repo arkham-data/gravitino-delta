@@ -53,15 +53,24 @@ A separate `RangerAdminRESTClient`, configured with the supplied endpoint
 and full downloads enabled, calls `getServicePoliciesIfUpdated(-1L, 0L)`.
 It verifies the service ID/name, policy version, complete canonical
 service definition, and all Admin-read policy models. The final execution
-observed policy snapshots of 3, 4, then 3 policies at versions 5, 7, and 8.
+observed policy snapshots of 3, 4, then 3 policies at versions 4, 6, and 7.
 This is actual Java plugin download traffic, independent of Admin CRUD.
 It uses the isolated deployment's plugin-download authentication behavior;
 Admin credentials are used only for Admin CRUD.
 
-Cleanup collects policy IDs only from the service created by this test,
-then removes its unique role, service, and service definition. All registered
-cleanup steps run even after a failure, and cleanup errors are suppressed
-onto the original failure. The final execution logged successful cleanup.
+Each invocation explicitly creates its own `tag` service and associates it
+with the resource service before creation. It sets
+`create.default.policy.per.hierarchy=false` only on that disposable tag service
+and asserts its policy list is empty; tag-policy semantics are outside this
+contract. The test verifies the persisted association and unique tag-service ID.
+
+Cleanup removes resource policy IDs, the unique role, the resource service,
+tag policy IDs, the tag service, and the custom service definition in dependency
+order. Every registered step runs after a failure, with cleanup errors suppressed
+onto the original failure. A final Admin list assertion verifies that both unique
+services are absent. An independent post-run query also found no test services or
+definitions; the readiness service's stable identity and all three original
+readiness policy models were unchanged.
 
 ## Defects exposed and changes
 
@@ -81,6 +90,22 @@ items. The candidate now translates its already-supported SELECT_TABLE
 ALLOW case to SELECT with the original ALLOW condition, without adding
 READ. Its existing local grant/revoke contract now checks allowed select,
 role/access uniqueness, and an empty deny list.
+
+Independent review exposed a gap in the first cleanup implementation: Ranger
+had automatically created `delta_contract_service_tag` (ID4). Ranger 2.8 schedules
+linked-tag creation after service creation and derives its name by replacing the
+last underscore suffix, so the initial UUID-last service names shared that tag
+service. The initial passing XML verified only registered cleanup steps; it did
+not establish zero side effects. The explicitly owned tag service now prevents
+this behavior. The known leftover's ID, name, type, and creation time were verified
+before deleting only its policies and service. [Ranger 2.8 service creation](https://github.com/apache/ranger/blob/release-ranger-2.8.0/security-admin/src/main/java/org/apache/ranger/rest/ServiceREST.java#L4425)
+
+The first explicit tag-service attempt encountered a server
+`NonUniqueResultException` while creating default policies. The final test uses
+Ranger's supported per-service `create.default.policy.per.hierarchy=false` option
+to avoid those unnecessary policies. No shared definition or database repair was
+performed. The failed attempt remains preserved as deployment/bootstrap evidence;
+tag default-policy generation is not validated here. [Ranger default-policy configuration](https://github.com/apache/ranger/blob/release-ranger-2.8.0/agents-common/src/main/java/org/apache/ranger/plugin/service/RangerBaseService.java#L463)
 
 The download client's actual execution additionally required test-only JNA
 5.13.0 for `RangerRESTUtils`/`gethostname4j`. Hadoop client API is a test-only
@@ -113,7 +138,9 @@ root Docker environment detection.
 
 Evidence is under `build/delta-s3-ranger-live-evidence/task-2/`: exact commands,
 exit codes, original failure XML, final success XML, loaded JAR locations,
-image/endpoint metadata, and default/input/format gate results. The runtime
+image/endpoint metadata, and default/input/format gate results. The final cleanup
+fix is in `linked-tag-green/`; `linked-tag-fix/` preserves the earlier explicit-tag
+failure, source files with SHA256 provenance, and the owned-leftover deletion proof. The runtime
 image was `apache/ranger@sha256:367328c2677ad64f4ebff0fa9db9e2607205b5bfc318c85cb4a55e5cc973c071`.
 The original formatter failure, missing-JNA bootstrap failure, a JSON-order
 assertion defect, and a subsequent cleanup-helper compile failure are

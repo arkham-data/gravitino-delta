@@ -77,6 +77,7 @@ class TestRangerDeltaAdminContract {
     RangerClient admin = new RangerClient(url, "simple", user, password, null);
     String suffix = UUID.randomUUID().toString().replace("-", "");
     String serviceName = "delta_contract_service_" + suffix;
+    String tagServiceName = "delta_contract_tag_" + suffix;
     String definitionName = "delta_contract_" + suffix;
     String roleName = "delta_reader_" + suffix;
     String rangerRole = "GRAVITINO_" + roleName;
@@ -88,6 +89,17 @@ class TestRangerDeltaAdminContract {
             "gravitino-metalake-id:" + metalakeId,
             "gravitino-catalog-id:" + catalogId);
     List<Cleanup> cleanup = new ArrayList<>();
+    cleanup.add(
+        () -> {
+          List<RangerService> remaining = admin.findServices(Collections.emptyMap());
+          Assertions.assertTrue(
+              remaining.stream()
+                  .noneMatch(
+                      service ->
+                          serviceName.equals(service.getName())
+                              || tagServiceName.equals(service.getName())),
+              "Both unique resource and tag services must be absent after cleanup");
+        });
     Throwable failure = null;
     try {
       RangerServiceDef canonical;
@@ -99,16 +111,37 @@ class TestRangerDeltaAdminContract {
       RangerServiceDef createdDef = admin.createServiceDef(canonical);
       cleanup.add(() -> admin.deleteServiceDef(createdDef.getId()));
       assertDefinition(canonical, admin.getServiceDef(definitionName));
+      // Ranger 2.8 otherwise derives a shared tag-service name by stripping the final underscore
+      // suffix. An explicit unique tag service prevents that untracked server-side side effect.
+      RangerService tagService = new RangerService();
+      tagService.setName(tagServiceName);
+      tagService.setType("tag");
+      // Tag-policy semantics are outside this contract. Suppress only this service's default
+      // policies through RangerBaseService's supported per-service configuration.
+      tagService.setConfigs(
+          Collections.singletonMap("create.default.policy.per.hierarchy", "false"));
+      RangerService createdTagService = admin.createService(tagService);
+      cleanup.add(() -> admin.deleteService(createdTagService.getId()));
+      cleanup.add(() -> cleanPolicies(admin, tagServiceName));
+      Assertions.assertTrue(admin.getPoliciesInService(tagServiceName).isEmpty());
       RangerService service = new RangerService();
       service.setName(serviceName);
       service.setType(definitionName);
+      service.setTagService(tagServiceName);
       service.setConfigs(Collections.emptyMap());
       RangerService createdService = admin.createService(service);
       cleanup.add(() -> admin.deleteService(createdService.getId()));
       // The service is unique to this invocation; collect its IDs even if a callback fails
       // mid-grant.
       cleanup.add(() -> cleanPolicies(admin, serviceName));
-      Assertions.assertEquals(createdService.getId(), admin.getService(serviceName).getId());
+      RangerService persistedService = admin.getService(serviceName);
+      Assertions.assertEquals(createdService.getId(), persistedService.getId());
+      Assertions.assertEquals(tagServiceName, persistedService.getTagService());
+      Assertions.assertEquals(createdTagService.getId(), admin.getService(tagServiceName).getId());
+      LOG.info(
+          "LIVE ADMIN linked unique tag service={} id={}",
+          tagServiceName,
+          createdTagService.getId());
       LOG.info(
           "LIVE ADMIN created service={} id={} definition={}",
           serviceName,
