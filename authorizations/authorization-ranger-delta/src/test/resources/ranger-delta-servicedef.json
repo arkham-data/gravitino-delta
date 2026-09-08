@@ -1,0 +1,271 @@
+{
+  "name": "spark",
+  "resources": [
+    {
+      "itemId": 1,
+      "name": "catalog",
+      "type": "string",
+      "level": 10,
+      "mandatory": true,
+      "lookupSupported": false,
+      "recursiveSupported": false,
+      "excludesSupported": false,
+      "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+      "matcherOptions": {
+        "wildCard": "true",
+        "ignoreCase": "false"
+      },
+      "isValidLeaf": false
+    },
+    {
+      "itemId": 2,
+      "name": "database",
+      "type": "string",
+      "level": 20,
+      "mandatory": true,
+      "lookupSupported": false,
+      "recursiveSupported": false,
+      "excludesSupported": false,
+      "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+      "matcherOptions": {
+        "wildCard": "true",
+        "ignoreCase": "false"
+      },
+      "isValidLeaf": false,
+      "parent": "catalog"
+    },
+    {
+      "itemId": 3,
+      "name": "table",
+      "type": "string",
+      "level": 30,
+      "mandatory": true,
+      "lookupSupported": false,
+      "recursiveSupported": false,
+      "excludesSupported": false,
+      "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+      "matcherOptions": {
+        "wildCard": "true",
+        "ignoreCase": "false"
+      },
+      "isValidLeaf": false,
+      "parent": "database"
+    },
+    {
+      "itemId": 4,
+      "name": "column",
+      "type": "string",
+      "level": 40,
+      "mandatory": true,
+      "lookupSupported": false,
+      "recursiveSupported": false,
+      "excludesSupported": false,
+      "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+      "matcherOptions": {
+        "wildCard": "true",
+        "ignoreCase": "false"
+      },
+      "isValidLeaf": true,
+      "parent": "table"
+    }
+  ],
+  "accessTypes": [
+    {
+      "itemId": 1,
+      "name": "select",
+      "impliedGrants": []
+    },
+    {
+      "itemId": 2,
+      "name": "read",
+      "impliedGrants": []
+    },
+    {
+      "itemId": 3,
+      "name": "write",
+      "impliedGrants": []
+    },
+    {
+      "itemId": 4,
+      "name": "create",
+      "impliedGrants": []
+    },
+    {
+      "itemId": 5,
+      "name": "drop",
+      "impliedGrants": []
+    },
+    {
+      "itemId": 6,
+      "name": "alter",
+      "impliedGrants": []
+    },
+    {
+      "itemId": 7,
+      "name": "update",
+      "impliedGrants": []
+    },
+    {
+      "itemId": 8,
+      "name": "all",
+      "impliedGrants": [
+        "select",
+        "read",
+        "write",
+        "create",
+        "drop",
+        "alter",
+        "update"
+      ]
+    }
+  ],
+  "dataMaskDef": {
+    "maskTypes": [
+      {
+        "itemId": 1,
+        "name": "CUSTOM",
+        "label": "Custom",
+        "description": "Custom expression"
+      }
+    ],
+    "accessTypes": [
+      {
+        "itemId": 1,
+        "name": "select"
+      }
+    ],
+    "resources": [
+      {
+        "itemId": 1,
+        "name": "catalog",
+        "type": "string",
+        "level": 10,
+        "mandatory": true,
+        "lookupSupported": false,
+        "recursiveSupported": false,
+        "excludesSupported": false,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions": {
+          "wildCard": "true",
+          "ignoreCase": "false"
+        },
+        "isValidLeaf": false
+      },
+      {
+        "itemId": 2,
+        "name": "database",
+        "type": "string",
+        "level": 20,
+        "mandatory": true,
+        "lookupSupported": false,
+        "recursiveSupported": false,
+        "excludesSupported": false,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions": {
+          "wildCard": "true",
+          "ignoreCase": "false"
+        },
+        "isValidLeaf": false,
+        "parent": "catalog"
+      },
+      {
+        "itemId": 3,
+        "name": "table",
+        "type": "string",
+        "level": 30,
+        "mandatory": true,
+        "lookupSupported": false,
+        "recursiveSupported": false,
+        "excludesSupported": false,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions": {
+          "wildCard": "true",
+          "ignoreCase": "false"
+        },
+        "isValidLeaf": false,
+        "parent": "database"
+      },
+      {
+        "itemId": 4,
+        "name": "column",
+        "type": "string",
+        "level": 40,
+        "mandatory": true,
+        "lookupSupported": false,
+        "recursiveSupported": false,
+        "excludesSupported": false,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions": {
+          "wildCard": "true",
+          "ignoreCase": "false"
+        },
+        "isValidLeaf": true,
+        "parent": "table"
+      }
+    ]
+  },
+  "rowFilterDef": {
+    "accessTypes": [
+      {
+        "itemId": 1,
+        "name": "select"
+      }
+    ],
+    "resources": [
+      {
+        "itemId": 1,
+        "name": "catalog",
+        "type": "string",
+        "level": 10,
+        "mandatory": true,
+        "lookupSupported": false,
+        "recursiveSupported": false,
+        "excludesSupported": false,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions": {
+          "wildCard": "true",
+          "ignoreCase": "false"
+        },
+        "isValidLeaf": false
+      },
+      {
+        "itemId": 2,
+        "name": "database",
+        "type": "string",
+        "level": 20,
+        "mandatory": true,
+        "lookupSupported": false,
+        "recursiveSupported": false,
+        "excludesSupported": false,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions": {
+          "wildCard": "true",
+          "ignoreCase": "false"
+        },
+        "isValidLeaf": false,
+        "parent": "catalog"
+      },
+      {
+        "itemId": 3,
+        "name": "table",
+        "type": "string",
+        "level": 30,
+        "mandatory": true,
+        "lookupSupported": false,
+        "recursiveSupported": false,
+        "excludesSupported": false,
+        "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+        "matcherOptions": {
+          "wildCard": "true",
+          "ignoreCase": "false"
+        },
+        "isValidLeaf": true,
+        "parent": "database"
+      }
+    ]
+  },
+  "description": "Apache-2.0 test fixture copied from spark-connector/v3.5/spark/src/test/resources/ranger-delta-local-policies.json; see repository LICENSE and NOTICE.",
+  "options": {
+    "lookupSupported": "false"
+  }
+}

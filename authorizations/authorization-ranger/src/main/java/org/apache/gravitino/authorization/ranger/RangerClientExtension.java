@@ -20,7 +20,6 @@ package org.apache.gravitino.authorization.ranger;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
-import com.sun.jersey.api.client.GenericType;
 import com.sun.jersey.api.client.UniformInterfaceException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -65,12 +64,6 @@ public class RangerClientExtension extends RangerClient {
   private static final API DELETE_GROUP =
       new API(URI_GROUP_BY_ID, HttpMethod.DELETE, Response.Status.NO_CONTENT);
 
-  // apache/ranger/intg/src/main/java/org/apache/ranger/RangerClient.java
-  // The private method callAPI of Ranger is called by reflection
-  // private <T> T callAPI(API api, Map<String, String> params, Object request, GenericType<T>
-  // responseType) throws RangerServiceException
-  private Method callAPIMethodGenericResponseType;
-
   // private <T> T callAPI(API api, Map<String, String> params, Object request, Class<T>
   // responseType) throws RangerServiceException
   private Method callAPIMethodClassResponseType;
@@ -82,11 +75,6 @@ public class RangerClientExtension extends RangerClient {
 
     // initialize callAPI method
     try {
-      callAPIMethodGenericResponseType =
-          RangerClient.class.getDeclaredMethod(
-              "callAPI", API.class, Map.class, Object.class, GenericType.class);
-      callAPIMethodGenericResponseType.setAccessible(true);
-
       callAPIMethodNonResponse =
           RangerClient.class.getDeclaredMethod("callAPI", API.class, Map.class);
       callAPIMethodNonResponse.setAccessible(true);

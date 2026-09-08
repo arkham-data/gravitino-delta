@@ -150,6 +150,13 @@ class TestRangerDeltaContract {
       Assertions.assertTrue(plugin.onRoleUpdated(role, grant));
       Assertions.assertEquals(4, policies.size());
       RangerPolicy managed = policies.get(3);
+      Assertions.assertTrue(managed.getDenyPolicyItems().isEmpty());
+      Assertions.assertEquals(1, managed.getPolicyItems().size());
+      RangerPolicy.RangerPolicyItem item = managed.getPolicyItems().get(0);
+      Assertions.assertEquals(List.of("GRAVITINO_reader_role"), item.getRoles());
+      Assertions.assertEquals(1, item.getAccesses().size());
+      Assertions.assertEquals("select", item.getAccesses().get(0).getType());
+      Assertions.assertEquals(Boolean.TRUE, item.getAccesses().get(0).getIsAllowed());
       Assertions.assertEquals(
           List.of("delta_a"), managed.getResources().get("catalog").getValues());
       Assertions.assertTrue(managed.getPolicyLabels().contains("gravitino-catalog-id:20"));

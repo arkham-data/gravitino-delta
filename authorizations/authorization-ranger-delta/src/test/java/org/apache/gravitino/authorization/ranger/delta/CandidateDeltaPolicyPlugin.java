@@ -30,6 +30,7 @@ import org.apache.gravitino.authorization.AuthorizationSecurableObject;
 import org.apache.gravitino.authorization.Privilege;
 import org.apache.gravitino.authorization.SecurableObject;
 import org.apache.gravitino.authorization.ranger.RangerAuthorizationHadoopSQLPlugin;
+import org.apache.gravitino.authorization.ranger.RangerPrivileges;
 import org.apache.gravitino.exceptions.AuthorizationPluginException;
 import org.apache.ranger.RangerServiceException;
 import org.apache.ranger.plugin.model.RangerPolicy;
@@ -62,7 +63,10 @@ class CandidateDeltaPolicyPlugin extends RangerAuthorizationHadoopSQLPlugin {
     names.add("*");
     List<AuthorizationPrivilege> privileges =
         object.privileges().stream()
-            .flatMap(privilege -> privilegesMappingRule().get(privilege.name()).stream())
+            .map(
+                privilege ->
+                    new RangerPrivileges.RangerHivePrivilegeImpl(
+                        RangerPrivileges.RangerHadoopSQLPrivilege.SELECT, privilege.condition()))
             .collect(Collectors.toList());
     return List.of(new Resource(names, privileges));
   }

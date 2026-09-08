@@ -28,11 +28,40 @@ dependencies {
   testImplementation("org.codehaus.jackson:jackson-mapper-asl:1.9.13")
   testImplementation(libs.jackson.annotations)
   testImplementation(libs.javax.jaxb.api)
+  testImplementation(libs.hadoop3.client.api)
   testImplementation(libs.guava)
   testImplementation(libs.junit.jupiter.api)
   testImplementation(libs.mockito.core)
   testImplementation(libs.mockito.inline)
   testImplementation(libs.slf4j.api)
+  // RangerRESTUtils initializes gethostname4j, which needs JNA at runtime.
+  testRuntimeOnly("net.java.dev.jna:jna:5.13.0")
   testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.slf4j.simple)
+}
+
+val rangerDeltaAdminEnabled = providers.gradleProperty("rangerDeltaAdminEnabled").orNull == "true"
+val rangerDeltaAdminUrl = providers.gradleProperty("rangerDeltaAdminUrl").orNull
+val rangerDeltaAdminCredentialsFile = providers.gradleProperty("rangerDeltaAdminCredentialsFile").orNull
+if (rangerDeltaAdminEnabled) {
+  require(providers.gradleProperty("skipDockerTests").orNull == "false") {
+    "rangerDeltaAdminEnabled requires -PskipDockerTests=false"
+  }
+  require(!rangerDeltaAdminUrl.isNullOrBlank()) {
+    "rangerDeltaAdminEnabled requires rangerDeltaAdminUrl"
+  }
+  require(!rangerDeltaAdminCredentialsFile.isNullOrBlank()) {
+    "rangerDeltaAdminEnabled requires rangerDeltaAdminCredentialsFile"
+  }
+}
+tasks.test {
+  if (rangerDeltaAdminEnabled) {
+    extensions.extraProperties["gravitinoExternalTestEndpoints"] = true
+    systemProperty("gravitino.ranger.delta.admin.enabled", "true")
+    systemProperty("gravitino.ranger.delta.admin.url", requireNotNull(rangerDeltaAdminUrl))
+    systemProperty(
+      "gravitino.ranger.delta.admin.credentialsFile",
+      requireNotNull(rangerDeltaAdminCredentialsFile)
+    )
+  }
 }
