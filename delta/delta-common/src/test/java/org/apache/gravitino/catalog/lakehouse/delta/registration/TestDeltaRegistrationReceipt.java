@@ -87,10 +87,10 @@ class TestDeltaRegistrationReceipt {
   @Test
   void exhaustiveOperationStateEvidenceMatrix() {
     int accepted = 0;
-    for (Operation operation : Operation.values())
-      for (State state : State.values())
-        for (Evidence evidence : Evidence.values())
-          for (boolean hasMarker : new boolean[] {false, true})
+    for (Operation operation : Operation.values()) {
+      for (State state : State.values()) {
+        for (Evidence evidence : Evidence.values()) {
+          for (boolean hasMarker : new boolean[] {false, true}) {
             for (boolean nativeFields : new boolean[] {false, true}) {
               boolean opening =
                   operation == Operation.RESERVE
@@ -129,12 +129,17 @@ class TestDeltaRegistrationReceipt {
                     () -> receipt(operation, state, evidence, reason, hasMarker, nativeFields),
                     label);
                 accepted++;
-              } else
+              } else {
                 assertThrows(
                     IllegalArgumentException.class,
                     () -> receipt(operation, state, evidence, reason, hasMarker, nativeFields),
                     label);
+              }
             }
+          }
+        }
+      }
+    }
     assertEquals(18, accepted);
   }
 
@@ -177,11 +182,12 @@ class TestDeltaRegistrationReceipt {
 
   @Test
   void reasonCodesAndMalformedProperties() {
-    for (String reason : FAILURES)
+    for (String reason : FAILURES) {
       assertDoesNotThrow(
           () ->
               receipt(
                   Operation.RESERVE, State.QUARANTINED, Evidence.UNRESOLVED, reason, true, false));
+    }
     assertDoesNotThrow(
         () ->
             receipt(
@@ -208,14 +214,15 @@ class TestDeltaRegistrationReceipt {
           "raw exception secret",
           "INVALID_ADOPTION_MARKER",
           "REGISTRATION_CHANGED"
-        })
+        }) {
       assertThrows(
           IllegalArgumentException.class,
           () ->
               receipt(
                   Operation.RESERVE, State.QUARANTINED, Evidence.UNRESOLVED, reason, true, false));
+    }
     for (String reason :
-        new String[] {"OWNER_INITIALIZATION_REQUIRED", FAILURES[0], "ABANDONED_BY_RECOVERY"})
+        new String[] {"OWNER_INITIALIZATION_REQUIRED", FAILURES[0], "ABANDONED_BY_RECOVERY"}) {
       assertThrows(
           IllegalArgumentException.class,
           () ->
@@ -226,6 +233,7 @@ class TestDeltaRegistrationReceipt {
                   reason,
                   false,
                   true));
+    }
     assertThrows(
         IllegalArgumentException.class,
         () ->
