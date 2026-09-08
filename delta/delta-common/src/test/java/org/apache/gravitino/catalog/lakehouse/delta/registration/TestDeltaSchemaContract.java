@@ -41,6 +41,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class TestDeltaSchemaContract {
+  private static final String SIMPLE =
+      "{\"type\":\"struct\",\"fields\":[{\"name\":\"a\",\"type\":\"long\",\"nullable\":true,\"metadata\":{\"comment\":\"kept\",\"user\":1}}]}";
+  private static final String PHYSICAL = "col-12345678-1234-1234-1234-123456789abc";
+  private static final String PROTOCOL = "{\"minReaderVersion\":2,\"minWriterVersion\":5}";
+
   @Test
   void decodesClosedV2RequiredLogicalSchema() {
     String schema =
@@ -53,11 +58,6 @@ class TestDeltaSchemaContract {
     assertEquals(schema, marker.schemaJson());
     assertEquals(encoded, marker.encode());
   }
-
-  private static final String SIMPLE =
-      "{\"type\":\"struct\",\"fields\":[{\"name\":\"a\",\"type\":\"long\",\"nullable\":true,\"metadata\":{\"comment\":\"kept\",\"user\":1}}]}";
-  private static final String PHYSICAL = "col-12345678-1234-1234-1234-123456789abc";
-  private static final String PROTOCOL = "{\"minReaderVersion\":2,\"minWriterVersion\":5}";
 
   @Test
   void acceptsDifferentNativeAssignmentsButV1StillRequiresExactSchema() {
