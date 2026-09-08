@@ -44,27 +44,44 @@ throw new ForbiddenException("Token is not recovery authority");
 - [ ] Characterize parent guard routing with pending/published and malformed raw rows, catalog force/non-force, metalake force, and disabled-parent cases. Existing schema tests already cover every valid state; do not duplicate their full Cartesian product. Preserve full raw rows, owners and data; explicitly record any parent enabled-state or partial-cleanup side effects. Do not patch managers.
 - [ ] Run focused new RED first, then TestDeltaRegistrationLifecycle, TestDeltaRegistrationRest and any new parent class with -PskipITs, scoped Spotless. Copy nonzero XML immediately into build/delta-native-registration-evidence/task-1, document results, commit and task review.
 
-## Task 2: Exact native marker and durable recovery
+## Task 2: Production native marker and action reader
 
-**Files:** new protocol component under catalogs/catalog-lakehouse-delta/src/main/java/org/apache/gravitino/catalog/lakehouse/delta/registration, its module build/tests and settings include; generic registration test verifier/provider extension seams; Spark3.5 Delta integration tests/helper hooks and conditional test dependencies only as needed; docs/delta-native-registration-results.md.
+**Files:** new protocol module `catalogs/catalog-lakehouse-delta`, production package `org.apache.gravitino.catalog.lakehouse.delta.registration`, module build/settings registration and focused unit tests; `docs/delta-native-registration-results.md`. Do not alter provider or Spark fixtures in this task.
 
-**Interfaces and implementation order:** Use production `DeltaOperationMarker` (immutable CREATE/REPLACE request), `DeltaCommitEvidence` (MATCHED/AMBIGUOUS verdict and observed metadata), and `DeltaCommitActionReader` (streaming exact-commit action validation). `DeltaOperationMarker.create(id,generation,token,location,schemaJson)` has absent base; `.replace(id,generation,token,location,schemaJson,baseVersion,baseUuid)` requires a real base. Expose encode/decode and `injectInto(Map<String,String>)` with property key gravitino.registration.operation and strict owned-key/option-alias collision rejection. Bound and canonically validate the envelope; preserve immutable/null-rejecting values. `DeltaCommitActionReader.inspect(expected,candidateVersion,latestVersion,validatedSchemaJson,InputStream)` consumes a trusted stored marker and public-Kernel-validated snapshot schema/version; it does not itself make caller input authoritative. The enclosing verifier owns filesystem/Kernel reads and Gravitino actor/OCC checks. Correlation accepts authoritative expected marker/base plus actual commit actions and public Kernel snapshot validation, returns MATCHED only with observed UUID/schema/version; other verdicts remain fail closed. Test-only adapter binds it to existing RegistrationCommitVerifier and complete-row OCC publication. Replacement base is refreshed through trusted evidence before BEGIN_REPLACE persistence. No fabricated values or synthetic outcome fallback.
-
-- [ ] Define marker/value/parser APIs and focused unit tests for exact bindings, malformed input, duplicate/inherited actions and aliases. Code assertions must verify concrete evidence:
+**Interfaces:** immutable `DeltaOperationMarker`, immutable `DeltaCommitEvidence` with MATCHED/AMBIGUOUS and read-only observed metadata, and `DeltaCommitActionReader`. No public synthetic MATCHED factory, NOT_COMMITTED result, Spark/Hadoop/Kernel dependency or storage calls in this component.
 
 ```java
-assertEquals(0L, observedVersion);
-assertEquals(expectedEnvelope, metadataConfiguration.get("gravitino.registration.operation"));
-assertEquals(1, metadataActionCount);
-assertEquals(expectedSchema, observedSchema);
-assertNotEquals(oldNativeUuid, replacementNativeUuid);
+DeltaOperationMarker.create(long id, long generation, String token,
+    String normalizedLocation, String schemaJson)
+DeltaOperationMarker.replace(long id, long generation, String token,
+    String normalizedLocation, String schemaJson, long baseVersion, String baseUuid)
+String DeltaOperationMarker.encode()
+DeltaOperationMarker DeltaOperationMarker.decode(String encoded)
+Map<String, String> DeltaOperationMarker.injectInto(Map<String, String> properties)
+DeltaCommitEvidence DeltaCommitActionReader.inspect(
+    DeltaOperationMarker expected, long candidateVersion, long latestVersion,
+    long validatedSnapshotVersion, String validatedSchemaJson, InputStream commitJson)
 ```
 
-- [ ] Implement marker injection at native create/stage construction, after durable reserve. Keep all original properties/options except reject owned collisions; preserve native table types and replacement delegation. Do not mutate SQLConf or append marker-only commits.
-- [ ] Read exact candidate JSON and validate the same Kernel snapshot; enforce CREATE0 or capturedbase+1, latest==candidate, native operation/schema/UUID/base bindings. Store actual replacement base durably, including an ordinary append before replacement case. Required missing/uncertain logs yield AMBIGUOUS.
-- [ ] Join real reservation/native write/publication with injected after-commit failure, store/server+Spark reopen and authorized recovery from real evidence. Assert hidden durable state during failure, retained data, exact observed identity and no native version advance on replay.
-- [ ] Run meaningful negative controls from the spec, then all four target pairs on MinIO. Capture exact code-source versions, JSON commit filenames/content, effective storage settings without credentials, commands/exits/original XML. Default builds remain isolated from opt-in live tests.
-- [ ] Inspect production protocol artifact for test/synthetic classes, run covering formatting/unit/integration checks, document actual boundaries, commit and task review.
+- [ ] Write focused failing tests before implementation; preserve actual executed RED XML.
+- [ ] Encode a bounded canonical envelope binding identity, generation/token, operation, location, schema and replacement base. Reject duplicate/unknown/missing/wrong-type fields, trailing documents, noncanonical encoding and overflow. Compare schema JSON ignoring object key order only; retain array order, nullability and metadata. This is not a full query/request digest.
+- [ ] Inject `gravitino.registration.operation` into a new immutable map, preserving unrelated entries. Reject nulls and case-insensitive owned-key collisions, including repeated `option.` prefixes.
+- [ ] Require actual snapshot version == candidate == latest; CREATE candidate0, REPLACE actual bound base+1 with overflow rejected. Require exactly one metadata action and one CommitInfo. CREATE accepts CREATE TABLE, CREATE TABLE AS SELECT, CREATE OR REPLACE TABLE AS SELECT; REPLACE accepts REPLACE TABLE, REPLACE TABLE AS SELECT, CREATE OR REPLACE TABLE AS SELECT. Match exact native operation names. REPLACE requires integral readVersion equal base; CREATE rejects inconsistent nonnegative readVersion. Require observed nonempty UUID (new UUID for replacement), exact marker and schemas.
+- [ ] Consume the entire caller-owned stream without closing it. Stream file actions without collecting the commit; reject duplicate singleton actions/fields, malformed trailing actions and IO failure. Missing CommitInfo, inherited ALTER/WRITE, superseded candidates and mismatches yield AMBIGUOUS, with stable diagnostics and no partial publishable observation. Kernel remains responsible for snapshot/protocol validity; trusted verifier remains responsible for location I/O, base lineage and authorization.
+- [ ] Cover independent snapshot-version mismatch, schema differences, marker bounds/types/canonical form, operation/readVersion/base errors, all aliases/map immutability, repeated file actions, duplicate required actions, trailing corruption, midstream IO failure and stream ownership.
+- [ ] Run scoped tests/Spotless/Javadoc checks appropriate to this module, inspect production jar for absent test/synthetic classes, preserve commands/exits/XML and document this component's precise boundary. Commit and task review before native integration.
+
+## Task 3: Joined native commit and durable recovery
+
+**Files:** generic registration test verifier/provider extension seams; Spark3.5 Delta integration tests/helper hooks and conditional test dependencies only as needed; native results documentation. Reuse Task2 production component. No protected source edits.
+
+- [ ] Bind a test-only verifier to trusted stored-location exact commit I/O plus public Kernel snapshot-as-of-version observation. Never convert AMBIGUOUS to synthetic MATCHED. Capture actual pre-write base and UUID lineage before BEGIN_REPLACE under complete-row OCC; ordinary DML may have advanced beyond published native.version.
+- [ ] Inject marker after durable reservation and before native create/stage construction. Preserve unrelated properties/options, loaded native Delta types and replacement-stage delegation. Reject reserved aliases also in write options/ALTER entry points used by this adapter. No SQLConf mutation or marker-only commit.
+- [ ] Prove native schema-only CREATE, CTAS, explicit RTAS and absent/existing CREATE OR REPLACE AS SELECT produce the expected same-commit marker, actual operation, UUID and schema. Do not silently rewrite schema-only create-or-replace routing.
+- [ ] Join real H2/REST reservation, native write and publication. Inject failure after native commit before publication, verify pending hidden state/data, stop/reopen server/store and Spark, discard in-memory operation context and recover through authorized real evidence. Assert stable registration ID/location/owner/audit, observed new native UUID/schema/version, and no native version advance on exact publication replay.
+- [ ] Include DML before replacement, inherited marker, wrong binding, absent CommitInfo, superseded candidate and missing lineage/log negative controls. Preserve data and fail closed; absence is not writer termination or safe rollback.
+- [ ] Run all four Spark3.5.4/3.5.6 x Delta3.3.0/3.3.2 pairs on the owned local MinIO. Record exact loaded versions, JSON objects, credential-free storage settings, commands/exits and original XML. Default builds remain isolated from opt-in live endpoints.
+- [ ] Run covering formatting/unit/integration checks, document actual recovery boundary and limitations, commit and task review. This is not yet a complete production CatalogProvider/runtime or deployed Ranger enforcement.
 
 ## Completion
 
