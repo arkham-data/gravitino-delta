@@ -57,6 +57,7 @@ public final class DeltaOperationMarker {
   private final OptionalLong baseVersion;
   private final Optional<String> baseUuid;
   private final String encoded;
+  private final Optional<DeltaSchemaContract> schemaContract;
 
   private DeltaOperationMarker(
       long id,
@@ -66,7 +67,8 @@ public final class DeltaOperationMarker {
       String schemaJson,
       Operation operation,
       OptionalLong baseVersion,
-      Optional<String> baseUuid) {
+      Optional<String> baseUuid,
+      Optional<DeltaSchemaContract> schemaContract) {
     if (id < 0 || generation < 0) {
       throw new IllegalArgumentException("NEGATIVE_IDENTITY");
     }
@@ -80,14 +82,19 @@ public final class DeltaOperationMarker {
     this.operation = operation;
     this.baseVersion = baseVersion;
     this.baseUuid = baseUuid;
+    this.schemaContract = schemaContract;
     ObjectNode envelope = DeltaJson.newObject();
-    envelope.put("version", 1);
+    envelope.put("version", schemaContract.isPresent() ? 2 : 1);
     envelope.put("operation", operation.name());
     envelope.put("id", id);
     envelope.put("generation", generation);
     envelope.put("token", token);
     envelope.put("location", normalizedLocation);
-    envelope.set("schema", DeltaJson.object(this.schemaJson, DeltaJson.MAX_SCHEMA_BYTES));
+    if (schemaContract.isPresent()) {
+      envelope.set("schemaContract", schemaContract.get().toJson());
+    } else {
+      envelope.set("schema", DeltaJson.object(this.schemaJson, DeltaJson.MAX_SCHEMA_BYTES));
+    }
     if (operation == Operation.REPLACE) {
       envelope.put("baseVersion", baseVersion.getAsLong());
       envelope.put("baseUuid", baseUuid.get());
@@ -117,6 +124,7 @@ public final class DeltaOperationMarker {
         schemaJson,
         Operation.CREATE,
         OptionalLong.empty(),
+        Optional.empty(),
         Optional.empty());
   }
 
@@ -154,7 +162,87 @@ public final class DeltaOperationMarker {
         schemaJson,
         Operation.REPLACE,
         OptionalLong.of(baseVersion),
-        Optional.of(baseUuid));
+        Optional.of(baseUuid),
+        Optional.empty());
+  }
+
+  /**
+   * Creates a v2 CREATE marker bound to a closed schema contract.
+   *
+   * @param id nonnegative registration identity
+   * @param generation nonnegative reserved generation
+   * @param token nonblank reservation token
+   * @param normalizedLocation trusted durable normalized table location
+   * @param contract nonnull closed schema binding
+   * @return immutable v2 CREATE marker
+   * @throws IllegalArgumentException for invalid fields or resource bounds
+   */
+  public static DeltaOperationMarker createWithSchemaContract(
+      long id,
+      long generation,
+      String token,
+      String normalizedLocation,
+      DeltaSchemaContract contract) {
+    if (contract == null) {
+      throw new IllegalArgumentException("NULL_SCHEMA_CONTRACT");
+    }
+    return new DeltaOperationMarker(
+        id,
+        generation,
+        token,
+        normalizedLocation,
+        contract.requiredSchemaJson(),
+        Operation.CREATE,
+        OptionalLong.empty(),
+        Optional.empty(),
+        Optional.of(contract));
+  }
+
+  /**
+   * Creates a v2 REPLACE marker bound to a closed schema contract and actual native base.
+   *
+   * @param id nonnegative registration identity
+   * @param generation nonnegative reserved generation
+   * @param token nonblank reservation token
+   * @param normalizedLocation trusted durable normalized table location
+   * @param contract nonnull closed schema binding
+   * @param baseVersion trusted nonnegative native base version allowing addition of one
+   * @param baseUuid trusted nonblank actual native base identity
+   * @return immutable v2 REPLACE marker
+   * @throws IllegalArgumentException for invalid fields or resource bounds
+   */
+  public static DeltaOperationMarker replaceWithSchemaContract(
+      long id,
+      long generation,
+      String token,
+      String normalizedLocation,
+      DeltaSchemaContract contract,
+      long baseVersion,
+      String baseUuid) {
+    if (contract == null) {
+      throw new IllegalArgumentException("NULL_SCHEMA_CONTRACT");
+    }
+    if (baseVersion < 0 || baseVersion == Long.MAX_VALUE) {
+      throw new IllegalArgumentException("INVALID_BASE_VERSION");
+    }
+    DeltaJson.requiredText(baseUuid);
+    return new DeltaOperationMarker(
+        id,
+        generation,
+        token,
+        normalizedLocation,
+        contract.requiredSchemaJson(),
+        Operation.REPLACE,
+        OptionalLong.of(baseVersion),
+        Optional.of(baseUuid),
+        Optional.of(contract));
+  }
+
+  /**
+   * @return closed v2 binding, empty for unchanged exact-schema v1 markers
+   */
+  public Optional<DeltaSchemaContract> schemaContract() {
+    return schemaContract;
   }
 
   /**
@@ -178,8 +266,8 @@ public final class DeltaOperationMarker {
     ObjectNode envelope = DeltaJson.object(encoded, DeltaJson.MAX_MARKER_BYTES);
     long version = DeltaJson.number(envelope, "version");
     String operation = DeltaJson.text(envelope, "operation");
-    JsonNode schema = envelope.get("schema");
-    if (version != 1 || schema == null || !schema.isObject()) {
+    JsonNode schema = envelope.get(version == 2 ? "schemaContract" : "schema");
+    if ((version != 1 && version != 2) || schema == null || !schema.isObject()) {
       throw new IllegalArgumentException("INVALID_MARKER");
     }
     long id = DeltaJson.number(envelope, "id");
@@ -188,17 +276,30 @@ public final class DeltaOperationMarker {
     String location = DeltaJson.text(envelope, "location");
     DeltaOperationMarker marker;
     if ("CREATE".equals(operation) && envelope.size() == 7) {
-      marker = create(id, generation, token, location, schema.toString());
+      marker =
+          version == 1
+              ? create(id, generation, token, location, schema.toString())
+              : createWithSchemaContract(
+                  id, generation, token, location, DeltaSchemaContract.fromJson(schema));
     } else if ("REPLACE".equals(operation) && envelope.size() == 9) {
       marker =
-          replace(
-              id,
-              generation,
-              token,
-              location,
-              schema.toString(),
-              DeltaJson.number(envelope, "baseVersion"),
-              DeltaJson.text(envelope, "baseUuid"));
+          version == 2
+              ? replaceWithSchemaContract(
+                  id,
+                  generation,
+                  token,
+                  location,
+                  DeltaSchemaContract.fromJson(schema),
+                  DeltaJson.number(envelope, "baseVersion"),
+                  DeltaJson.text(envelope, "baseUuid"))
+              : replace(
+                  id,
+                  generation,
+                  token,
+                  location,
+                  schema.toString(),
+                  DeltaJson.number(envelope, "baseVersion"),
+                  DeltaJson.text(envelope, "baseUuid"));
     } else {
       throw new IllegalArgumentException("INVALID_MARKER_FIELDS");
     }

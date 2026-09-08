@@ -82,7 +82,7 @@ data-file contents.
 Verification reads latest, candidate, and (for REPLACE) the trusted base snapshot
 under the storage Subject. It checks base ID lineage, opens only candidate zero
 or checked base-plus-one JSON at the durable marker location, and calls the
-unchanged `:delta:delta-common` action reader. Before returning MATCHED, it also
+`:delta:delta-common` action reader. Before returning MATCHED, it also
 requires that evidence ID/version and the candidate snapshot marker agree with
 the detached native snapshot and expected marker. Missing exact evidence, inconsistent
 lineage, superseded candidates, inherited markers or malformed trailing actions
@@ -133,3 +133,14 @@ aligned to 3.3.6, including the client API/runtime jars pulled by Kernel default
 to this provider module, Gravitino API is compile-only in production, and the
 shared protocol has no Kernel/Hadoop dependency. No Spark/server test jar belongs
 on the production runtime classpath.
+
+
+For v2 name-mapping markers, verification supplies the shared action reader with detached exact
+candidate and trusted-base schema/configuration/protocol observations from those same Kernel reads.
+The shared [closed schema contract](../../delta/delta-common/README.md#closed-schema-correlation)
+validates generated assignments and feature admission while preserving exact action-to-snapshot
+schema equality. The per-reader UGI lifecycle and final candidate ID/version/marker checks remain.
+V1 verification keeps its original overload and semantics; latest/as-of metadata observations
+remain broader than the bounded registration schema contract. The new mapped CREATE/REPLACE tests
+are protocol-shaped controls, including fresh replacement IDs and a reduced maximum; they are
+not native Kernel marker writes or Spark entrypoint qualification.

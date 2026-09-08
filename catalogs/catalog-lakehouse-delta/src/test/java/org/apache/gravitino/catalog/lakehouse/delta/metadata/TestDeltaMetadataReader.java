@@ -45,6 +45,7 @@ import java.util.OptionalLong;
 import java.util.Set;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaCommitEvidence;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaOperationMarker;
+import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaSchemaContract;
 import org.apache.gravitino.rel.types.Types;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -303,6 +304,81 @@ class TestDeltaMetadataReader {
   }
 
   @Test
+  void verifiesProtocolShapedMappedCreateAndReplacementWithFreshAssignments() throws Exception {
+    Path table = temp.resolve("mapped-protocol-shaped");
+    String required = MetadataFixtures.SCHEMA.toJson();
+    DeltaSchemaContract contract =
+        DeltaSchemaContract.spark35Delta33NameMapping(
+            DeltaSchemaContract.OperationMode.SCHEMA_ONLY, required);
+    DeltaOperationMarker create =
+        DeltaOperationMarker.createWithSchemaContract(
+            1, 0, "create", MetadataFixtures.location(table), contract);
+    Map<String, String> config =
+        Map.of("delta.columnMapping.mode", "name", "delta.columnMapping.maxColumnId", "102");
+    String protocol = "{\"protocol\":{\"minReaderVersion\":2,\"minWriterVersion\":5}}";
+    // Protocol-shaped same-commit controls: Kernel cannot natively write the reserved marker.
+    MetadataFixtures.actions(
+        table,
+        0,
+        protocol,
+        MetadataFixtures.metadata(
+            MetadataFixtures.ID, mappedControlSchema(100), create.injectInto(config)),
+        "{\"commitInfo\":{\"operation\":\"CREATE TABLE\"}}");
+    try (DeltaMetadataReader reader = new DeltaMetadataReader(MetadataFixtures.configuration())) {
+      assertEquals(DeltaCommitEvidence.Kind.MATCHED, reader.verify(create).kind());
+      DeltaOperationMarker replace =
+          DeltaOperationMarker.replaceWithSchemaContract(
+              1, 1, "replace", MetadataFixtures.location(table), contract, 0, MetadataFixtures.ID);
+      Map<String, String> reset =
+          Map.of("delta.columnMapping.mode", "name", "delta.columnMapping.maxColumnId", "3");
+      MetadataFixtures.actions(
+          table,
+          1,
+          MetadataFixtures.metadata(
+              "replacement", mappedControlSchema(1), replace.injectInto(reset)),
+          "{\"commitInfo\":{\"operation\":\"REPLACE TABLE\",\"readVersion\":0}}");
+      assertEquals(DeltaCommitEvidence.Kind.MATCHED, reader.verify(replace).kind());
+      assertEquals(
+          "3",
+          reader
+              .latest(MetadataFixtures.location(table))
+              .configuration()
+              .get("delta.columnMapping.maxColumnId"));
+    }
+  }
+
+  @Test
+  void mappedReplacementRejectsUnmappedTrustedBase() throws Exception {
+    Path table = temp.resolve("mapping-mode-change-control");
+    MetadataFixtures.unitTable(
+        table, MetadataFixtures.PROTOCOL, MetadataFixtures.SCHEMA.toJson(), Map.of());
+    DeltaOperationMarker replace =
+        DeltaOperationMarker.replaceWithSchemaContract(
+            1,
+            1,
+            "replace",
+            MetadataFixtures.location(table),
+            DeltaSchemaContract.spark35Delta33NameMapping(
+                DeltaSchemaContract.OperationMode.SCHEMA_ONLY, MetadataFixtures.SCHEMA.toJson()),
+            0,
+            MetadataFixtures.ID);
+    MetadataFixtures.actions(
+        table,
+        1,
+        "{\"protocol\":{\"minReaderVersion\":2,\"minWriterVersion\":5}}",
+        MetadataFixtures.metadata(
+            "replacement",
+            mappedControlSchema(1),
+            replace.injectInto(
+                Map.of(
+                    "delta.columnMapping.mode", "name", "delta.columnMapping.maxColumnId", "3"))),
+        "{\"commitInfo\":{\"operation\":\"REPLACE TABLE\",\"readVersion\":0}}");
+    try (DeltaMetadataReader reader = new DeltaMetadataReader(MetadataFixtures.configuration())) {
+      assertEquals(DeltaCommitEvidence.Kind.AMBIGUOUS, reader.verify(replace).kind());
+    }
+  }
+
+  @Test
   void preservesRawSchemaLargerThanRegistrationMarkerEnvelope() throws Exception {
     String large =
         MetadataFixtures.SCHEMA
@@ -480,6 +556,19 @@ class TestDeltaMetadataReader {
           "CANDIDATE_MARKER_MISMATCH",
           assertThrows(DeltaMetadataException.class, () -> reader.verify(marker)).reason());
     }
+  }
+
+  private static String mappedControlSchema(int firstId) throws Exception {
+    ObjectNode schema =
+        (ObjectNode) MetadataFixtures.JSON.readTree(MetadataFixtures.SCHEMA.toJson());
+    for (int index = 0; index < schema.get("fields").size(); index++) {
+      ObjectNode metadata = (ObjectNode) schema.get("fields").get(index).get("metadata");
+      metadata.put("delta.columnMapping.id", firstId + index);
+      metadata.put(
+          "delta.columnMapping.physicalName",
+          String.format("col-12345678-1234-1234-1234-%012d", firstId + index));
+    }
+    return schema.toString();
   }
 
   private static void assertFixture(

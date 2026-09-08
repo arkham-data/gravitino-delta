@@ -30,7 +30,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -89,10 +92,72 @@ public final class DeltaCommitActionReader {
     if (expected == null || validatedSchemaJson == null || commitJson == null) {
       throw new IllegalArgumentException("NULL_INSPECTION_ARGUMENT");
     }
+    if (expected.schemaContract().isPresent()) {
+      return drain(commitJson, "MISSING_SCHEMA_CONTEXT");
+    }
+    return inspectInternal(
+        expected,
+        candidateVersion,
+        latestVersion,
+        validatedSnapshotVersion,
+        validatedSchemaJson,
+        Optional.empty(),
+        Optional.empty(),
+        commitJson);
+  }
+
+  /**
+   * Correlates an exact commit with detached candidate and trusted replacement-base observations.
+   * The caller must obtain these observations independently from the actual native snapshots. v1
+   * markers retain the original rules; v2 requires complete mapping and protocol context.
+   *
+   * @param expected durable reserved marker
+   * @param candidateVersion version of the exact commit object opened by the trusted caller
+   * @param latestVersion independently observed latest native version
+   * @param candidateSnapshot detached exact candidate observation
+   * @param trustedBase trusted actual replacement base, empty for CREATE
+   * @param commitJson caller-owned stream, consumed to EOF but never closed
+   * @return immutable correlated evidence or bounded AMBIGUOUS diagnostic
+   * @throws IllegalArgumentException for null inspection arguments
+   */
+  public DeltaCommitEvidence inspect(
+      DeltaOperationMarker expected,
+      long candidateVersion,
+      long latestVersion,
+      DeltaSchemaSnapshot candidateSnapshot,
+      Optional<DeltaSchemaSnapshot> trustedBase,
+      InputStream commitJson) {
+    if (expected == null
+        || candidateSnapshot == null
+        || trustedBase == null
+        || commitJson == null) {
+      throw new IllegalArgumentException("NULL_INSPECTION_ARGUMENT");
+    }
+    return inspectInternal(
+        expected,
+        candidateVersion,
+        latestVersion,
+        candidateSnapshot.version(),
+        candidateSnapshot.rawSchemaJson(),
+        Optional.of(candidateSnapshot),
+        trustedBase,
+        commitJson);
+  }
+
+  private DeltaCommitEvidence inspectInternal(
+      DeltaOperationMarker expected,
+      long candidateVersion,
+      long latestVersion,
+      long validatedSnapshotVersion,
+      String validatedSchemaJson,
+      Optional<DeltaSchemaSnapshot> candidate,
+      Optional<DeltaSchemaSnapshot> base,
+      InputStream commitJson) {
     // Do not close this wrapper: the stream belongs to the caller, including on failure.
     InputStream input = new BufferedInputStream(commitJson);
     ObjectNode metadata = DeltaJson.newObject();
     ObjectNode commitInfo = DeltaJson.newObject();
+    ObjectNode protocol = DeltaJson.newObject();
     Set<String> singletons = new HashSet<>();
     try {
       while (true) {
@@ -105,14 +170,16 @@ public final class DeltaCommitActionReader {
           if (!singletons.add(name)) {
             throw new IllegalArgumentException("DUPLICATE_ACTION");
           }
-          if (!"protocol".equals(name)) {
+          if (!"protocol".equals(name) || expected.schemaContract().isPresent()) {
             ObjectNode envelope =
                 DeltaJson.object(
                     new String(action, StandardCharsets.UTF_8), DeltaJson.MAX_ACTION_BYTES);
             if ("metaData".equals(name)) {
               metadata = (ObjectNode) envelope.get(name);
-            } else {
+            } else if ("commitInfo".equals(name)) {
               commitInfo = (ObjectNode) envelope.get(name);
+            } else {
+              protocol = (ObjectNode) envelope.get(name);
             }
           }
         }
@@ -164,9 +231,50 @@ public final class DeltaCommitActionReader {
         return DeltaCommitEvidence.ambiguous("MARKER_MISMATCH");
       }
       String schema = DeltaJson.schema(DeltaJson.text(metadata, "schemaString"));
-      if (!schema.equals(expected.schemaJson())
+      if ((!expected.schemaContract().isPresent() && !schema.equals(expected.schemaJson()))
           || !schema.equals(DeltaJson.schema(validatedSchemaJson))) {
         return DeltaCommitEvidence.ambiguous("SCHEMA_MISMATCH");
+      }
+      if (expected.schemaContract().isPresent()) {
+        DeltaSchemaContract contract = expected.schemaContract().get();
+        DeltaSchemaSnapshot snapshot = candidate.get();
+        if (!uuid.equals(snapshot.nativeId())) {
+          return DeltaCommitEvidence.ambiguous("CANDIDATE_ID_MISMATCH");
+        }
+        if ((contract.operationMode() == DeltaSchemaContract.OperationMode.QUERY)
+            != operation.endsWith(" AS SELECT")) {
+          return DeltaCommitEvidence.ambiguous("OPERATION_MODE_MISMATCH");
+        }
+        if (replace) {
+          if (!base.isPresent()
+              || base.get().version() != expected.baseVersion().getAsLong()
+              || !base.get().nativeId().equals(expected.baseUuid().get())) {
+            return DeltaCommitEvidence.ambiguous("BASE_CONTEXT_MISMATCH");
+          }
+          contract.validateBase(base.get());
+        } else if (base.isPresent()) {
+          return DeltaCommitEvidence.ambiguous("BASE_CONTEXT_MISMATCH");
+        }
+        contract.validateCandidate(snapshot);
+        Map<String, String> actionConfiguration = new HashMap<>();
+        configuration
+            .fields()
+            .forEachRemaining(
+                entry -> {
+                  if (!entry.getValue().isTextual()) {
+                    throw new IllegalArgumentException("INVALID_CONFIGURATION");
+                  }
+                  actionConfiguration.put(entry.getKey(), entry.getValue().textValue());
+                });
+        DeltaSchemaContract.validateConfigurationAgreement(
+            DeltaSchemaSnapshot.copyConfiguration(actionConfiguration), snapshot.configuration());
+        if (singletons.contains("protocol")) {
+          if (!DeltaSchemaContract.protocolAction(protocol).equals(snapshot.protocol())) {
+            return DeltaCommitEvidence.ambiguous("PROTOCOL_CONTEXT_MISMATCH");
+          }
+        } else if (!replace || !snapshot.protocol().equals(base.get().protocol())) {
+          return DeltaCommitEvidence.ambiguous("MISSING_PROTOCOL_CONTEXT");
+        }
       }
       return DeltaCommitEvidence.matched(candidateVersion, uuid, schema);
     } catch (IllegalArgumentException e) {

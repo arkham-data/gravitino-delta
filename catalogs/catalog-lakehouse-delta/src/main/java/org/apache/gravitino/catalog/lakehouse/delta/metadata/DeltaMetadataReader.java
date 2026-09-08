@@ -23,10 +23,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalLong;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaCommitActionReader;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaCommitEvidence;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaOperationMarker;
+import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaProtocolDescriptor;
+import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaSchemaSnapshot;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 
@@ -110,11 +113,15 @@ public final class DeltaMetadataReader implements AutoCloseable {
           DeltaSnapshotMetadata candidate =
               DeltaKernel33MetadataAdapter.read(
                   engine, location, OptionalLong.of(candidateVersion));
+          Optional<DeltaSchemaSnapshot> trustedBase = Optional.empty();
           if (replace) {
             DeltaSnapshotMetadata base =
                 DeltaKernel33MetadataAdapter.read(engine, location, expected.baseVersion());
             if (!base.uuid().equals(expected.baseUuid().get())) {
               throw new DeltaMetadataException("BASE_UUID_MISMATCH", "VERIFY");
+            }
+            if (expected.schemaContract().isPresent()) {
+              trustedBase = Optional.of(schemaContext(base));
             }
           }
           Path log = new Path(new Path(location), "_delta_log");
@@ -122,15 +129,27 @@ public final class DeltaMetadataReader implements AutoCloseable {
               new Path(log, String.format(Locale.ROOT, "%020d.json", candidateVersion));
           DeltaCommitEvidence evidence;
           try (InputStream input = exactCommit.getFileSystem(configuration).open(exactCommit)) {
-            evidence =
-                new DeltaCommitActionReader()
-                    .inspect(
-                        expected,
-                        candidateVersion,
-                        latest.version(),
-                        candidate.version(),
-                        candidate.schemaJson(),
-                        input);
+            if (expected.schemaContract().isPresent()) {
+              evidence =
+                  new DeltaCommitActionReader()
+                      .inspect(
+                          expected,
+                          candidateVersion,
+                          latest.version(),
+                          schemaContext(candidate),
+                          trustedBase,
+                          input);
+            } else {
+              evidence =
+                  new DeltaCommitActionReader()
+                      .inspect(
+                          expected,
+                          candidateVersion,
+                          latest.version(),
+                          candidate.version(),
+                          candidate.schemaJson(),
+                          input);
+            }
           } catch (IOException | RuntimeException e) {
             throw new DeltaMetadataException("COMMIT_UNAVAILABLE", "VERIFY");
           }
@@ -153,5 +172,22 @@ public final class DeltaMetadataReader implements AutoCloseable {
   @Override
   public void close() {
     storage.close();
+  }
+
+  private static DeltaSchemaSnapshot schemaContext(DeltaSnapshotMetadata snapshot) {
+    try {
+      return DeltaSchemaSnapshot.of(
+          snapshot.version(),
+          snapshot.uuid(),
+          snapshot.schemaJson(),
+          snapshot.configuration(),
+          DeltaProtocolDescriptor.of(
+              snapshot.minReaderVersion(),
+              snapshot.minWriterVersion(),
+              snapshot.readerFeatures(),
+              snapshot.writerFeatures()));
+    } catch (IllegalArgumentException e) {
+      throw new DeltaMetadataException("INVALID_SCHEMA_CONTEXT", "VERIFY");
+    }
   }
 }
