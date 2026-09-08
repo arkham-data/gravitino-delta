@@ -79,7 +79,7 @@ dependencies {
   if (deltaTestVersion != null) {
     testImplementation(project(":catalogs:catalog-lakehouse-generic", "registrationTestArtifacts"))
     testImplementation(project(":catalogs:catalog-lakehouse-generic"))
-    testImplementation(project(":catalogs:catalog-lakehouse-delta"))
+    testImplementation(project(":delta:delta-common"))
     testImplementation("io.delta:delta-kernel-api:$deltaTestVersion")
     testImplementation("io.delta:delta-kernel-defaults:$deltaTestVersion")
     testImplementation("io.delta:delta-spark_$scalaVersion:$deltaTestVersion")

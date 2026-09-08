@@ -68,7 +68,7 @@ dependencies {
 
   annotationProcessor(libs.lombok)
 
-  testImplementation(project(":catalogs:catalog-lakehouse-delta"))
+  testImplementation(project(":delta:delta-common"))
   testImplementation(project(":api"))
   testImplementation(project(":clients:client-java"))
   testImplementation(project(":common"))

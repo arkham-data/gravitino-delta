@@ -386,7 +386,7 @@ subprojects {
     ":api",
     ":common",
     ":catalogs:catalog-common",
-    ":catalogs:catalog-lakehouse-delta",
+    ":delta:delta-common",
     ":catalogs:hadoop-auth",
     ":catalogs:hadoop-common",
     ":maintenance:jobs",

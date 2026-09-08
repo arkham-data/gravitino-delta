@@ -65,6 +65,7 @@ include(
 include("iceberg:iceberg-common")
 include("iceberg:iceberg-rest-server")
 include("iceberg:iceberg-rest-trino-it")
+include("delta:delta-common")
 include("lance:lance-common")
 include("lance:lance-rest-server")
 include("authorizations:authorization-ranger-delta", "authorizations:authorization-ranger", "authorizations:authorization-common", "authorizations:authorization-chain")

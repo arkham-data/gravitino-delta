@@ -21,17 +21,6 @@ plugins {
   id("java")
 }
 
-// This is a pure correlation protocol component, not a catalog provider.
 dependencies {
-  implementation(libs.jackson.databind)
-  testImplementation(libs.junit.jupiter.api)
-  testImplementation(libs.junit.jupiter.params)
-  testRuntimeOnly(libs.junit.jupiter.engine)
-}
-
-tasks.withType<Javadoc> {
-  options {
-    (this as CoreJavadocOptions).addStringOption("Xwerror", "-quiet")
-    isFailOnError = true
-  }
+  implementation(project(":delta:delta-common"))
 }
