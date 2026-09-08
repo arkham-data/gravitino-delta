@@ -363,12 +363,19 @@ public final class SchemaContractDeltaCatalog implements StagingTableCatalog, Su
       }
       long identity = identities.getAndIncrement();
       String token = UUID.randomUUID().toString();
+      String explicitMappingMode = null;
+      for (Map.Entry<String, String> entry : properties.entrySet()) {
+        if (MAPPING_MODE.equalsIgnoreCase(entry.getKey())) {
+          explicitMappingMode = entry.getValue();
+          break;
+        }
+      }
+      String effectiveMappingMode =
+          explicitMappingMode != null
+              ? explicitMappingMode
+              : SparkSession.active().conf().get(DEFAULT_MAPPING_MODE, "none");
       boolean mapped =
-          !"true".equals(properties.get(FORCE_V1))
-              && ("name".equalsIgnoreCase(properties.get(MAPPING_MODE))
-                  || "name"
-                      .equalsIgnoreCase(
-                          SparkSession.active().conf().get(DEFAULT_MAPPING_MODE, "none")));
+          !"true".equals(properties.get(FORCE_V1)) && "name".equalsIgnoreCase(effectiveMappingMode);
       if (mapped) {
         DeltaSchemaContract contract =
             DeltaSchemaContract.spark35Delta33NameMapping(mode, requiredSchema.json());

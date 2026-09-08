@@ -174,7 +174,7 @@ class TestDeltaSchemaContractNative {
     spark.sql(
         "CREATE TABLE "
             + TABLE_PREFIX
-            + "declared (id BIGINT NOT NULL, payload STRUCT<label:STRING> COMMENT 'payload', amount DECIMAL(12,2)) USING delta "
+            + "declared (id BIGINT NOT NULL, payload STRUCT<label:STRING NOT NULL> COMMENT 'payload', amount DECIMAL(12,2)) USING delta "
             + MAPPING);
     verify("declared", "CREATE", DeltaSchemaContract.OperationMode.SCHEMA_ONLY, 0);
     SchemaContractDeltaCatalog.OperationRecord created = record("declared");
@@ -204,6 +204,16 @@ class TestDeltaSchemaContractNative {
                 "INSERT INTO "
                     + TABLE_PREFIX
                     + "declared VALUES (NULL, named_struct('label','bad'), 1.25)"));
+    assertNativeViolation(
+        "declared.nested-not-null.enforcement",
+        "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        "23502",
+        "payload.label",
+        () ->
+            spark.sql(
+                "INSERT INTO "
+                    + TABLE_PREFIX
+                    + "declared VALUES (2, named_struct('label',CAST(NULL AS STRING)), 1.25)"));
     spark.sql(
         "REPLACE TABLE "
             + TABLE_PREFIX
@@ -226,6 +236,21 @@ class TestDeltaSchemaContractNative {
     try {
       spark.sql("CREATE TABLE " + TABLE_PREFIX + "session_default (id BIGINT) USING delta");
       verify("session_default", "CREATE", DeltaSchemaContract.OperationMode.SCHEMA_ONLY, 0);
+      spark.sql(
+          "CREATE TABLE "
+              + TABLE_PREFIX
+              + "explicit_none (id BIGINT) USING delta TBLPROPERTIES ('delta.columnMapping.mode'='none')");
+      verify("explicit_none", "CREATE", DeltaSchemaContract.OperationMode.SCHEMA_ONLY, 0);
+      assertFalse(record("explicit_none").marker().schemaContract().isPresent());
+    } finally {
+      spark.conf().unset("spark.databricks.delta.properties.defaults.columnMapping.mode");
+    }
+    spark.conf().set("spark.databricks.delta.properties.defaults.columnMapping.mode", "none");
+    try {
+      spark.sql(
+          "CREATE TABLE " + TABLE_PREFIX + "explicit_name (id BIGINT) USING delta " + MAPPING);
+      verify("explicit_name", "CREATE", DeltaSchemaContract.OperationMode.SCHEMA_ONLY, 0);
+      assertTrue(record("explicit_name").marker().schemaContract().isPresent());
     } finally {
       spark.conf().unset("spark.databricks.delta.properties.defaults.columnMapping.mode");
     }
