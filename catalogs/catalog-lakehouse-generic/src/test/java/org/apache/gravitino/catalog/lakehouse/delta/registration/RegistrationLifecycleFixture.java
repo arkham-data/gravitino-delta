@@ -39,6 +39,7 @@ import org.apache.gravitino.StringIdentifier;
 import org.apache.gravitino.catalog.ManagedTableOperations;
 import org.apache.gravitino.connector.GenericTable;
 import org.apache.gravitino.connector.SupportsSchemas;
+import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
 import org.apache.gravitino.exceptions.NoSuchSchemaException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
@@ -152,11 +153,11 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
     } catch (EntityAlreadyExistsException exists) {
       TableEntity current = raw(ident);
       if (!actor.equals(value(current, "actor"))) {
-        throw new SecurityException("Reservation belongs to another principal");
+        throw new ForbiddenException("Reservation belongs to another principal");
       }
       if (!command.encode().equals(value(current, "request"))
           || Long.parseLong(value(current, "generation")) != 0
-          || (state(current) != State.RESERVED && state(current) != State.PUBLISHED)) {
+          || state(current) != State.RESERVED) {
         throw new IllegalStateException("Name is already reserved with different content or state");
       }
       return receipt(current);
@@ -328,7 +329,7 @@ final class RegistrationLifecycleFixture extends ManagedTableOperations {
 
   private void authorize(TableEntity current, String actor) {
     if (!actor.equals(value(current, "actor")) && !actor.equals(recoveryPrincipal)) {
-      throw new SecurityException("Token is not recovery authority");
+      throw new ForbiddenException("Token is not recovery authority");
     }
   }
 

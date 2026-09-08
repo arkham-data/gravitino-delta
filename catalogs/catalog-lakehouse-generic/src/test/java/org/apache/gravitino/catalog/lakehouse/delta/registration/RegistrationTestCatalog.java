@@ -61,6 +61,7 @@ import org.apache.gravitino.utils.PrincipalUtils;
 /** ServiceLoader provider used only by the real managed-registration HTTP experiment. */
 public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestCatalog> {
   static final List<Long> CANDIDATES = Collections.synchronizedList(new ArrayList<>());
+  static final List<NameIdentifier> SCHEMA_DROPS = Collections.synchronizedList(new ArrayList<>());
   static final AtomicInteger ALTERS = new AtomicInteger();
   static final AtomicInteger DROPS = new AtomicInteger();
   static final AtomicInteger VERIFICATIONS = new AtomicInteger();
@@ -115,6 +116,7 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
 
   static void reset() {
     CANDIDATES.clear();
+    SCHEMA_DROPS.clear();
     ALTERS.set(0);
     DROPS.set(0);
     VERIFICATIONS.set(0);
@@ -228,6 +230,7 @@ public final class RegistrationTestCatalog extends BaseCatalog<RegistrationTestC
     /** {@inheritDoc} */
     @Override
     public boolean dropSchema(NameIdentifier identifier, boolean cascade) {
+      SCHEMA_DROPS.add(identifier);
       Namespace tableNamespace =
           Namespace.of(
               identifier.namespace().level(0), identifier.namespace().level(1), identifier.name());

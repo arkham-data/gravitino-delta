@@ -67,6 +67,7 @@ import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.StringIdentifier;
 import org.apache.gravitino.catalog.ManagedSchemaOperations;
+import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
 import org.apache.gravitino.exceptions.OptimisticLockException;
 import org.apache.gravitino.meta.AuditInfo;
@@ -231,7 +232,7 @@ class TestDeltaRegistrationLifecycle {
         IllegalStateException.class,
         () -> create(2002L, RegistrationCommand.reserve("token", "file:///tmp/other", "schema")));
     actor = "intruder";
-    Assertions.assertThrows(SecurityException.class, () -> reserve(2002L, "token", "schema"));
+    Assertions.assertThrows(ForbiddenException.class, () -> reserve(2002L, "token", "schema"));
     Assertions.assertEquals(first, raw());
   }
 
@@ -346,7 +347,7 @@ class TestDeltaRegistrationLifecycle {
     reserve(1001L, "token", "schema");
     actor = "intruder";
     Assertions.assertThrows(
-        SecurityException.class, () -> transition(RegistrationCommand.abort(1001L, 0L, "token")));
+        ForbiddenException.class, () -> transition(RegistrationCommand.abort(1001L, 0L, "token")));
     actor = "recovery";
     handoff = false;
     Assertions.assertThrows(
@@ -488,9 +489,7 @@ class TestDeltaRegistrationLifecycle {
     transition(RegistrationCommand.publish(1001L, 0L, "token", 0L));
     TableEntity published = raw();
     reopen();
-    Assertions.assertEquals(
-        "1001",
-        reserve(9999L, "token", "schema").properties().get("delta.registration.receipt.id"));
+    Assertions.assertThrows(IllegalStateException.class, () -> reserve(9999L, "token", "schema"));
     Assertions.assertEquals(published, raw());
   }
 

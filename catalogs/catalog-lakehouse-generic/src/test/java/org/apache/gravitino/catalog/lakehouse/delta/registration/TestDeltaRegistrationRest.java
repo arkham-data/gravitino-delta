@@ -18,19 +18,26 @@
  */
 package org.apache.gravitino.catalog.lakehouse.delta.registration;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -46,6 +53,7 @@ import org.apache.gravitino.EntityStore;
 import org.apache.gravitino.GravitinoEnv;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.MetadataObjects;
+import org.apache.gravitino.Metalake;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
 import org.apache.gravitino.StringIdentifier;
@@ -58,12 +66,19 @@ import org.apache.gravitino.authorization.SecurableObjects;
 import org.apache.gravitino.catalog.ManagedSchemaOperations;
 import org.apache.gravitino.client.GravitinoAdminClient;
 import org.apache.gravitino.client.GravitinoMetalake;
+import org.apache.gravitino.dto.requests.TableUpdateRequest;
+import org.apache.gravitino.dto.requests.TableUpdatesRequest;
+import org.apache.gravitino.exceptions.CatalogInUseException;
 import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.exceptions.NoSuchMetadataObjectException;
 import org.apache.gravitino.exceptions.NoSuchTableException;
+import org.apache.gravitino.exceptions.NonEmptyCatalogException;
 import org.apache.gravitino.exceptions.NonEmptySchemaException;
 import org.apache.gravitino.integration.test.MiniGravitino;
 import org.apache.gravitino.integration.test.MiniGravitinoContext;
+import org.apache.gravitino.json.JsonUtils;
+import org.apache.gravitino.meta.CatalogEntity;
+import org.apache.gravitino.meta.SchemaEntity;
 import org.apache.gravitino.meta.TableEntity;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
@@ -82,6 +97,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.Execution;
 import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,15 +121,18 @@ class TestDeltaRegistrationRest {
   private final Properties evidence = new Properties();
   private MiniGravitino server;
   private Object previousConfig;
+  private Object previousMetricsSystem;
   private GravitinoMetalake admin;
   private TableCatalog actor;
   private String uri;
   private String schema;
   private int sequence;
+  private int roleSequence;
 
   @BeforeAll
   void start() throws Exception {
     previousConfig = FieldUtils.readField(GravitinoEnv.getInstance(), "config", true);
+    previousMetricsSystem = FieldUtils.readField(GravitinoEnv.getInstance(), "metricsSystem", true);
     Map<String, String> config = new HashMap<>();
     config.put(Configs.ENTITY_STORE.getKey(), Configs.RELATIONAL_ENTITY_STORE);
     config.put(
@@ -190,6 +209,8 @@ class TestDeltaRegistrationRest {
       } finally {
         RegistrationTestCatalog.reset();
         FieldUtils.writeField(GravitinoEnv.getInstance(), "config", previousConfig, true);
+        FieldUtils.writeField(
+            GravitinoEnv.getInstance(), "metricsSystem", previousMetricsSystem, true);
       }
     }
   }
@@ -292,18 +313,18 @@ class TestDeltaRegistrationRest {
     int calls = RegistrationTestCatalog.ALTERS.get();
     assertThrows(ForbiddenException.class, () -> transition(tables(OUTSIDER), "owned", publish));
     assertEquals(calls, RegistrationTestCatalog.ALTERS.get());
-    RuntimeException foreignFailure =
-        assertThrows(RuntimeException.class, () -> transition(tables(FOREIGN), "owned", publish));
-    LOG.info(
-        "Foreign actor HTTP mapping: {}: {}",
-        foreignFailure.getClass().getName(),
-        foreignFailure.getMessage());
-    assertEquals(RuntimeException.class, foreignFailure.getClass());
-    assertTrue(foreignFailure.getMessage().contains("SecurityException"));
+    ForbiddenException foreignFailure =
+        assertThrows(ForbiddenException.class, () -> transition(tables(FOREIGN), "owned", publish));
+    assertTrue(foreignFailure.getMessage().contains("Token is not recovery authority"));
+    assertEquals(calls + 1, RegistrationTestCatalog.ALTERS.get());
+    assertEquals(403, alterHttpStatus(FOREIGN, "owned", publish));
+    assertEquals(calls + 2, RegistrationTestCatalog.ALTERS.get());
+    assertEquals(403, alterHttpStatus(OUTSIDER, "owned", publish));
+    assertEquals(calls + 2, RegistrationTestCatalog.ALTERS.get());
     evidence.setProperty("foreign.clientException", foreignFailure.getClass().getName());
+    evidence.setProperty("foreign.httpStatus", "403");
     evidence.setProperty("foreign.errorResponse", foreignFailure.getMessage());
     saveEvidence();
-    assertEquals(calls + 1, RegistrationTestCatalog.ALTERS.get());
     assertEquals(before, raw("owned"));
     assertEquals(0, RegistrationTestCatalog.VERIFICATIONS.get());
     matched();
@@ -331,6 +352,87 @@ class TestDeltaRegistrationRest {
     assertEquals(ACTOR, admin.getOwner(metadata("governance")).get().name());
     admin.setOwner(metadata("governance"), FOREIGN, Owner.Type.USER);
     assertEquals(FOREIGN, admin.getOwner(metadata("governance")).get().name());
+  }
+
+  @Test
+  void testDelayedCreateCannotResetTransferredPublishedOwner() throws Exception {
+    reserve("transferred");
+    matched();
+    RegistrationCommand publication = publish("transferred");
+    transition(actor, "transferred", publication);
+    admin.setOwner(metadata("transferred"), FOREIGN, Owner.Type.USER);
+    TableEntity before = raw("transferred");
+    Owner ownerBefore = rawOwner("transferred").get();
+    assertEquals(FOREIGN, ownerBefore.name());
+    int alters = RegistrationTestCatalog.ALTERS.get();
+    assertThrows(ForbiddenException.class, () -> transition(actor, "transferred", publication));
+    assertEquals(alters, RegistrationTestCatalog.ALTERS.get());
+    int creates = RegistrationTestCatalog.CANDIDATES.size();
+    RuntimeException delayedFailure = null;
+    try {
+      reserve("transferred");
+    } catch (RuntimeException failure) {
+      delayedFailure = failure;
+    }
+    TableEntity after = raw("transferred");
+    Owner ownerAfter = rawOwner("transferred").get();
+    LOG.info(
+        "Delayed CREATE replay: row unchanged={}, owner before={}, owner after={}, failure={}",
+        before.equals(after),
+        ownerBefore.name(),
+        ownerAfter.name(),
+        delayedFailure);
+    evidence.setProperty("ownership.before.row", before.toString());
+    evidence.setProperty("ownership.after.row", after.toString());
+    evidence.setProperty("ownership.before.owner", ownerBefore.name() + ":" + ownerBefore.type());
+    evidence.setProperty("ownership.after.owner", ownerAfter.name() + ":" + ownerAfter.type());
+    evidence.setProperty("ownership.delayedCreateFailure", String.valueOf(delayedFailure));
+    saveEvidence();
+    RuntimeException observedFailure = delayedFailure;
+    assertAll(
+        () -> assertEquals(before, after),
+        () -> assertEquals(ownerBefore.name(), ownerAfter.name()),
+        () -> assertEquals(ownerBefore.type(), ownerAfter.type()),
+        () -> assertNotNull(observedFailure, "Published CREATE replay must be rejected"),
+        () -> assertEquals(creates + 1, RegistrationTestCatalog.CANDIDATES.size()),
+        () -> assertEquals(1, RegistrationTestCatalog.VERIFICATIONS.get()));
+  }
+
+  @Test
+  void testAuthorizedPublishReceiptReplayPreservesTransferredOwner() throws Exception {
+    reserve("receipt");
+    matched();
+    RegistrationCommand publication = publish("receipt");
+    Table first =
+        actor.alterTable(
+            local("receipt"),
+            TableChange.setProperty(RegistrationCommand.KEY, publication.encode()));
+    TableEntity before = raw("receipt");
+    assertEquals(
+        first.properties(),
+        actor
+            .alterTable(
+                local("receipt"),
+                TableChange.setProperty(RegistrationCommand.KEY, publication.encode()))
+            .properties());
+    admin.setOwner(metadata("receipt"), FOREIGN, Owner.Type.USER);
+    // The original actor can recover the receipt only after an explicit MODIFY grant.
+    grant(ACTOR, Privileges.CreateTable.allow(), Privileges.ModifyTable.allow());
+    RegistrationTestCatalog.outcome =
+        RegistrationCommitVerifier.Result.ambiguous("must not inspect completed publication", null);
+    int creates = RegistrationTestCatalog.CANDIDATES.size();
+    assertEquals(
+        first.properties(),
+        actor
+            .alterTable(
+                local("receipt"),
+                TableChange.setProperty(RegistrationCommand.KEY, publication.encode()))
+            .properties());
+    assertEquals(before, raw("receipt"));
+    assertEquals(FOREIGN, rawOwner("receipt").get().name());
+    assertEquals(Owner.Type.USER, rawOwner("receipt").get().type());
+    assertEquals(creates, RegistrationTestCatalog.CANDIDATES.size());
+    assertEquals(1, RegistrationTestCatalog.VERIFICATIONS.get());
   }
 
   @Test
@@ -451,11 +553,14 @@ class TestDeltaRegistrationRest {
     }
     assertEquals(state, state("guarded"));
     TableEntity before = raw("guarded");
+    Owner ownerBefore = rawOwner("guarded").get();
     for (boolean cascade : new boolean[] {false, true}) {
       assertThrows(
           NonEmptySchemaException.class,
           () -> admin.loadCatalog(CATALOG).asSchemas().dropSchema(schema, cascade));
       assertEquals(before, raw("guarded"));
+      assertEquals(ownerBefore.name(), rawOwner("guarded").get().name());
+      assertEquals(ownerBefore.type(), rawOwner("guarded").get().type());
       assertArrayEquals(new byte[] {3, 1, 4}, Files.readAllBytes(data));
     }
     assertEquals(0, RegistrationTestCatalog.DROPS.get());
@@ -481,6 +586,275 @@ class TestDeltaRegistrationRest {
     assertFalse(store().exists(full("unguarded"), Entity.EntityType.TABLE));
     assertEquals(0, RegistrationTestCatalog.DROPS.get());
     assertArrayEquals(new byte[] {3, 1, 4}, Files.readAllBytes(data));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"RESERVED", "PUBLISHED", "MALFORMED"})
+  void testCatalogParentGuardPreservesRawRegistration(String state) throws Exception {
+    ParentRegistration parent = parentRegistration(state);
+    assertThrows(CatalogInUseException.class, () -> parent.metalake.dropCatalog(CATALOG, false));
+    assertEquals(0, RegistrationTestCatalog.SCHEMA_DROPS.size());
+    parent.assertRetained();
+    parent.metalake.disableCatalog(CATALOG);
+    assertThrows(NonEmptyCatalogException.class, () -> parent.metalake.dropCatalog(CATALOG, false));
+    assertEquals(0, RegistrationTestCatalog.SCHEMA_DROPS.size());
+    parent.assertRetained();
+    for (boolean enabled : new boolean[] {false, true}) {
+      if (enabled) {
+        parent.metalake.enableCatalog(CATALOG);
+      }
+      int calls = RegistrationTestCatalog.SCHEMA_DROPS.size();
+      RuntimeException failure =
+          assertThrows(RuntimeException.class, () -> parent.metalake.dropCatalog(CATALOG, true));
+      assertTrue(failure.getMessage().contains("Failed to drop schema"));
+      assertEquals(calls + 1, RegistrationTestCatalog.SCHEMA_DROPS.size());
+      assertEquals(parent.schemaIdentifier(), RegistrationTestCatalog.SCHEMA_DROPS.get(calls));
+      assertEquals(
+          Boolean.toString(enabled),
+          parent.rawCatalog().getProperties().get(Catalog.PROPERTY_IN_USE));
+      parent.assertRetained();
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "RESERVED,false",
+    "PUBLISHED,false",
+    "MALFORMED,false",
+    "RESERVED,true",
+    "PUBLISHED,true",
+    "MALFORMED,true"
+  })
+  void testMetalakeParentGuardRecordsDisabledSideEffect(String state, boolean disabled)
+      throws Exception {
+    ParentRegistration parent = parentRegistration(state);
+    if (disabled) {
+      parent.client.disableMetalake(parent.name);
+      assertEquals(
+          "false",
+          parent.client.loadMetalake(parent.name).properties().get(Metalake.PROPERTY_IN_USE));
+      assertEquals(
+          "false", parent.rawCatalog().getProperties().getOrDefault("metalake-in-use", "true"));
+    }
+    RuntimeException failure =
+        assertThrows(RuntimeException.class, () -> parent.client.dropMetalake(parent.name, true));
+    assertTrue(failure.getMessage().contains("Failed to drop schema"));
+    assertEquals(
+        Collections.singletonList(parent.schemaIdentifier()), RegistrationTestCatalog.SCHEMA_DROPS);
+    parent.assertRetained();
+    assertEquals(
+        "true", parent.client.loadMetalake(parent.name).properties().get(Metalake.PROPERTY_IN_USE));
+    assertEquals(
+        "true", parent.rawCatalog().getProperties().getOrDefault("metalake-in-use", "true"));
+    evidence.setProperty(
+        "parent." + state + ".initiallyDisabled." + disabled + ".enabledAfterFailure", "true");
+    saveEvidence();
+  }
+
+  @Test
+  void testCatalogGuardFailureRetainsRegistrationAfterEarlierSchemaCleanup() throws Exception {
+    GravitinoAdminClient parentClient = client(ADMIN);
+    String name = METALAKE + "_partial_" + schema;
+    GravitinoMetalake metalake = parentClient.createMetalake(name, null, Collections.emptyMap());
+    metalake.createCatalog(
+        CATALOG, Catalog.Type.RELATIONAL, "delta-registration-test", null, Collections.emptyMap());
+    for (String child : Arrays.asList("first", "second")) {
+      metalake.loadCatalog(CATALOG).asSchemas().createSchema(child, null, Collections.emptyMap());
+    }
+    // Select the last schema in the real store's enumeration order; no ordering contract is
+    // assumed.
+    List<SchemaEntity> children =
+        store().list(Namespace.of(name, CATALOG), SchemaEntity.class, Entity.EntityType.SCHEMA);
+    assertEquals(2, children.size());
+    SchemaEntity empty = children.get(0);
+    SchemaEntity guarded = children.get(1);
+    NameIdentifier local = NameIdentifier.of(guarded.name(), "guarded");
+    metalake
+        .loadCatalog(CATALOG)
+        .asTableCatalog()
+        .createTable(
+            local,
+            new Column[0],
+            null,
+            Collections.singletonMap(RegistrationCommand.KEY, reservation("guarded").encode()));
+    ParentRegistration parent =
+        new ParentRegistration(
+            name,
+            parentClient,
+            metalake,
+            NameIdentifier.of(name, CATALOG, guarded.name(), "guarded"),
+            sentinel("guarded"));
+    RuntimeException failure =
+        assertThrows(RuntimeException.class, () -> metalake.dropCatalog(CATALOG, true));
+    assertTrue(failure.getMessage().contains("Failed to drop schema"));
+    assertEquals(
+        Arrays.asList(empty.nameIdentifier(), guarded.nameIdentifier()),
+        RegistrationTestCatalog.SCHEMA_DROPS);
+    assertFalse(store().exists(empty.nameIdentifier(), Entity.EntityType.SCHEMA));
+    parent.assertRetained();
+    evidence.setProperty("parent.partialCleanup.emptySchemaDeleted", "true");
+    saveEvidence();
+  }
+
+  @Test
+  void testEmptyParentsCanBeDropped() {
+    GravitinoAdminClient parentClient = client(ADMIN);
+    String name = METALAKE + "_empty_" + schema;
+    GravitinoMetalake metalake = parentClient.createMetalake(name, null, Collections.emptyMap());
+    metalake.createCatalog(
+        CATALOG, Catalog.Type.RELATIONAL, "delta-registration-test", null, Collections.emptyMap());
+    metalake.loadCatalog(CATALOG).asSchemas().createSchema("empty", null, Collections.emptyMap());
+    assertTrue(metalake.dropCatalog(CATALOG, true));
+    assertTrue(parentClient.dropMetalake(name, true));
+  }
+
+  private ParentRegistration parentRegistration(String state) throws Exception {
+    GravitinoAdminClient parentClient = client(ADMIN);
+    String name = METALAKE + "_parent_" + schema;
+    GravitinoMetalake metalake = parentClient.createMetalake(name, null, Collections.emptyMap());
+    metalake.createCatalog(
+        CATALOG, Catalog.Type.RELATIONAL, "delta-registration-test", null, Collections.emptyMap());
+    metalake.loadCatalog(CATALOG).asSchemas().createSchema(schema, null, Collections.emptyMap());
+    TableCatalog tables = metalake.loadCatalog(CATALOG).asTableCatalog();
+    tables.createTable(
+        local("guarded"),
+        new Column[0],
+        null,
+        Collections.singletonMap(RegistrationCommand.KEY, reservation("guarded").encode()));
+    NameIdentifier identifier = NameIdentifier.of(name, CATALOG, schema, "guarded");
+    if (state.equals("PUBLISHED")) {
+      matched();
+      TableEntity pending = store().get(identifier, Entity.EntityType.TABLE, TableEntity.class);
+      tables.alterTable(
+          local("guarded"),
+          TableChange.setProperty(
+              RegistrationCommand.KEY,
+              RegistrationCommand.publish(pending.id(), 0, "token-guarded", 0).encode()));
+    } else if (state.equals("MALFORMED")) {
+      store()
+          .update(
+              identifier,
+              TableEntity.class,
+              Entity.EntityType.TABLE,
+              current -> {
+                Map<String, String> properties = new HashMap<>(current.properties());
+                properties.put(RegistrationCommand.INTERNAL + "state", "UNKNOWN_STATE");
+                properties.remove(RegistrationCommand.INTERNAL + "actor");
+                return RegistrationLifecycleFixture.copy(current, properties, current.columns());
+              });
+    }
+    return new ParentRegistration(name, parentClient, metalake, identifier, sentinel("guarded"));
+  }
+
+  private final class ParentRegistration {
+    private final String name;
+    private final GravitinoAdminClient client;
+    private final GravitinoMetalake metalake;
+    private final NameIdentifier identifier;
+    private final Path data;
+    private final TableEntity before;
+    private final Map<MetadataObject, String> ownerNames = new HashMap<>();
+    private final Map<MetadataObject, Owner.Type> ownerTypes = new HashMap<>();
+
+    private ParentRegistration(
+        String name,
+        GravitinoAdminClient client,
+        GravitinoMetalake metalake,
+        NameIdentifier identifier,
+        Path data)
+        throws Exception {
+      this.name = name;
+      this.client = client;
+      this.metalake = metalake;
+      this.identifier = identifier;
+      this.data = data;
+      this.before = store().get(identifier, Entity.EntityType.TABLE, TableEntity.class);
+      for (MetadataObject object :
+          Arrays.asList(
+              MetadataObjects.of(Collections.singletonList(CATALOG), MetadataObject.Type.CATALOG),
+              MetadataObjects.of(
+                  Arrays.asList(CATALOG, identifier.namespace().level(2)),
+                  MetadataObject.Type.SCHEMA),
+              MetadataObjects.of(
+                  Arrays.asList(CATALOG, identifier.namespace().level(2), identifier.name()),
+                  MetadataObject.Type.TABLE))) {
+        Owner owner =
+            GravitinoEnv.getInstance().internalOwnerDispatcher().getOwner(name, object).get();
+        ownerNames.put(object, owner.name());
+        ownerTypes.put(object, owner.type());
+      }
+    }
+
+    private NameIdentifier schemaIdentifier() {
+      return NameIdentifier.of(identifier.namespace().levels());
+    }
+
+    private CatalogEntity rawCatalog() throws Exception {
+      return store()
+          .get(NameIdentifier.of(name, CATALOG), Entity.EntityType.CATALOG, CatalogEntity.class);
+    }
+
+    private void assertRetained() throws Exception {
+      assertTrue(store().exists(NameIdentifier.of(name), Entity.EntityType.METALAKE));
+      assertTrue(store().exists(NameIdentifier.of(name, CATALOG), Entity.EntityType.CATALOG));
+      assertTrue(store().exists(schemaIdentifier(), Entity.EntityType.SCHEMA));
+      assertEquals(before, store().get(identifier, Entity.EntityType.TABLE, TableEntity.class));
+      for (MetadataObject object : ownerNames.keySet()) {
+        Owner owner =
+            GravitinoEnv.getInstance().internalOwnerDispatcher().getOwner(name, object).get();
+        assertEquals(ownerNames.get(object), owner.name());
+        assertEquals(ownerTypes.get(object), owner.type());
+      }
+      assertArrayEquals(new byte[] {3, 1, 4}, Files.readAllBytes(data));
+      assertEquals(0, RegistrationTestCatalog.DROPS.get());
+    }
+  }
+
+  private int alterHttpStatus(String principal, String name, RegistrationCommand command)
+      throws Exception {
+    URL endpoint =
+        new URL(
+            uri
+                + "/api/metalakes/"
+                + METALAKE
+                + "/catalogs/"
+                + CATALOG
+                + "/schemas/"
+                + schema
+                + "/tables/"
+                + name);
+    HttpURLConnection connection = (HttpURLConnection) endpoint.openConnection();
+    try {
+      connection.setRequestMethod("PUT");
+      connection.setRequestProperty(
+          "Authorization",
+          "Basic "
+              + Base64.getEncoder()
+                  .encodeToString((principal + ":dummy").getBytes(StandardCharsets.UTF_8)));
+      connection.setRequestProperty("Content-Type", "application/vnd.gravitino.v1+json");
+      connection.setDoOutput(true);
+      connection.setConnectTimeout(10000);
+      connection.setReadTimeout(10000);
+      TableUpdatesRequest request =
+          new TableUpdatesRequest(
+              Collections.singletonList(
+                  new TableUpdateRequest.SetTablePropertyRequest(
+                      RegistrationCommand.KEY, command.encode())));
+      try (OutputStream output = connection.getOutputStream()) {
+        JsonUtils.objectMapper().writeValue(output, request);
+      }
+      int status = connection.getResponseCode();
+      try (InputStream response =
+          status >= 400 ? connection.getErrorStream() : connection.getInputStream()) {
+        assertNotNull(response);
+        assertEquals(
+            ForbiddenException.class.getSimpleName(),
+            JsonUtils.objectMapper().readTree(response).get("type").asText());
+      }
+      return status;
+    } finally {
+      connection.disconnect();
+    }
   }
 
   private Path sentinel(String name) throws Exception {
@@ -557,7 +931,7 @@ class TestDeltaRegistrationRest {
     List<Privilege> privileges = new ArrayList<>();
     privileges.add(Privileges.UseSchema.allow());
     privileges.addAll(Arrays.asList(extra));
-    String role = user + "_" + schema;
+    String role = user + "_" + schema + "_" + roleSequence++;
     admin.createRole(
         role,
         Collections.emptyMap(),
