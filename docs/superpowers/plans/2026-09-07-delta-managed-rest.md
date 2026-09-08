@@ -31,7 +31,7 @@
 **Files:**
 - Create `catalogs/catalog-lakehouse-generic/src/test/java/org/apache/gravitino/catalog/lakehouse/delta/registration/RegistrationTestCatalog.java`.
 - Create `catalogs/catalog-lakehouse-generic/src/test/java/org/apache/gravitino/catalog/lakehouse/delta/registration/TestDeltaRegistrationRest.java`.
-- Create or append test provider entry in `catalogs/catalog-lakehouse-generic/src/test/resources/META-INF/services/org.apache.gravitino.connector.CatalogProvider` (preserve other entries).
+- Create or append test provider entry in `catalogs/catalog-lakehouse-generic/src/test/resources/META-INF/services/org.apache.gravitino.CatalogProvider` (preserve other entries).
 - Create `docs/delta-managed-rest-results.md` for this package's evidence and later deployment handoff.
 - No shared build changes expected. A necessary test-only dependency or small support file requires a recorded controller ruling; no production edit.
 
