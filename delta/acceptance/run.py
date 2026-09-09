@@ -41,6 +41,18 @@ from harness import RecordingProxy, credentials, owned_directory, sha256, write_
 
 ROOT = Path(__file__).resolve().parents[2]
 
+COLUMN_SNAPSHOT_QUERY = (
+    "SELECT a.catalog_name,t.table_name,c.column_name,c.column_id,c.table_version "
+    "FROM table_column_version_info c JOIN table_meta t ON t.table_id=c.table_id "
+    "JOIN catalog_meta a ON a.catalog_id=c.catalog_id "
+    "WHERE c.deleted_at=0 AND t.deleted_at=0 AND a.deleted_at=0 "
+    "AND c.column_op_type<>3 AND c.table_version=("
+    "SELECT MAX(v.table_version) FROM table_column_version_info v "
+    "WHERE v.table_id=c.table_id AND v.column_id=c.column_id "
+    "AND v.deleted_at=0 AND v.table_version<=t.current_version) "
+    "ORDER BY a.catalog_name,t.table_name,c.column_name"
+)
+
 
 class Rest:
     def __init__(self, uri, user):
@@ -193,12 +205,6 @@ class Server:
         if self.process is not None:
             raise RuntimeError("Column inspection requires stopped owned server")
         jar = next((self.home / "libs").glob("h2-*.jar"))
-        query = (
-            "SELECT a.catalog_name,t.table_name,c.column_name,c.column_id,c.table_version "
-            "FROM table_column_version_info c JOIN table_meta t ON t.table_id=c.table_id "
-            "JOIN catalog_meta a ON a.catalog_id=c.catalog_id "
-            "WHERE c.deleted_at=0 ORDER BY a.catalog_name,t.table_name,c.column_name"
-        )
         command = [
             self.inputs["javaHome"] + "/bin/java",
             "-cp",
@@ -213,7 +219,7 @@ class Server:
             "-password",
             "gravitino",
             "-sql",
-            query,
+            COLUMN_SNAPSHOT_QUERY,
         ]
         result = subprocess.run(command, capture_output=True, text=True, timeout=30)
         (self.home / ("columns-" + label + ".log")).write_text(

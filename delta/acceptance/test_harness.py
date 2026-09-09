@@ -20,15 +20,41 @@ import http.server
 import json
 import pathlib
 import socket
+import sqlite3
 import tempfile
 import threading
 import unittest
 
 import harness
 from s3_objects import OwnedObjects
+from run import COLUMN_SNAPSHOT_QUERY
 
 
 class TestHarness(unittest.TestCase):
+    def test_column_snapshot_selects_current_live_version_after_replacement(self):
+        with sqlite3.connect(":memory:") as db:
+            db.executescript(
+                """
+                CREATE TABLE catalog_meta(catalog_id INT, catalog_name TEXT, deleted_at INT);
+                CREATE TABLE table_meta(table_id INT, table_name TEXT, current_version INT, deleted_at INT);
+                CREATE TABLE table_column_version_info(catalog_id INT, table_id INT,
+                    column_name TEXT, column_id INT, table_version INT, column_op_type INT, deleted_at INT);
+                INSERT INTO catalog_meta VALUES(1, 'catalog', 0);
+                INSERT INTO table_meta VALUES(2, 'same', 4, 0);
+                INSERT INTO table_column_version_info VALUES
+                    (1,2,'id',10,2,1,0), (1,2,'id',10,4,3,0),
+                    (1,2,'id',20,4,1,0), (1,2,'future',30,6,1,0),
+                    (1,2,'stable',40,2,1,0);
+            """
+            )
+            self.assertEqual(
+                db.execute(COLUMN_SNAPSHOT_QUERY).fetchall(),
+                [
+                    ("catalog", "same", "id", 20, 4),
+                    ("catalog", "same", "stable", 40, 2),
+                ],
+            )
+
     def test_s3_refuses_unowned_keys_before_network(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "credentials"
