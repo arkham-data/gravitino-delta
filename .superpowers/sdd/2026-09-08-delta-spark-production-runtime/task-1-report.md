@@ -115,3 +115,38 @@ This task provides a thin optional adapter and focused local evidence. It does n
 Deployment must keep engine/provider storage routing aligned, keep catalog updates false through native hooks, and enforce one writer job per dataset. Native IDs detect wrong-table mismatches, not cloned backends with identical IDs or malicious storage configuration. Tokens, markers, receipts, and generated runs do not provide authorization, fencing, or a complete query/data digest. Generated/default/identity contracts and additional lifecycle operations remain separate qualification work. No physical cleanup or privileged recovery is automatic.
 
 No callable claude-mem search/save tool was available in the dispatched agent's tool set; the root agent was notified. Findings are persisted in this report and the evidence directory rather than claiming an unavailable memory write.
+
+## Fix round 1: R1 and R2
+
+Base: `94037c4adb0421fdfbec8adbb62cff944f8df2c3`. Source fix commit: `b425df8ca8c288611810f39e0cd43118c4f3b9f9`. Both accepted Important findings are addressed; scoped independent rereview remains the root agent's next step.
+
+R1 now admits `AddColumn.dataType()` and `UpdateColumnType.newDataType()` through the same recursive metadata policy used for staged schemas. The policy accepts any Spark `DataType` and inspects nested structs under arrays/maps. Validation remains inside the complete ALTER admission pass, before provider resolution and native dispatch. Regressions put a valid property change before each prohibited nested type and assert that neither provider lookup nor native ALTER occurs. Admitted native grouped-commit behavior is unchanged.
+
+R2 introduces one shared semantic command/receipt binding check. Journal decoding applies it to the independently parsed typed pair. STATUS validates an existing pair before transport and binds the observed receipt to the original durable command before writing it. Operator execution validates constructor-created entries before journaling an intent or contacting the actor. The check enforces applicable token, writer run, expected identity, opening operation, initial generation or replacement generation/token, and pending exact schema or v2 required schema/operation mode. Immediate native reservations retain their existing pending-state requirement. Recovery accepts matching PUBLISHED progression without a pending marker and preserves typed PUBLISH/HANDOFF/ABORT entries and status recovery. No wire, provider, journal envelope, build dependency, or public API changes were made.
+
+Evidence root for this round: `/private/tmp/delta-spark-adapter-task1-evidence/task1-fix1`.
+
+| Gate | Tests | Failures / errors / skips | Evidence |
+| --- | ---: | --- | --- |
+| R1 genuine behavioral RED | 12 | 2 / 0 / 0 | `red-r1.log`, `red-r1-xml/` |
+| R1 focused GREEN | 12 | 0 / 0 / 0 | `green-r1.log`, `green-r1-xml/` |
+| R2 genuine behavioral RED | 41 | 30 / 0 / 0 | `red-r2.log`, `red-r2-xml/` |
+| R2 focused GREEN with client/recovery regressions | 48 | 0 / 0 / 0 | `green-r2.log`, `green-r2-xml/` |
+| Spark 3.5.4 / Delta 3.3.0 frozen-source full adapter suite | 86 | 0 / 0 / 0 | `final-baseline.log`, `final-baseline-xml/` |
+| Spark 3.5.6 / Delta 3.3.2 frozen-source full adapter suite | 86 | 0 / 0 / 0 | `final-compatibility.log`, `final-compatibility-xml/` |
+
+All RED XML was copied immediately after the failed invocation, before another test run. Eleven R2 cases were already correct or positive progression cases and passed during RED; no artificial failure was introduced for them. The 41 new binding cases exercise schema/mode/opening identity mismatches through STATUS, raw journal decode, and constructor-created operator entries, plus existing-pair preflight, four published opening/progression variants, and the three typed operator recovery variants. Each final run executed ten suites, including the same six native cases from Task1.
+
+All commands used the JDK17 JAVA_HOME recorded above. After focused GREEN and final formatting, source stayed frozen through these sequential gates:
+
+```bash
+./gradlew :spark-connector:spark-delta-3.5:test :spark-connector:spark-delta-3.5:javadoc :spark-connector:spark-delta-3.5:spotlessCheck :spark-connector:spark-delta-3.5:jar -PskipITs
+./gradlew :spark-connector:spark-delta-3.5:test :spark-connector:spark-delta-3.5:javadoc :spark-connector:spark-delta-3.5:spotlessCheck :spark-connector:spark-delta-3.5:jar -PskipITs -PdeltaSparkVersion=3.5.6 -PdeltaVersion=3.3.2
+python3 /private/tmp/delta-spark-adapter-task1-evidence/task1-fix1/inspect_artifacts.py
+git diff --check
+git diff --cached --check
+```
+
+Strict Javadoc, formatting, and jar gates passed on both pins. Per-pin jars were copied to `final-baseline-artifacts/` and `final-compatibility-artifacts/` before another invocation. Each contains only 20 adapter classes, all major version 52, with no native or test classes. Both SHA-256 hashes are `2cc281758d658b68f074867a70b12ceea46fd791b0faea2b62986c66823f27d9`. `artifact-verification.json` records the source commit, original XML totals, class inspection, hashes, and verification of all 22 frozen source/build files. The initial manifest also captured transient Spotless scratch files; its original contents and correction are retained in `frozen-source-and-spotless-sha256.json` and `manifest-note.txt`. The final source manifest filters those original digests, without recomputing them after the gates.
+
+Bounded self-review covered only the R1/R2 diff and its regression matrix. No new known concern remains within this fix scope. Earlier qualification limits remain in force: these adapter tests do not establish fullDelta, the two cross patch pairs, packaged production/runtime discovery, S3/provider coupling, Ranger, or demo acceptance. No live services, privileged recovery, or physical cleanup were performed.
