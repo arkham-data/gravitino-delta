@@ -67,6 +67,7 @@ import org.apache.gravitino.client.GravitinoMetalake;
 import org.apache.gravitino.exceptions.NonEmptySchemaException;
 import org.apache.gravitino.integration.test.MiniGravitino;
 import org.apache.gravitino.integration.test.MiniGravitinoContext;
+import org.apache.gravitino.meta.CatalogEntity;
 import org.apache.gravitino.meta.SchemaEntity;
 import org.apache.gravitino.meta.TableEntity;
 import org.apache.gravitino.rel.Column;
@@ -378,6 +379,28 @@ public class TestDeltaCatalogRest {
     assertTrue(schemas.dropSchema(schema, true));
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"s3-access-key-id", "s3-secret-access-key", "s3-session-token"})
+  void catalogCredentialChangesAreRejectedWithoutChangingStoredCatalog(String key)
+      throws Exception {
+    EntityStore store = GravitinoEnv.getInstance().entityStore();
+    NameIdentifier ident = NameIdentifier.of(METALAKE, CATALOG);
+    CatalogEntity before = store.get(ident, Entity.EntityType.CATALOG, CatalogEntity.class);
+    for (CatalogChange change :
+        List.of(
+            CatalogChange.setProperty(key, "replacement-credential"),
+            CatalogChange.removeProperty(key),
+            CatalogChange.setSecretBinding(key, new SecretBinding("memory", "replacement-secret")),
+            CatalogChange.setSecretReference(
+                key, new SecretReference("reference", Map.of("key", "replacement-secret"))))) {
+      RuntimeException rejected =
+          assertThrows(RuntimeException.class, () -> admin.alterCatalog(CATALOG, change));
+      assertTrue(rejected.getMessage().contains(key));
+      assertTrue(rejected.getMessage().contains("immutable"));
+      assertEquals(before, store.get(ident, Entity.EntityType.CATALOG, CatalogEntity.class));
+    }
+  }
+
   @Test
   void commentTransportUpdatesScalarAndRejectsWholeInvalidBatch() throws Exception {
     var schemas = admin.loadCatalog(CATALOG).asSchemas();
@@ -565,7 +588,9 @@ public class TestDeltaCatalogRest {
             Entity.EntityType.TABLE,
             TableEntity.class);
   }
-  /** Test-only external locator provider, ensuring REST preprocessing reaches comment admission. */
+  /**
+   * Test-only external locator provider, ensuring REST preprocessing reaches property admission.
+   */
   public static final class NativeFreeSecretReferences extends InMemorySecretsProvider {
     /** Creates the test-only provider loaded by the embedded server. */
     public NativeFreeSecretReferences() {}
