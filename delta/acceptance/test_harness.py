@@ -15,6 +15,7 @@
 # limitations under the License.
 #
 
+from contextlib import closing
 import http.client
 import http.server
 import json
@@ -32,9 +33,8 @@ from run import COLUMN_SNAPSHOT_QUERY
 
 class TestHarness(unittest.TestCase):
     def test_column_snapshot_selects_current_live_version_after_replacement(self):
-        with sqlite3.connect(":memory:") as db:
-            db.executescript(
-                """
+        with closing(sqlite3.connect(":memory:")) as db:
+            db.executescript("""
                 CREATE TABLE catalog_meta(catalog_id INT, catalog_name TEXT, deleted_at INT);
                 CREATE TABLE table_meta(table_id INT, table_name TEXT, current_version INT, deleted_at INT);
                 CREATE TABLE table_column_version_info(catalog_id INT, table_id INT,
@@ -45,8 +45,7 @@ class TestHarness(unittest.TestCase):
                     (1,2,'id',10,2,1,0), (1,2,'id',10,4,3,0),
                     (1,2,'id',20,4,1,0), (1,2,'future',30,6,1,0),
                     (1,2,'stable',40,2,1,0);
-            """
-            )
+            """)
             self.assertEqual(
                 db.execute(COLUMN_SNAPSHOT_QUERY).fetchall(),
                 [

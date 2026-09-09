@@ -64,6 +64,23 @@ class TestDeltaNativeObservation {
   }
 
   @Test
+  void completeAdmissionConfigurationIsDetachedAndNeverProjected() {
+    Map<String, String> raw = new LinkedHashMap<>();
+    raw.put("vendor.secret", "fixture-private");
+    raw.put("delta.redirectWriterOnly-preview", "");
+    DeltaNativeObservation observation = DeltaNativeObservation.from(snapshot(raw));
+    raw.clear();
+    assertEquals(
+        "fixture-private", observation.schemaContext().configuration().get("vendor.secret"));
+    assertEquals(
+        "", observation.schemaContext().configuration().get("delta.redirectWriterOnly-preview"));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> observation.schemaContext().configuration().clear());
+    assertEquals(Map.of(), observation.safeConfiguration());
+  }
+
+  @Test
   void malformedSafePropertiesAndForeignMarkersFailSanitized() {
     for (Map<String, String> properties :
         List.of(

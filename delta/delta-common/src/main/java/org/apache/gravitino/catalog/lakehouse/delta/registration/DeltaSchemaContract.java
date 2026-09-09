@@ -186,7 +186,15 @@ public final class DeltaSchemaContract {
     }
   }
 
-  void validateBase(DeltaSchemaSnapshot base) {
+  /**
+   * Admits a complete actual replacement base under this contract's closed feature policy. Callers
+   * must obtain a fresh trusted native snapshot before reserving or starting native replacement;
+   * this check does not establish snapshot freshness or replace postcommit verification.
+   *
+   * @param base complete native base schema, configuration and protocol, retained internally
+   * @throws IllegalArgumentException if the base is excluded by the closed mapping policy
+   */
+  public void validateBase(DeltaSchemaSnapshot base) {
     validateMapped(base, OperationMode.SCHEMA_ONLY);
   }
 

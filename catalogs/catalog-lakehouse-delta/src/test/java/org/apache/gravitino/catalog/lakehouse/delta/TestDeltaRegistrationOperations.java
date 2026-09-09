@@ -768,6 +768,100 @@ public class TestDeltaRegistrationOperations {
             .orElseThrow());
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"SCHEMA_ONLY", "QUERY"})
+  void v2ReplacementRejectsUnmappedBaseWithoutChangingCompletePublishedRow(String mode)
+      throws Exception {
+    DeltaRegistrationReceipt published = publishCreate();
+    TableEntity before = rawTable(IDENT);
+    DeltaSchemaContract contract =
+        DeltaSchemaContract.spark35Delta33NameMapping(
+            DeltaSchemaContract.OperationMode.valueOf(mode), SCHEMA);
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            alter(
+                DeltaRegistrationCommand.beginReplace(
+                    published.identity(), "mapped-next", "run-b", contract)));
+    assertEquals(before, rawTable(IDENT));
+    assertEquals("alice", persistedOwner());
+    assertEquals("PUBLISHED", receipt(operations.loadTable(IDENT)).state().name());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "CURRENT_DEFAULT",
+        "delta.generationExpression",
+        "delta.identity.start",
+        "redirect"
+      })
+  void v2ReplacementRejectsExcludedAdoptedBaseWithoutChangingCompletePublishedRow(String excluded)
+      throws Exception {
+    String location = "s3a://bucket/fixture/adopt";
+    DeltaOperationMarker marker = DeltaOperationMarker.create(10, 0, "native", location, SCHEMA);
+    writeMappedCommit(marker, "adopted-mapped");
+    mutateCommit(
+        location,
+        0,
+        envelope -> {
+          if (envelope.has("metaData")) {
+            ObjectNode metadata = (ObjectNode) envelope.get("metaData");
+            if (excluded.equals("redirect")) {
+              ((ObjectNode) metadata.get("configuration"))
+                  .put("delta.redirectWriterOnly-preview", "");
+            } else {
+              ObjectNode schema;
+              try {
+                schema = (ObjectNode) JSON.readTree(metadata.get("schemaString").asText());
+              } catch (IOException e) {
+                throw new IllegalStateException(e);
+              }
+              ((ObjectNode) schema.get("fields").get(0).get("metadata")).put(excluded, "1");
+              metadata.put("schemaString", schema.toString());
+            }
+          }
+        });
+    when(authorizer.isServiceAdmin()).thenReturn(true);
+    DeltaRegistrationReceipt adopting =
+        receipt(
+            create(DeltaRegistrationCommand.adopt("adopt", location, "retired", "cutover"), 10));
+    owner("alice");
+    DeltaRegistrationReceipt published =
+        receipt(alter(DeltaRegistrationCommand.publish(adopting.identity())));
+    TableEntity before = rawTable(IDENT);
+    DeltaSchemaContract contract =
+        DeltaSchemaContract.spark35Delta33NameMapping(
+            DeltaSchemaContract.OperationMode.SCHEMA_ONLY, SCHEMA);
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            alter(
+                DeltaRegistrationCommand.beginReplace(
+                    published.identity(), "next", "run-b", contract)));
+    assertEquals(before, rawTable(IDENT));
+    assertEquals("PUBLISHED", receipt(operations.loadTable(IDENT)).state().name());
+  }
+
+  @Test
+  void v2ReplacementAdmitsFreshBaseInsteadOfStoredPublishedProjection() throws Exception {
+    DeltaRegistrationReceipt published = publishCreate();
+    DeltaOperationMarker nativeReplace =
+        DeltaOperationMarker.replace(
+            10, 1, "external", published.location().orElseThrow(), SCHEMA, 0, "native-a");
+    writeMappedCommit(nativeReplace, "native-a");
+    DeltaSchemaContract contract =
+        DeltaSchemaContract.spark35Delta33NameMapping(
+            DeltaSchemaContract.OperationMode.SCHEMA_ONLY, SCHEMA);
+    DeltaRegistrationReceipt replacing =
+        receipt(
+            alter(
+                DeltaRegistrationCommand.beginReplace(
+                    published.identity(), "next", "run-b", contract)));
+    assertEquals("REPLACING", replacing.state().name());
+    assertEquals(1L, replacing.marker().orElseThrow().baseVersion().orElseThrow());
+  }
+
   @Test
   void v2MappedCreateAndReplacementUseActualReaderAndFreshColumnIdentity() throws Exception {
     DeltaSchemaContract contract =

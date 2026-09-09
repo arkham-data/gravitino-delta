@@ -33,9 +33,10 @@ import org.apache.gravitino.catalog.lakehouse.delta.metadata.DeltaMetadataReader
 import org.apache.gravitino.catalog.lakehouse.delta.metadata.DeltaSnapshotMetadata;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaOperationMarker;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaProtocolDescriptor;
+import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaSchemaSnapshot;
 import org.apache.gravitino.rel.Column;
 
-/** Detached provider observation containing only safe configuration and comparison digests. */
+/** Detached internal provider observation; public projection exposes only safe configuration. */
 final class DeltaNativeObservation {
   private static final List<String> SAFE_KEYS =
       List.of(
@@ -55,6 +56,7 @@ final class DeltaNativeObservation {
   private final DeltaProtocolDescriptor protocol;
   private final String configurationDigest;
   private final Map<String, String> safeConfiguration;
+  private final Map<String, String> rawConfiguration;
   private final Optional<String> markerDigest;
   private final String markerProvenance;
 
@@ -80,6 +82,7 @@ final class DeltaNativeObservation {
             metadata.writerFeatures());
     configurationDigest = digest;
     safeConfiguration = Map.copyOf(safe);
+    rawConfiguration = Map.copyOf(metadata.configuration());
     this.markerDigest = markerDigest;
     markerProvenance = provenance;
   }
@@ -160,6 +163,10 @@ final class DeltaNativeObservation {
 
   DeltaProtocolDescriptor protocol() {
     return protocol;
+  }
+
+  DeltaSchemaSnapshot schemaContext() {
+    return DeltaSchemaSnapshot.of(version, uuid, schemaJson, rawConfiguration, protocol);
   }
 
   String configurationDigest() {

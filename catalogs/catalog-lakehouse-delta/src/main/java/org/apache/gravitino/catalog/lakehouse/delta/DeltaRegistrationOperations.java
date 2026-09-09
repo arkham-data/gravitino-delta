@@ -367,6 +367,9 @@ final class DeltaRegistrationOperations extends ManagedTableOperations {
     if (inconsistency != null) {
       return quarantine(current, inconsistency);
     }
+    // A healthy base excluded by the requested contract is an operation rejection, not corruption.
+    // Validate the complete fresh observation outside the store callback and quarantine catch.
+    command.schemaContract().ifPresent(contract -> contract.validateBase(observed.schemaContext()));
     long generation = Math.addExact(current.receipt().identity().generation(), 1);
     String token = command.replacementToken().orElseThrow();
     if (token.equals(current.receipt().identity().token())) {
