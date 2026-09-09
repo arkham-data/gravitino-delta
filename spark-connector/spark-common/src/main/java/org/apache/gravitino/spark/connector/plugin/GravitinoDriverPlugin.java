@@ -36,9 +36,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
@@ -74,6 +74,7 @@ import scala.Option;
 public class GravitinoDriverPlugin implements DriverPlugin {
 
   private static final Logger LOG = LoggerFactory.getLogger(GravitinoDriverPlugin.class);
+  private static final String DELTA_PROVIDER = "lakehouse-delta";
 
   @VisibleForTesting
   static final String PAIMON_SPARK_EXTENSIONS =
@@ -83,7 +84,17 @@ public class GravitinoDriverPlugin implements DriverPlugin {
   static final String ICEBERG_SPARK_EXTENSIONS =
       "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions";
 
+  @VisibleForTesting
+  static final String DELTA_SPARK_EXTENSIONS = "io.delta.sql.DeltaSparkSessionExtension";
+
+  @VisibleForTesting
+  static final String DELTA_SPARK_CATALOG = "org.apache.spark.sql.delta.catalog.DeltaCatalog";
+
+  @VisibleForTesting static final String SPARK_SESSION_CATALOG = "spark.sql.catalog.spark_catalog";
+
   private GravitinoCatalogManager catalogManager;
+  private final Supplier<String> deltaCatalogName;
+  private final ClassNameValidator deltaClassNameValidator;
   private final List<String> gravitinoIcebergExtensions =
       Arrays.asList(
           GravitinoIcebergSparkSessionExtensions.class.getName(), ICEBERG_SPARK_EXTENSIONS);
@@ -94,6 +105,21 @@ public class GravitinoDriverPlugin implements DriverPlugin {
           Collections.singletonList(GravitinoAuthorizationSparkSessionExtensions.class.getName()));
   private boolean enableIcebergSupport = false;
   private boolean enablePaimonSupport = false;
+  private boolean enableDeltaSupport = false;
+
+  /** Creates the Spark driver plugin. */
+  public GravitinoDriverPlugin() {
+    this(
+        () -> CatalogNameAdaptor.getCatalogName(DELTA_PROVIDER),
+        GravitinoDriverPlugin::loadClassWithoutInitialization);
+  }
+
+  @VisibleForTesting
+  GravitinoDriverPlugin(
+      Supplier<String> deltaCatalogName, ClassNameValidator deltaClassNameValidator) {
+    this.deltaCatalogName = deltaCatalogName;
+    this.deltaClassNameValidator = deltaClassNameValidator;
+  }
 
   @Override
   public Map<String, String> init(SparkContext sc, PluginContext pluginContext) {
@@ -114,12 +140,14 @@ public class GravitinoDriverPlugin implements DriverPlugin {
         conf.getBoolean(GravitinoSparkConfig.GRAVITINO_ENABLE_ICEBERG_SUPPORT, false);
     this.enablePaimonSupport =
         conf.getBoolean(GravitinoSparkConfig.GRAVITINO_ENABLE_PAIMON_SUPPORT, false);
+    configureDeltaSupport(conf);
     if (enablePaimonSupport) {
       gravitinoDriverExtensions.addAll(gravitinoPaimonExtensions);
     }
     if (enableIcebergSupport) {
       gravitinoDriverExtensions.addAll(gravitinoIcebergExtensions);
     }
+    registerSqlExtensions(conf);
 
     this.catalogManager =
         GravitinoCatalogManager.create(
@@ -130,7 +158,6 @@ public class GravitinoDriverPlugin implements DriverPlugin {
                     gravitinoUri, metalake, conf, sc.sparkUser(), gravitinoClientConfig));
     catalogManager.loadRelationalCatalogs();
     registerGravitinoCatalogs(conf, catalogManager.getCatalogs());
-    registerSqlExtensions(conf);
     return Collections.emptyMap();
   }
 
@@ -150,12 +177,11 @@ public class GravitinoDriverPlugin implements DriverPlugin {
               String catalogName = entry.getKey();
               Catalog gravitinoCatalog = entry.getValue();
               String provider = gravitinoCatalog.provider();
-              if ("lakehouse-iceberg".equals(provider.toLowerCase(Locale.ROOT))
-                  && !enableIcebergSupport) {
+              if (!isCatalogEnabled(provider)) {
                 return;
               }
-              if ("lakehouse-paimon".equals(provider.toLowerCase(Locale.ROOT))
-                  && !enablePaimonSupport) {
+              if (DELTA_PROVIDER.equalsIgnoreCase(provider)) {
+                registerCatalog(sparkConf, catalogName, provider);
                 return;
               }
               try {
@@ -203,6 +229,54 @@ public class GravitinoDriverPlugin implements DriverPlugin {
     } else {
       conf.set(StaticSQLConf.SPARK_SESSION_EXTENSIONS().key(), extensionString);
     }
+  }
+
+  @VisibleForTesting
+  void configureDeltaSupport(SparkConf conf) {
+    enableDeltaSupport =
+        conf.getBoolean(GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT, false);
+    if (!enableDeltaSupport) {
+      return;
+    }
+
+    String catalogClassName = deltaCatalogName.get();
+    Preconditions.checkArgument(
+        StringUtils.isNotBlank(catalogClassName),
+        "%s is supported only for Spark 3.5",
+        GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT);
+    validateDeltaClass(catalogClassName);
+    validateDeltaClass(DELTA_SPARK_EXTENSIONS);
+    validateDeltaClass(DELTA_SPARK_CATALOG);
+
+    if (conf.contains(SPARK_SESSION_CATALOG)) {
+      String configuredCatalog = conf.get(SPARK_SESSION_CATALOG);
+      Preconditions.checkArgument(
+          DELTA_SPARK_CATALOG.equals(configuredCatalog),
+          "%s must be %s when %s is true, but found %s",
+          SPARK_SESSION_CATALOG,
+          DELTA_SPARK_CATALOG,
+          GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT,
+          configuredCatalog);
+    } else {
+      conf.set(SPARK_SESSION_CATALOG, DELTA_SPARK_CATALOG);
+    }
+    if (!gravitinoDriverExtensions.contains(DELTA_SPARK_EXTENSIONS)) {
+      gravitinoDriverExtensions.add(DELTA_SPARK_EXTENSIONS);
+    }
+  }
+
+  @VisibleForTesting
+  boolean isCatalogEnabled(String provider) {
+    if ("lakehouse-iceberg".equalsIgnoreCase(provider)) {
+      return enableIcebergSupport;
+    }
+    if ("lakehouse-paimon".equalsIgnoreCase(provider)) {
+      return enablePaimonSupport;
+    }
+    if (DELTA_PROVIDER.equalsIgnoreCase(provider)) {
+      return enableDeltaSupport;
+    }
+    return true;
   }
 
   /**
@@ -272,6 +346,28 @@ public class GravitinoDriverPlugin implements DriverPlugin {
     Preconditions.checkArgument(
         StringUtils.isNotBlank(configValue), configKey + " should not be empty");
     return configValue;
+  }
+
+  private void validateDeltaClass(String className) {
+    try {
+      deltaClassNameValidator.validate(className);
+    } catch (ClassNotFoundException | LinkageError e) {
+      throw new IllegalArgumentException(
+          String.format(
+              "%s requires %s on the Spark driver classpath",
+              GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT, className),
+          e);
+    }
+  }
+
+  private static void loadClassWithoutInitialization(String className)
+      throws ClassNotFoundException {
+    ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
+    ClassLoader classLoader =
+        contextClassLoader == null
+            ? GravitinoDriverPlugin.class.getClassLoader()
+            : contextClassLoader;
+    Class.forName(className, false, classLoader);
   }
 
   @Nullable
@@ -349,6 +445,11 @@ public class GravitinoDriverPlugin implements DriverPlugin {
     protected String getCustomTokenInfo() {
       return resolveToken(sparkConf);
     }
+  }
+
+  @FunctionalInterface
+  interface ClassNameValidator {
+    void validate(String className) throws ClassNotFoundException;
   }
 
   @VisibleForTesting

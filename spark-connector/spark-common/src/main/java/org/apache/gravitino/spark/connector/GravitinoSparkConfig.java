@@ -30,6 +30,9 @@ public class GravitinoSparkConfig {
       GRAVITINO_PREFIX + "enableIcebergSupport";
   public static final String GRAVITINO_ENABLE_PAIMON_SUPPORT =
       GRAVITINO_PREFIX + "enablePaimonSupport";
+  /** Whether optional Delta discovery and native Spark bootstrap are enabled. */
+  public static final String GRAVITINO_ENABLE_DELTA_SUPPORT = "spark.gravitino.enableDeltaSupport";
+
   public static final String GRAVITINO_CLIENT_CONFIG_PREFIX = GRAVITINO_PREFIX + "client.";
 
   /**

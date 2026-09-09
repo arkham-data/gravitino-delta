@@ -20,12 +20,18 @@
 package org.apache.gravitino.spark.connector.plugin;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.collect.ImmutableMap;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import org.apache.gravitino.auth.AuthProperties;
 import org.apache.gravitino.spark.connector.GravitinoSparkConfig;
 import org.apache.gravitino.spark.connector.authorization.GravitinoAuthorizationSparkSessionExtensions;
@@ -38,6 +44,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 public class TestGravitinoDriverPlugin {
+
+  private static final String DELTA_CATALOG =
+      "org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35";
 
   @Test
   void testIcebergExtensionName() {
@@ -66,6 +75,143 @@ public class TestGravitinoDriverPlugin {
     new GravitinoDriverPlugin().registerSqlExtensions(sparkConf);
 
     assertEquals(extension, sparkConf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS().key()));
+  }
+
+  @Test
+  void testDisabledDeltaSupportPreservesNativeSettingsAndExcludesDeltaCatalogs() {
+    SparkConf sparkConf =
+        new SparkConf(false)
+            .set("spark.gravitino.enableDeltaSupport", "false")
+            .set(
+                StaticSQLConf.SPARK_SESSION_EXTENSIONS().key(),
+                GravitinoDriverPlugin.DELTA_SPARK_EXTENSIONS)
+            .set(GravitinoDriverPlugin.SPARK_SESSION_CATALOG, "example.SessionCatalog");
+    GravitinoDriverPlugin plugin =
+        new GravitinoDriverPlugin(
+            () -> {
+              throw new AssertionError("Disabled Delta support must not resolve the adapter");
+            },
+            className -> {
+              throw new AssertionError("Disabled Delta support must not load " + className);
+            });
+
+    plugin.configureDeltaSupport(sparkConf);
+    plugin.registerSqlExtensions(sparkConf);
+
+    assertFalse(plugin.isCatalogEnabled("lakehouse-delta"));
+    assertEquals(
+        GravitinoAuthorizationSparkSessionExtensions.class.getName()
+            + ","
+            + GravitinoDriverPlugin.DELTA_SPARK_EXTENSIONS,
+        sparkConf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS().key()));
+    assertEquals(
+        "example.SessionCatalog", sparkConf.get(GravitinoDriverPlugin.SPARK_SESSION_CATALOG));
+  }
+
+  @Test
+  void testEnabledDeltaSupportFailsWhenOptionalRuntimeIsUnavailable() {
+    SparkConf sparkConf = deltaEnabledConf();
+    GravitinoDriverPlugin plugin =
+        new GravitinoDriverPlugin(
+            () -> DELTA_CATALOG,
+            className -> {
+              throw new ClassNotFoundException(className);
+            });
+
+    IllegalArgumentException exception =
+        assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(sparkConf));
+
+    assertTrue(exception.getMessage().contains(DELTA_CATALOG));
+    assertFalse(sparkConf.contains(GravitinoDriverPlugin.SPARK_SESSION_CATALOG));
+  }
+
+  @Test
+  void testEnabledDeltaSupportFailsWhenNativeExtensionIsUnavailable() {
+    SparkConf sparkConf = deltaEnabledConf();
+    GravitinoDriverPlugin plugin =
+        new GravitinoDriverPlugin(
+            () -> DELTA_CATALOG,
+            className -> {
+              if (GravitinoDriverPlugin.DELTA_SPARK_EXTENSIONS.equals(className)) {
+                throw new ClassNotFoundException(className);
+              }
+            });
+
+    IllegalArgumentException exception =
+        assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(sparkConf));
+
+    assertTrue(exception.getMessage().contains(GravitinoDriverPlugin.DELTA_SPARK_EXTENSIONS));
+    assertFalse(sparkConf.contains(GravitinoDriverPlugin.SPARK_SESSION_CATALOG));
+  }
+
+  @Test
+  void testEnabledDeltaSupportRegistersAndDeduplicatesNativeSettings() {
+    SparkConf sparkConf = deltaEnabledConf();
+    String authorizationExtension = GravitinoAuthorizationSparkSessionExtensions.class.getName();
+    sparkConf.set(
+        StaticSQLConf.SPARK_SESSION_EXTENSIONS().key(),
+        String.join(
+            ",",
+            Arrays.asList(
+                "example.ExistingExtension",
+                GravitinoDriverPlugin.DELTA_SPARK_EXTENSIONS,
+                authorizationExtension)));
+    List<String> validatedClasses = new ArrayList<>();
+    GravitinoDriverPlugin plugin =
+        new GravitinoDriverPlugin(() -> DELTA_CATALOG, validatedClasses::add);
+
+    plugin.configureDeltaSupport(sparkConf);
+    plugin.registerSqlExtensions(sparkConf);
+
+    assertTrue(plugin.isCatalogEnabled("lakehouse-delta"));
+    assertEquals(
+        Arrays.asList(
+            DELTA_CATALOG,
+            GravitinoDriverPlugin.DELTA_SPARK_EXTENSIONS,
+            GravitinoDriverPlugin.DELTA_SPARK_CATALOG),
+        validatedClasses);
+    assertEquals(
+        GravitinoDriverPlugin.DELTA_SPARK_CATALOG,
+        sparkConf.get(GravitinoDriverPlugin.SPARK_SESSION_CATALOG));
+    assertEquals(
+        String.join(
+            ",",
+            Arrays.asList(
+                authorizationExtension,
+                GravitinoDriverPlugin.DELTA_SPARK_EXTENSIONS,
+                "example.ExistingExtension")),
+        sparkConf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS().key()));
+  }
+
+  @Test
+  void testEnabledDeltaSupportPreservesMatchingNativeCatalog() {
+    SparkConf sparkConf =
+        deltaEnabledConf()
+            .set(
+                GravitinoDriverPlugin.SPARK_SESSION_CATALOG,
+                GravitinoDriverPlugin.DELTA_SPARK_CATALOG);
+    GravitinoDriverPlugin plugin = new GravitinoDriverPlugin(() -> DELTA_CATALOG, className -> {});
+
+    plugin.configureDeltaSupport(sparkConf);
+
+    assertEquals(
+        GravitinoDriverPlugin.DELTA_SPARK_CATALOG,
+        sparkConf.get(GravitinoDriverPlugin.SPARK_SESSION_CATALOG));
+  }
+
+  @Test
+  void testEnabledDeltaSupportRejectsConflictingNativeCatalog() {
+    SparkConf sparkConf =
+        deltaEnabledConf()
+            .set(GravitinoDriverPlugin.SPARK_SESSION_CATALOG, "example.ConflictingCatalog");
+    GravitinoDriverPlugin plugin = new GravitinoDriverPlugin(() -> DELTA_CATALOG, className -> {});
+
+    IllegalArgumentException exception =
+        assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(sparkConf));
+
+    assertTrue(exception.getMessage().contains("example.ConflictingCatalog"));
+    assertEquals(
+        "example.ConflictingCatalog", sparkConf.get(GravitinoDriverPlugin.SPARK_SESSION_CATALOG));
   }
 
   @Test
@@ -146,5 +292,9 @@ public class TestGravitinoDriverPlugin {
     SparkConf sparkConf = new SparkConf(false);
     sparkConf.set(GravitinoSparkConfig.GRAVITINO_AUTH_TYPE, AuthProperties.TOKEN_AUTH_TYPE);
     return sparkConf;
+  }
+
+  private static SparkConf deltaEnabledConf() {
+    return new SparkConf(false).set("spark.gravitino.enableDeltaSupport", "true");
   }
 }

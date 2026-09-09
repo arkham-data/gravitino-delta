@@ -56,6 +56,9 @@ public class CatalogNameAdaptor {
                 "lakehouse-paimon-3.5",
                 "org.apache.gravitino.spark.connector.paimon.GravitinoPaimonCatalogSpark35")
             .put(
+                "lakehouse-delta-3.5",
+                "org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35")
+            .put(
                 "glue-3.3", "org.apache.gravitino.spark.connector.glue.GravitinoGlueCatalogSpark33")
             .put(
                 "glue-3.4", "org.apache.gravitino.spark.connector.glue.GravitinoGlueCatalogSpark34")

@@ -44,5 +44,10 @@ public class TestCatalogNameAdaptor {
 
     String jdbcCatalogName = CatalogNameAdaptor.getCatalogName("jdbc");
     Assertions.assertEquals(GravitinoJdbcCatalogSpark35.class.getName(), jdbcCatalogName);
+
+    String deltaCatalogName = CatalogNameAdaptor.getCatalogName("lakehouse-delta");
+    Assertions.assertEquals(
+        "org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35",
+        deltaCatalogName);
   }
 }

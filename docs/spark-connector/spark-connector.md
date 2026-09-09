@@ -11,7 +11,7 @@ The Apache Gravitino Spark connector leverages the Spark DataSourceV2 interface 
 
 ## Capabilities
 
-1. Supports [Hive catalog](spark-catalog-hive.md), [Iceberg catalog](spark-catalog-iceberg.md), [Paimon catalog](spark-catalog-paimon.md), [Jdbc catalog](spark-catalog-jdbc.md), and [AWS Glue catalog](spark-catalog-glue.md).
+1. Supports [Hive catalog](spark-catalog-hive.md), [Iceberg catalog](spark-catalog-iceberg.md), [Paimon catalog](spark-catalog-paimon.md), [Delta Lake catalog](spark-delta-catalog.md), [Jdbc catalog](spark-catalog-jdbc.md), and [AWS Glue catalog](spark-catalog-glue.md).
 2. Supports federation query.
 3. Supports most DDL and DML SQLs.
 
@@ -33,6 +33,7 @@ The Apache Gravitino Spark connector leverages the Spark DataSourceV2 interface 
 | spark.sql.gravitino.uri                          | string  | (none)        | The uri of Gravitino server address.                                                                                                                                     | Yes      |
 | spark.sql.gravitino.enableIcebergSupport         | string  | `false`       | Set to `true` to use Iceberg catalog.                                                                                                                                    | No       |
 | spark.sql.gravitino.enablePaimonSupport          | string  | `false`       | Set to `true` to use Paimon catalog.                                                                                                                                     | No       |
+| spark.gravitino.enableDeltaSupport               | boolean | `false`       | Set to `true` to discover Delta Lake catalogs with the optional Spark 3.5 Delta runtime. See [Delta Lake catalog](spark-delta-catalog.md).                              | No       |
 | spark.sql.gravitino.client.                      | string  | (none)        | The configuration key prefix for the Gravitino client config.                                                                                                            | No       |
 | spark.sql.gravitino.authType                     | string  | `simple`      | The authentication type, one of `simple`, `basic`, `oauth2`, `kerberos`, `token`.                                                                                        | No       |
 | spark.sql.gravitino.token.value                  | string  | (none)        | The bearer token to present to Gravitino, used when `authType` is `token`.                                                                                               | No       |
