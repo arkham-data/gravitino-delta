@@ -1,0 +1,60 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+// Focused production package; never invokes root compileDistribution or test fixtures.
+gradle.projectsEvaluated {
+    def root = gradle.rootProject
+    def destination = root.findProperty('deltaAcceptanceOutput')
+    if (!destination) {
+        throw new GradleException('Set -PdeltaAcceptanceOutput to a new owned directory')
+    }
+    def server = root.project(':server')
+    def provider = root.project(':catalogs:catalog-lakehouse-delta')
+    def runtime = root.project(':spark-connector:spark-delta-runtime-3.5')
+    def selected = root.findProperty('deltaVersion') ?: '3.3.0'
+    def suppliedRuntime = root.findProperty('deltaAcceptanceRuntime')
+    if (suppliedRuntime && !new File(suppliedRuntime.toString()).isFile()) {
+        throw new GradleException('Supplied production runtime jar does not exist')
+    }
+    def nativeJars = root.configurations.create('deltaAcceptanceNative')
+    // Hadoop itself and Scala are supplied by the real Spark distribution.
+    root.dependencies.add(nativeJars.name, "io.delta:delta-spark_2.12:${selected}") { transitive = false }
+    root.dependencies.add(nativeJars.name, "io.delta:delta-storage:${selected}") { transitive = false }
+    root.dependencies.add(nativeJars.name, 'org.apache.hadoop:hadoop-aws:3.3.4') { transitive = false }
+    // Version pinned by the Hadoop 3.3.4 production POM.
+    root.dependencies.add(nativeJars.name, 'com.amazonaws:aws-java-sdk-bundle:1.12.262') { transitive = false }
+    root.tasks.register('prepareDeltaAcceptance') {
+        dependsOn(server.tasks.named('jar'), server.configurations.runtimeClasspath,
+                  provider.tasks.named('copyLibAndConfig'))
+        if (!suppliedRuntime) { dependsOn(runtime.tasks.named('shadowJar')) }
+        doLast {
+            def out = new File(destination.toString())
+            if (out.exists()) { throw new GradleException('Acceptance package output already exists') }
+            out.mkdirs()
+            root.copy { from(new File(root.rootDir, 'scripts/h2')); into(new File(out, 'scripts/h2')) }
+            root.copy { from(server.tasks.named('jar')); from(server.configurations.runtimeClasspath); into(new File(out, 'libs')) }
+            root.copy { from(new File(root.rootDir, 'distribution/package/catalogs/lakehouse-delta')); into(new File(out, 'catalogs/lakehouse-delta')) }
+            root.copy { from(suppliedRuntime ? new File(suppliedRuntime.toString()) : runtime.tasks.named('shadowJar')); from(nativeJars); into(new File(out, 'spark-jars')) }
+            root.copy { from(new File(root.rootDir, 'bin')); include('gravitino.sh.template', 'common.sh.template'); rename { it.replace('.template', '') }; into(new File(out, 'bin')) }
+            root.copy { from(new File(root.rootDir, 'conf/log4j2.properties.template')); rename { it.replace('.template', '') }; into(new File(out, 'conf')) }
+            new File(out, 'conf/gravitino-env.sh').text = "GRAVITINO_VERSION=${root.version}\n"
+            new File(out, 'bin/gravitino.sh').setExecutable(true)
+        }
+    }
+}

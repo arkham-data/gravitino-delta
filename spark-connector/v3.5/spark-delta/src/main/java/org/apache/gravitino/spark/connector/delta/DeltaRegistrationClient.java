@@ -49,7 +49,9 @@ public final class DeltaRegistrationClient {
     this.actor = actor;
   }
   /**
-   * Executes one command without retry. STATUS uses the operation actor and existing server gates.
+   * Submits one command without adding application-level retries. The underlying production HTTP
+   * transport may retry idempotent methods such as PUT after connection loss. STATUS uses the
+   * operation actor and existing server gates.
    *
    * @param id named table
    * @param command production wire command
