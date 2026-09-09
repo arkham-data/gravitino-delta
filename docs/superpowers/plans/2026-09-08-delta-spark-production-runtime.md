@@ -113,3 +113,41 @@ Root verified every included file against its archived hash manifest. The archiv
 retains original results/failures, source snapshots, native object bytes, selected
 runtime/provider jars and reviews. Repeated dependency packages and private runtime
 configuration remain at their original private evidence paths; none was deleted.
+
+
+## Continuous production-chain review acceptance (2026-09-08)
+
+The review from shared production extraction `6ecc79fc1` through packaged acceptance
+`a85e07653` found one Important admission defect. Its single fix wave through
+`ae1dd31fa` passed independent scoped rereview with zero new findings. Replacement
+now validates the complete fresh native base against the existing schema contract
+before persisting REPLACING. Unsupported bases remain published and unchanged;
+postcommit validation and full-row CAS remain in force. The SQLite resource cleanup
+is addressed; inherited build-info/deprecation cleanup remains separate.
+
+The retained pre-fix native RED advances the native head/UUID and leaves durable
+QUARANTINED state. Final focused native qualification passes all four required
+Spark/Delta pairs: 24 excluded attempts preserve native/public state, and four
+supported mapped replacements publish successfully. Separate provider/shared unit
+evidence contains 142 passing tests per Kernel pin and proves complete stored-row
+preservation. Root verified original exits, source/artifact bindings and manifests;
+this targeted fix does not expand supported schema transitions or full conformance.
+
+The current runtime SHA256 is
+`56248fc0af262debc09ecfcde341022fd50db1ceefd903a818b369a67f92ae5e`, superseding the
+Task3 runtime above for subsequent integration. Provider SHA256 is
+`6cd8f26be53e0cfcf262eda19f0bc7ac0286d93d127acae48e330673425ab0a4`; shared jar SHA256 is
+`68e6bb3ec9ad08dc2b31937a9e6a8b4695e68f0dbbc8231a35b2f6663b933b9f`.
+
+Fix evidence archive:
+`/private/tmp/gravitino-delta-production-chain-fix-evidence-ae1dd31fa.tar.gz`,
+16,171,924 bytes, 575 members, mode 0600, SHA256
+`0ab70b433358098ab55828ff89d0a7ab8494185cdee5960bc087843309fe3336`.
+Root verified all 574 included files against the embedded hash manifest. Original
+failed attempts and selected exact artifacts remain available; no original evidence
+was deleted.
+
+This completes the production foundation review gate and activates
+`docs/superpowers/plans/2026-09-08-delta-ranger-production-runtime.md`. Production
+Ranger downloads/enforcement, full Delta lifecycle/features and catalog-demo
+integration remain required work.
