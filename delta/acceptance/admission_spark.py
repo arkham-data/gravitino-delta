@@ -198,9 +198,14 @@ def main():
                 if hasattr(error, "result"):
                     record["response"] = error.result
                 if case["mode"] != "red":
-                    assert "INVALID_SCHEMA_CONTRACT" in str(error) + json.dumps(
+                    expected = (
+                        "INVALID_SCHEMA_CONTRACT"
+                        if name == "none_direct"
+                        else "DELTA_REGISTRATION_STATUS_NEEDED"
+                    )
+                    assert expected in str(error) + json.dumps(
                         getattr(error, "result", {})
-                    ), "Failure did not reach shared base admission"
+                    ), "Unexpected public admission failure diagnostic"
                 if case["mode"] == "red":
                     # Keep the actual failing driver exit and original publication exception.
                     raise
