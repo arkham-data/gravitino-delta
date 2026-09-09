@@ -176,20 +176,25 @@ def main():
                             }
                         ],
                     }
-                    payload = command(
-                        "BEGIN_REPLACE",
-                        expected=identity(before["table"]["properties"]),
-                        replacementToken=str(uuid.uuid4()),
-                        runId=str(uuid.uuid4()),
-                        schemaContract={
-                            "kind": "SPARK_35_DELTA_33_NAME_MAPPING_V1",
-                            "operationMode": "SCHEMA_ONLY",
-                            "requiredSchema": schema,
-                            "columnMappingMode": "name",
-                            "featurePolicy": "BASIC_NAME_MAPPING_V1",
-                        },
+                    shared = (
+                        spark._jvm.org.apache.gravitino.catalog.lakehouse.delta.registration
                     )
-                    payload["version"] = 2
+                    expected_identity = identity(before["table"]["properties"])
+                    contract = shared.DeltaSchemaContract.spark35Delta33NameMapping(
+                        shared.DeltaSchemaContract.OperationMode.valueOf("SCHEMA_ONLY"),
+                        json.dumps(schema),
+                    )
+                    encoded = shared.DeltaRegistrationCommand.beginReplace(
+                        shared.DeltaRegistrationIdentity.of(
+                            expected_identity["id"],
+                            expected_identity["generation"],
+                            expected_identity["token"],
+                        ),
+                        str(uuid.uuid4()),
+                        str(uuid.uuid4()),
+                        contract,
+                    ).encode()
+                    payload = json.loads(encoded)
                     submit(rest, base, catalog, name, payload)
                 else:
                     spark.sql(statement).collect()
