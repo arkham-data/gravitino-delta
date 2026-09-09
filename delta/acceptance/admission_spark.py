@@ -98,20 +98,32 @@ def main():
             ["none_schema_explicit"]
             if case["mode"] == "red"
             else [
+                "semantic_adopted",
                 "none_schema_explicit",
                 "none_query_default",
                 "none_schema_default",
                 "none_query_explicit",
                 "none_direct",
-                "semantic_adopted",
             ]
         )
         for name in names:
             if name == "semantic_adopted":
                 location = case["adoptionLocation"]
-                spark.sql(
-                    f"CREATE TABLE delta.`{location}` (id BIGINT, generated BIGINT GENERATED ALWAYS AS (id + 1)) USING delta TBLPROPERTIES ('delta.columnMapping.mode'='name')"
-                ).collect()
+                native = spark._jvm.io.delta.tables.DeltaTable
+                generated = (
+                    native.columnBuilder(spark._jsparkSession, "generated")
+                    .dataType("BIGINT")
+                    .generatedAlwaysAs("id + 1")
+                    .build()
+                )
+                (
+                    native.create(spark._jsparkSession)
+                    .location(location)
+                    .addColumn("id", "BIGINT")
+                    .addColumn(generated)
+                    .property("delta.columnMapping.mode", "name")
+                    .execute()
+                )
                 spark.sql(f"INSERT INTO delta.`{location}` (id) VALUES (17)").collect()
                 adopting = submit(
                     rest,
