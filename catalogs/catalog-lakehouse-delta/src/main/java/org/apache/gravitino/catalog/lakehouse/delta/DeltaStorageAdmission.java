@@ -67,12 +67,16 @@ final class DeltaStorageAdmission {
   static void checkSchemaCandidate(SchemaEntity schema) {
     try {
       checkDirect(schema.name(), 128, MEDIUM_TEXT_BYTES);
-      checkDirect(schema.comment(), 256, MEDIUM_TEXT_BYTES);
+      checkSchemaComment(schema.comment());
       checkJson(schema.properties(), MEDIUM_TEXT_BYTES);
       checkJson(schema.auditInfo(), MEDIUM_TEXT_BYTES);
     } catch (RuntimeException e) {
       throw invalid();
     }
+  }
+
+  static void checkSchemaComment(@Nullable String comment) {
+    checkDirect(comment, 256, MEDIUM_TEXT_BYTES);
   }
 
   static void checkTableCandidate(TableEntity table) {

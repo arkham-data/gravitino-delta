@@ -17,13 +17,13 @@
   under the License.
 -->
 
-# Delta metadata reader and trusted provider policy
+# Delta catalog provider and trusted metadata policy
 
 `DeltaMetadataReader` eagerly reads authoritative Delta metadata through Kernel's
 public snapshot APIs. It exposes latest and retained as-of observations and exact
 CREATE/REPLACE commit correlation. It performs no native writes, authorization,
-registration-state changes, or publication. Provider registration, distribution,
-and ServiceLoader wiring are separate work.
+registration-state changes, or publication. The production `lakehouse-delta` SPI delegates durable registration to the managed
+entity store and ships as an isolated catalog package.
 
 The compatibility boundary is intentionally narrow: `DeltaKernel33MetadataAdapter`
 is the only production class using Kernel internals. It accepts matching API and
@@ -113,8 +113,8 @@ Tracking-filesystem tests establish cache separation, close isolation, concurren
 read draining and scoped lazy checkpoint reads locally. They do not establish
 S3/MinIO endpoint/credential isolation, packaged provider acceptance, or Spark
 feature conformance; those remain separate acceptance stages. The provider now bundles aligned `hadoop-aws`/S3A and constructs its configuration
-from the trusted settings below. Distribution wiring and endpoint-isolation acceptance
-remain later integration stages.
+from the trusted settings below. The packaged native acceptance suite separately checks
+credential isolation and reader-close isolation against the same S3 URI.
 
 Run the module matrix with JDK 17:
 
@@ -147,9 +147,8 @@ not native Kernel marker writes or Spark entrypoint qualification.
 
 ## Trusted catalog configuration
 
-These provider-local helpers are the admission boundary consumed by the following
-registration and catalog-SPI tasks. They do not yet install a provider or mutate
-registration rows. Catalog administrators choose storage policy; table and schema
+These provider-local helpers form the admission boundary consumed by the production
+registration lifecycle and catalog SPI. Catalog administrators choose storage policy; table and schema
 requests cannot override it. Configuration passed to `DeltaCatalogConfig.from`
 must already have secret references resolved by Gravitino's existing secret manager.
 Its Hadoop configuration is fresh, allowlisted, defensively copied, and must never
@@ -208,7 +207,7 @@ references (the registered provider and locator attributes depend on deployment)
 ```
 
 Do not send raw secret URNs in request properties. Hidden metadata masks credentials;
-the following SPI integration must also disable `BaseCatalog.shouldBackfillCredential`
+the production SPI disables `BaseCatalog.shouldBackfillCredential`
 so legacy credential backfill cannot expose resolved values in catalog responses.
 
 Both `s3` and `s3a` inputs normalize once to `s3a`, with lowercase DNS bucket names
@@ -303,7 +302,7 @@ VARCHAR limits. Serialized types/defaults allow 65535 bytes; table/schema JSON a
 audit fields plus direct table comments allow 16777215 bytes per field. These are
 portable schema ceilings, not guarantees about deployment packet/memory limits.
 
-The following registration lifecycle must check desired projection before
+The registration lifecycle checks desired projection before
 RESERVE/BEGIN_REPLACE, observed projection before ADOPT, and every complete schema
 or table candidate before put/update. Internal state encoding and the final
 containing properties map both need checks because embedded schema/markers escape
@@ -312,5 +311,100 @@ durable storage. PUBLISH/refresh must recheck actual observations; unrepresentab
 metadata requires a representable full-row-CAS diagnostic with
 `UNREPRESENTABLE_NATIVE_METADATA`, retaining the last representable observation and
 correlation. If that diagnostic cannot fit, keep the old row and fail closed.
-Current tests cover helper admission and final candidate bounds; actual no-row and
-quarantine lifecycle assertions belong to the subsequent state-machine task.
+Tests cover helper admission, final candidate bounds, no-row rejection and
+quarantine lifecycle behavior.
+
+
+## Production SPI and distribution
+
+Build `:catalogs:catalog-lakehouse-delta:copyLibAndConfig` with
+`-PdeltaKernelVersion=3.3.0` or `3.3.2`. The package root is
+`distribution/package/catalogs/lakehouse-delta`, with `libs/` containing the
+production provider, `delta-common`, matched Kernel API/defaults/storage, and
+Hadoop 3.3.6 S3A/AWS dependencies; `conf/lakehouse-delta.conf` contains commented,
+nonsecret examples. Provider-scoped Sync tasks replace the current runtime inputs
+when switching pins. No Spark, server, fixture, or private logging binding is shipped.
+The application supplies its Log4j2 SLF4J2 binding and Log4j1 bridge. Unused Hadoop
+Jersey 1 HTTP-server dependencies are excluded to avoid collisions with Jersey 2.
+
+Create a RELATIONAL catalog with provider `lakehouse-delta` and trusted properties:
+
+```properties
+delta.warehouse=s3a://your-bucket/owned/warehouse
+delta.storage-credential-mode=instance
+s3-region=us-east-1
+```
+
+For an external package, set catalog `package` to the absolute package root above,
+which contains both `libs` and `conf`. Adoption roots and recovery principals must
+be configured explicitly by trusted administrators; none are enabled by the example.
+These storage, root, and recovery settings are immutable. Credential backfill into
+catalog properties is disabled, including when the server escape hatch is enabled;
+separately authorized credential vending remains governed by existing server policy.
+There is no catalog-level connection probe: initialization validates configuration,
+and native operations validate read access.
+
+Managed schema create accepts a scalar comment and zero user properties. Core's
+positive reserved StringIdentifier is retained internally and never exposed as a
+public schema property. Existing `SchemaChange.setProperty("comment", value)` and
+`removeProperty("comment")` are provider-local comment set/clear transport; the
+value updates the scalar comment, never a stored user property. Set follows existing
+nonblank, nonmasked, non-secret-URN restrictions; clear uses remove. Entire change
+batches and complete candidates are admitted before full-row CAS; empty batches are read-only. Every other
+property, secret binding/reference, rename, and unsupported schema change fails.
+Schema drop checks all raw registrations, including hidden and terminal states,
+then delegates non-cascading deletion so the relational parent lock protects a
+concurrently inserted registration even when the caller requests cascade.
+Table drop, purge, ordinary alter, rename, and parent cascade over retained rows
+remain unsupported; no native deletion is claimed.
+
+## REST lifecycle and writer contract
+
+POST carries the strict `delta.registration.command` encoded by
+`DeltaRegistrationCommand.reserve` or `adopt`. Persist typed command intent **before**
+POST, then persist the server-issued `DeltaRegistrationReceipt`. Pending tables are
+hidden from GET/LIST. After a lost POST reply, send `statusByToken(token, runId)` on
+the known named-table PUT route; ADOPT uses its stored retired writer run. This
+observation route returns the durable numeric ID only for the matching actor/run/token
+or permitted administration. Mutating commands still require full expected
+ID/generation/token. Never blindly retry a timed-out opening request.
+
+CREATE/REPLACE writers consume the exact marker in the pending receipt; its normalized
+location is the server's authoritative target (`receipt.location()` is empty while
+pending). Only native commit evidence followed by real HTTP PUBLISH makes a table
+visible. ADOPT observes existing native metadata and preserves valid foreign markers
+as provenance, not authority. Malformed present markers fail before ADOPTING storage.
+Full native configuration is neither durable registration data nor a public property;
+only its bounded digest and documented safe allowlist are retained.
+
+Owner assignment remains the existing posthook. An initial registration survives a
+failed ownership hook. Same-actor exact pending replay may repair absent ownership
+only after the original request has completed and drained; transferred ownership
+blocks replay. Initial PUBLISH requires an owner even for administrators, before
+native observation. This is not endpoint-wide atomicity or a writer fence. Recovery
+HANDOFF stores a controller attestation; it does not independently verify writer
+termination. ABORT retains ABANDONED and its name, including missing-log cases.
+
+## Opted-in native acceptance
+
+`-PskipITs` runs native-free HTTP/JCasbin/H2 tests and local reader/state tests without
+compiling or resolving the Spark fixture. The native suite requires explicit
+`-Ddelta.provider.it.endpoint`, `region`, `bucket`, `credentialsFile`, and `prefix`
+(using the full `delta.provider.it.` prefix for each key). The private credentials
+file uses the local fixture's `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` convention;
+only its path crosses the command line. The suite starts embedded test servers and
+uses an existing service, writing only fresh subprefixes under the supplied owned
+root. It retains evidence and does not clean shared service state.
+
+`TestDeltaCatalogNativeRestIT` uses the packaged main SPI with isolation enabled.
+Kernel-generated ADOPT tables are distinct from marker-bound schema-only native
+CREATE/REPLACE. The latter run in `nativePublicationFixture`, a separate child JVM
+with Spark 3.5.6 and Delta matching the selected server Kernel 3.3.0 or 3.3.2. The
+parent journals real intent/receipts and performs HTTP PUBLISH; child success alone
+is never publication. A narrowly typed child operation commits a deliberately malformed
+marker through native Spark alteration to test REST ADOPT rejection before row creation.
+That corrupted provenance is not valid publication evidence. Private child manifests, original commits, exits, classpaths,
+class origins, and object hashes are retained under module `build/native-rest-evidence`.
+These two fixture pairs do not establish the later four-pair packaged Spark runtime,
+CTAS/RTAS/DataFrameWriterV2 runtime routes, Ranger enforcement, or data-writing API
+coverage. Simple test authentication is not trusted production identity proof.
