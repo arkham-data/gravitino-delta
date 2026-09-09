@@ -228,6 +228,12 @@ public class GravitinoDeltaCatalogSpark35
               || key.equalsIgnoreCase("provider"))) {
         throw new IllegalArgumentException("Reserved Delta ALTER property");
       }
+      if (change instanceof TableChange.AddColumn) {
+        DeltaCatalogProperties.validateSchema(((TableChange.AddColumn) change).dataType());
+      } else if (change instanceof TableChange.UpdateColumnType) {
+        DeltaCatalogProperties.validateSchema(
+            ((TableChange.UpdateColumnType) change).newDataType());
+      }
       if (change instanceof TableChange.AddColumn
           && ((TableChange.AddColumn) change).defaultValue() != null) {
         throw new UnsupportedOperationException(

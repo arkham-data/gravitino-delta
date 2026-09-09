@@ -136,12 +136,17 @@ final class FileDeltaRegistrationJournal implements DeltaRegistrationJournal {
                   JSON.convertValue(
                       node.get("receipt"), new TypeReference<Map<String, String>>() {}))
               : null;
+      DeltaRegistrationCommand command =
+          DeltaRegistrationCommand.decode(node.get("command").toString());
+      if (receipt != null) {
+        DeltaRegistrationClient.validateBinding(command, receipt);
+      }
       return new Entry(
           key,
           text(node, "catalog"),
           text(node, "namespace"),
           text(node, "table"),
-          DeltaRegistrationCommand.decode(node.get("command").toString()),
+          command,
           Phase.valueOf(text(node, "phase")),
           receipt);
     } catch (IOException | RuntimeException error) {

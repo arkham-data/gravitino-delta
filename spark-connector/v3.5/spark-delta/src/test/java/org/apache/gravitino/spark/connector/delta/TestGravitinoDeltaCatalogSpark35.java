@@ -28,6 +28,8 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 
@@ -46,16 +48,19 @@ import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrati
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationReceipt;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.TableCatalog;
-import org.apache.gravitino.rel.TableChange;
 import org.apache.spark.sql.RuntimeConfig;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.SupportsWrite;
+import org.apache.spark.sql.connector.catalog.TableChange;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.catalog.DeltaCatalog;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.MetadataBuilder;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.BeforeEach;
@@ -108,7 +113,7 @@ class TestGravitinoDeltaCatalogSpark35 {
     when(tables.alterTable(any(), any()))
         .thenAnswer(
             call -> {
-              TableChange.SetProperty property = call.getArgument(1);
+              org.apache.gravitino.rel.TableChange.SetProperty property = call.getArgument(1);
               DeltaRegistrationCommand command =
                   DeltaRegistrationCommand.decode(property.getValue());
               effects.add(command.operation().name());
@@ -240,14 +245,42 @@ class TestGravitinoDeltaCatalogSpark35 {
         new StructType()
             .add(
                 "id",
-                org.apache.spark.sql.types.DataTypes.IntegerType,
+                DataTypes.IntegerType,
                 true,
-                new org.apache.spark.sql.types.MetadataBuilder()
-                    .putLong("delta.columnMapping.id", 7)
-                    .build());
+                new MetadataBuilder().putLong("delta.columnMapping.id", 7).build());
     assertThrows(
         IllegalArgumentException.class,
         () -> adapter.stageCreate(id, internal, new Transform[0], Map.of()).commitStagedChanges());
+    assertTrue(effects.isEmpty());
+  }
+
+  @Test
+  void addColumnRejectsExcludedMetadataInsideArrayBeforeResolvingMixedChanges() {
+    DataType nested = DataTypes.createArrayType(excludedStruct());
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            adapter.alterTable(
+                id,
+                TableChange.setProperty("comment", "safe"),
+                TableChange.addColumn(new String[] {"nested"}, nested)));
+    verify(tables, never()).loadTable(any());
+    verify(nativeCatalog, never()).alterTable(any(), any(TableChange[].class));
+    assertTrue(effects.isEmpty());
+  }
+
+  @Test
+  void updateColumnTypeRejectsExcludedMetadataInsideMapBeforeResolvingMixedChanges() {
+    DataType nested = DataTypes.createMapType(DataTypes.StringType, excludedStruct());
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            adapter.alterTable(
+                id,
+                TableChange.setProperty("comment", "safe"),
+                TableChange.updateColumnType(new String[] {"nested"}, nested)));
+    verify(tables, never()).loadTable(any());
+    verify(nativeCatalog, never()).alterTable(any(), any(TableChange[].class));
     assertTrue(effects.isEmpty());
   }
 
@@ -282,6 +315,15 @@ class TestGravitinoDeltaCatalogSpark35 {
                     entry.phase == DeltaRegistrationJournal.Phase.INTENT
                         && entry.command.operation()
                             == DeltaRegistrationCommand.Operation.PUBLISH));
+  }
+
+  private static StructType excludedStruct() {
+    return new StructType()
+        .add(
+            "id",
+            DataTypes.IntegerType,
+            true,
+            new MetadataBuilder().putLong("delta.columnMapping.id", 7).build());
   }
 
   private static Table table(DeltaRegistrationReceipt receipt) {

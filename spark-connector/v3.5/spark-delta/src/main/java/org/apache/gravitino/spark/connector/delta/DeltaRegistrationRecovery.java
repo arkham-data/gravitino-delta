@@ -51,6 +51,7 @@ public final class DeltaRegistrationRecovery {
    * @return observed receipt
    */
   public DeltaRegistrationReceipt status(DeltaRegistrationJournal.Entry entry) {
+    validateEntry(entry);
     DeltaRegistrationCommand command;
     if (entry.receipt != null) {
       command = DeltaRegistrationCommand.status(entry.receipt.identity());
@@ -72,9 +73,7 @@ public final class DeltaRegistrationRecovery {
       throw new IllegalArgumentException("Original evidence does not identify a recovery request");
     }
     DeltaRegistrationReceipt receipt = client.submit(id(entry), command);
-    if (entry.command.runId().isPresent() && !entry.command.runId().get().equals(receipt.runId())) {
-      throw DeltaRegistrationClient.bindingError();
-    }
+    DeltaRegistrationClient.validateBinding(entry.command, receipt);
     // Keep completion uncertainty explicit even after learning the allocated identity.
     journal.write(entry.phase(DeltaRegistrationJournal.Phase.STATUS_NEEDED, receipt));
     return receipt;
@@ -101,6 +100,7 @@ public final class DeltaRegistrationRecovery {
       throw new IllegalArgumentException(
           "Recovery requires matching receipt and independent request-drain confirmation");
     }
+    validateEntry(entry);
     if (command.operation() == DeltaRegistrationCommand.Operation.HANDOFF
         && !command.runId().get().equals(entry.receipt.runId())) {
       throw new IllegalArgumentException("Handoff must identify the recorded writer run");
@@ -133,6 +133,12 @@ public final class DeltaRegistrationRecovery {
    */
   public DeltaRegistrationReceipt administrativeStatus(Identifier id) {
     return client.submit(id, DeltaRegistrationCommand.administrativeStatus());
+  }
+
+  private static void validateEntry(DeltaRegistrationJournal.Entry entry) {
+    if (entry.receipt != null) {
+      DeltaRegistrationClient.validateBinding(entry.command, entry.receipt);
+    }
   }
 
   private static Identifier id(DeltaRegistrationJournal.Entry entry) {

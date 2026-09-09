@@ -114,6 +114,20 @@ public final class DeltaRegistrationClient {
   }
 
   static void validate(DeltaRegistrationCommand command, DeltaRegistrationReceipt receipt) {
+    validateBinding(command, receipt);
+    // Immediate native reservations must still be pending before constructing a native stage.
+    if ((command.operation() == DeltaRegistrationCommand.Operation.RESERVE
+            || command.operation() == DeltaRegistrationCommand.Operation.BEGIN_REPLACE)
+        && (!receipt.marker().isPresent()
+            || receipt.state()
+                != (command.operation() == DeltaRegistrationCommand.Operation.RESERVE
+                    ? DeltaRegistrationReceipt.State.RESERVED
+                    : DeltaRegistrationReceipt.State.REPLACING))) {
+      throw bindingError();
+    }
+  }
+
+  static void validateBinding(DeltaRegistrationCommand command, DeltaRegistrationReceipt receipt) {
     if (command.runId().isPresent() && !command.runId().get().equals(receipt.runId())) {
       throw bindingError();
     }
@@ -131,21 +145,22 @@ public final class DeltaRegistrationClient {
         && !command.expected().get().equals(receipt.identity())) {
       throw bindingError();
     }
-    if (command.operation() == DeltaRegistrationCommand.Operation.RESERVE
-        || command.operation() == DeltaRegistrationCommand.Operation.BEGIN_REPLACE) {
-      if (receipt.operation() != command.operation()
-          || !receipt.marker().isPresent()
-          || receipt.state()
-              != (command.operation() == DeltaRegistrationCommand.Operation.RESERVE
-                  ? DeltaRegistrationReceipt.State.RESERVED
-                  : DeltaRegistrationReceipt.State.REPLACING)) {
-        throw bindingError();
-      }
+    boolean opening =
+        command.operation() == DeltaRegistrationCommand.Operation.RESERVE
+            || command.operation() == DeltaRegistrationCommand.Operation.ADOPT
+            || command.operation() == DeltaRegistrationCommand.Operation.BEGIN_REPLACE;
+    if (!opening) {
+      // Operator/status commands retain the receipt's opening operation, not their own operation.
+      return;
+    }
+    if (receipt.operation() != command.operation()
+        || (command.operation() != DeltaRegistrationCommand.Operation.BEGIN_REPLACE
+            && receipt.identity().generation() != 0)) {
+      throw bindingError();
+    }
+    // Published and terminal recovery receipts legitimately no longer carry a pending marker.
+    if (receipt.marker().isPresent()) {
       DeltaOperationMarker marker = receipt.marker().get();
-      if (command.operation() == DeltaRegistrationCommand.Operation.RESERVE
-          && receipt.identity().generation() != 0) {
-        throw bindingError();
-      }
       if (command.exactSchemaJson().isPresent()
           && (!command.exactSchemaJson().get().equals(marker.schemaJson())
               || marker.schemaContract().isPresent())) {
@@ -153,17 +168,14 @@ public final class DeltaRegistrationClient {
       }
       if (command.schemaContract().isPresent()
           && (!marker.schemaContract().isPresent()
-              || !command.schemaContract().get().equals(marker.schemaContract().get()))) {
-        if (!marker.schemaContract().isPresent()
-            || !command
-                .schemaContract()
-                .get()
-                .requiredSchemaJson()
-                .equals(marker.schemaContract().get().requiredSchemaJson())
-            || command.schemaContract().get().operationMode()
-                != marker.schemaContract().get().operationMode()) {
-          throw bindingError();
-        }
+              || !command
+                  .schemaContract()
+                  .get()
+                  .requiredSchemaJson()
+                  .equals(marker.schemaContract().get().requiredSchemaJson())
+              || command.schemaContract().get().operationMode()
+                  != marker.schemaContract().get().operationMode())) {
+        throw bindingError();
       }
     }
   }

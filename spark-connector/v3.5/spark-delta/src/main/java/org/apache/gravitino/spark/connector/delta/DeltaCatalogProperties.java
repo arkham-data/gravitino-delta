@@ -29,7 +29,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.types.DataType;
 
 final class DeltaCatalogProperties {
   static final String UPDATE_ENABLED = "spark.databricks.delta.catalog.update.enabled";
@@ -114,7 +114,7 @@ final class DeltaCatalogProperties {
     }
   }
 
-  static void validateSchema(StructType schema) {
+  static void validateSchema(DataType schema) {
     try {
       validateSchemaNode(new ObjectMapper().readTree(schema.json()));
     } catch (IOException error) {
