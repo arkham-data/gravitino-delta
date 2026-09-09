@@ -114,6 +114,8 @@ project(":spark-connector:spark-3.4").projectDir = file("spark-connector/v3.4/sp
 project(":spark-connector:spark-runtime-3.4").projectDir = file("spark-connector/v3.4/spark-runtime")
 project(":spark-connector:spark-3.5").projectDir = file("spark-connector/v3.5/spark")
 project(":spark-connector:spark-runtime-3.5").projectDir = file("spark-connector/v3.5/spark-runtime")
+include("spark-connector:spark-delta-3.5")
+project(":spark-connector:spark-delta-3.5").projectDir = file("spark-connector/v3.5/spark-delta")
 include("web:web", "web:integration-test")
 include("web-v2:web", "web-v2:integration-test")
 include("docs")
