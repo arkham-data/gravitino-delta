@@ -119,3 +119,35 @@ objects are deleted. It is external-log fault injection, not a successful native
 lifecycle operation or observational adoption. Full Delta conformance, downstream
 owner-hook fault injection, exact CAS barriers, Ranger 2.8 enforcement, and the
 catalog demo retain their separately documented evidence and follow-up scopes.
+
+
+## Focused replacement base admission
+
+The review regression uses the same prepared production packages and launches only
+replacement-admission cases, with a fresh owned server, catalogs, journal and S3
+prefix. It archives original native objects before each excluded replacement.
+
+```bash
+python3 delta/acceptance/admission_run.py \
+  --inputs /private/path/inputs.json \
+  --packages /private/path/prepared-packages \
+  --output /private/path/new-admission-run
+```
+
+`--packages` contains `package-3.3.0` and `package-3.3.2`, prepared by the existing
+narrow task. The first package's one runtime is used for all four Spark/Delta pairs.
+Each pair covers mapping-none bases with schema-only/query replacement and
+explicit/session-default name mapping, direct production `BEGIN_REPLACE` via REST,
+a native generated-column table admitted by observational adoption, and a supported
+name-to-name query replacement. Excluded requests must preserve native head, UUID,
+active rows, public table metadata and exact object manifests. The direct command
+is encoded by the production Java API. Full internal row equality is separate
+provider unit evidence; this process test compares the complete public table DTO.
+
+`--red` selects one pair for the retained pre-fix schema-only reproducer using an
+older immutable package. It expects the original nonzero publication failure after
+native replacement; original data objects remain archived. Source snapshots,
+package/driver hashes, native state, process exits and server class origins remain
+in the private output. Spark's sanitized status-needed diagnostic is preserved;
+the server log and direct REST response carry the shared admission reason. The
+harness does not retry the rejected operation or run operator recovery.
