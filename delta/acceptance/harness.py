@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 
-"""Owned process evidence and a one-shot external response-loss proxy."""
+"""Owned process evidence and an external response-loss proxy."""
 
 import hashlib
 import http.client
@@ -269,16 +269,33 @@ class RecordingProxy:
 def catalog_close_completed(log, catalog):
     """Recognize existing production cleanup evidence, rejecting competing retirements."""
     removed = False
+    removal_thread = None
+    expected_key = "ClassLoaderKey{provider='lakehouse-delta', properties={}}"
     for line in log.splitlines():
         if "Removed catalog cache entry" in line:
             if removed or catalog not in line:
                 raise RuntimeError(
                     "Concurrent catalog retirement makes close evidence ambiguous"
                 )
+            thread = re.search(r"\bDEBUG \[([^\]]+)\]", line)
+            if not thread:
+                raise RuntimeError("Catalog removal thread is not observable")
+            removal_thread = thread.group(1)
             removed = True
         if removed and "Failed to close catalog" in line:
             raise RuntimeError("Catalog close failed")
         if removed and "Released ClassLoader for key" in line:
+            thread = re.search(r"\bDEBUG \[([^\]]+)\]", line)
+            key = re.search(r"Released ClassLoader for key (.+), refCount=", line)
+            if (
+                not thread
+                or thread.group(1) != removal_thread
+                or not key
+                or key.group(1) != expected_key
+            ):
+                raise RuntimeError(
+                    "Release does not match catalog removal thread and loader key"
+                )
             count = re.search(r"refCount=(\d+)", line)
             if "lakehouse-delta" not in line or not count or int(count.group(1)) <= 0:
                 raise RuntimeError("No surviving shared provider classloader reference")

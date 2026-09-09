@@ -105,10 +105,16 @@ class TestHarness(unittest.TestCase):
 
     def test_catalog_close_requires_ordered_observable_completion(self):
         removed = "DEBUG [cleanup] Removed catalog cache entry, identifier=owned.primary, cause=EXPLICIT\n"
-        release = "DEBUG [cleanup] Released ClassLoader for key {provider=lakehouse-delta}, refCount=2\n"
+        release = "DEBUG [cleanup] Released ClassLoader for key ClassLoaderKey{provider='lakehouse-delta', properties={}}, refCount=2\n"
         self.assertFalse(harness.catalog_close_completed(release, "primary"))
         self.assertFalse(harness.catalog_close_completed(removed, "primary"))
         self.assertTrue(harness.catalog_close_completed(removed + release, "primary"))
+        for mismatched in (
+            release.replace("[cleanup]", "[other]"),
+            release.replace("properties={}", "properties={different=true}"),
+        ):
+            with self.subTest(release=mismatched), self.assertRaises(RuntimeError):
+                harness.catalog_close_completed(removed + mismatched, "primary")
         with self.assertRaises(RuntimeError):
             harness.catalog_close_completed(
                 removed + "WARN Failed to close catalog\n" + release, "primary"
