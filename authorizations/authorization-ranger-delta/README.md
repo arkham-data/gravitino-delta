@@ -133,7 +133,8 @@ API/core and shared logging/Guava are supplied by the server. The optional clien
 adapts legacy user/group JSON through Map requests/responses on the existing
 RangerClient private `callAPI` extension seam. This is a pinned 2.8 compatibility
 dependency; authentication and HTTP behavior remain Ranger's. No global JSON mapper
-changes, test classes, fake downloaders or processor replacement are packaged.
+changes, project test fixtures, fake downloaders or processor replacements are packaged.
+Upstream Ranger classes, including audit-core's `audit/test/TestEvents`, remain intact.
 
 The local REST tests use real Gravitino dispatch, its public Java client, and the
 production Ranger HTTP client against an Admin boundary fixture. Tagged native
