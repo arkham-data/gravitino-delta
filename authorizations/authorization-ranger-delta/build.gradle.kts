@@ -30,6 +30,7 @@ dependencies {
   compileOnly(project(":core"))
   implementation(project(":authorizations:authorization-common")) { isTransitive = false }
   implementation(project(":authorizations:authorization-ranger")) { isTransitive = false }
+  implementation(libs.jackson.databind)
   implementation(libs.guava)
   implementation(libs.commons.lang3)
   implementation("commons-lang:commons-lang:2.6")

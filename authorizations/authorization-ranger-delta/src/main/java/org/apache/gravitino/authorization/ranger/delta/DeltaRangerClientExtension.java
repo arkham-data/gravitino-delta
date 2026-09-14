@@ -18,8 +18,12 @@
  */
 package org.apache.gravitino.authorization.ranger.delta;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.google.common.base.Preconditions;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.Map;
 import javax.annotation.Nullable;
 import javax.ws.rs.HttpMethod;
@@ -31,9 +35,13 @@ import org.apache.gravitino.authorization.ranger.reference.VXUser;
 import org.apache.gravitino.authorization.ranger.reference.VXUserList;
 import org.apache.gravitino.exceptions.AuthorizationPluginException;
 import org.apache.ranger.RangerClient;
+import org.apache.ranger.RangerServiceException;
+import org.apache.ranger.plugin.model.RangerBaseModelObject;
+import org.apache.ranger.plugin.model.RangerPolicy;
+import org.apache.ranger.plugin.model.RangerRole;
 import org.codehaus.jackson.map.ObjectMapper;
 
-/** Ranger 2.8 Map boundary for the existing Jackson 1 principal models. */
+/** Ranger 2.8 wire boundaries for legacy principals and timestamp-bearing policy models. */
 final class DeltaRangerClientExtension extends RangerClientExtension {
   private static final API SEARCH_USER =
       new API("/service/xusers/users", HttpMethod.GET, Response.Status.OK);
@@ -45,6 +53,7 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
       new API("/service/xusers/groups", HttpMethod.POST, Response.Status.OK);
   private final Method mapCall;
   private final ObjectMapper legacy = new ObjectMapper();
+  private final JsonMapper wire = new JsonMapper();
 
   DeltaRangerClientExtension(String host, String auth, String user, String password) {
     super(host, auth, user, password);
@@ -78,6 +87,76 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
   public Boolean createGroup(VXGroup group) {
     call(CREATE_GROUP, null, legacy.convertValue(group, Map.class));
     return true;
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public RangerRole createRole(String service, RangerRole role) throws RangerServiceException {
+    return write(
+        CREATE_ROLE, Collections.singletonMap("serviceName", service), role, RangerRole.class);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public RangerRole updateRole(long id, RangerRole role) throws RangerServiceException {
+    return write(UPDATE_ROLE_BY_ID.applyUrlFormat(id), null, role, RangerRole.class);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public RangerPolicy createPolicy(RangerPolicy policy) throws RangerServiceException {
+    requireResources(policy);
+    return write(CREATE_POLICY, null, policy, RangerPolicy.class);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public RangerPolicy updatePolicy(long id, RangerPolicy policy) throws RangerServiceException {
+    requireResources(policy);
+    return write(UPDATE_POLICY_BY_ID.applyUrlFormat(id), null, policy, RangerPolicy.class);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public RangerPolicy updatePolicy(String service, String name, RangerPolicy policy)
+      throws RangerServiceException {
+    requireResources(policy);
+    return write(
+        UPDATE_POLICY_BY_NAME.applyUrlFormat(service, name), null, policy, RangerPolicy.class);
+  }
+
+  private void requireResources(RangerPolicy policy) {
+    Preconditions.checkArgument(
+        !policy.getResources().isEmpty(), "Ranger policy resources cannot be empty!");
+  }
+
+  private <T> T write(
+      API api,
+      @Nullable Map<String, String> filters,
+      RangerBaseModelObject model,
+      Class<T> response)
+      throws RangerServiceException {
+    // Ranger 2.8 JsonUtils formats Date values in a form its Admin rejects. A detached Map
+    // preserves every model field while retaining the epoch-millisecond format returned by Admin.
+    Map<String, Object> request =
+        wire.convertValue(model, new TypeReference<Map<String, Object>>() {});
+    if (model.getCreateTime() != null) {
+      request.put("createTime", model.getCreateTime().toInstant().toEpochMilli());
+    }
+    if (model.getUpdateTime() != null) {
+      request.put("updateTime", model.getUpdateTime().toInstant().toEpochMilli());
+    }
+    try {
+      return response.cast(mapCall.invoke(this, api, filters, request, response));
+    } catch (InvocationTargetException e) {
+      if (e.getCause() instanceof RangerServiceException) {
+        throw (RangerServiceException) e.getCause();
+      }
+      throw new AuthorizationPluginException(
+          "Ranger model request failed; authoritative readback required");
+    } catch (IllegalAccessException e) {
+      throw new AuthorizationPluginException("Pinned Ranger 2.8 model API unavailable");
+    }
   }
 
   private Object call(API api, @Nullable Map<String, String> filters, @Nullable Map<?, ?> request) {
