@@ -123,7 +123,8 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
   }
 
   /**
-   * Stops only after observed local handlers finish; this does not certify Gravitino completion.
+   * Always releases the listener, reporting unresolved handlers or lost evidence as failures. Local
+   * drain does not certify Gravitino completion.
    */
   @Override
   public void close() throws InterruptedException, IOException {
