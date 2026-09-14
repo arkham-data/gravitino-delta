@@ -12,6 +12,14 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-08-delta-ranger-production-design.md`, extending `docs/superpowers/specs/2026-09-08-delta-production-runtime-design.md`.
 
+**September 14 recovery:** the referenced temporary preflight files and historical
+runtime evidence disappeared during the interruption. Continue from the committed
+foundation and persistent task ledger; requalify dependencies and affected behavior
+with fresh artifacts. Historical reports remain historical. No Checkstyle task or
+configuration exists in this baseline: use the existing Google Java Spotless check,
+strict Javadoc and an explicit review of imports, member ordering and public/protected
+documentation. The commands below reflect those available checks.
+
 ## Global Constraints
 
 - One Ranger resource service is provisioned for exactly one metalake. Server pushdown and Spark engine bind to the same service identity and metalake; canonical catalog is within that metalake. Policy labels are mutation ownership selectors, not an extra Ranger resource dimension. No global catalog-name uniqueness assumption.
@@ -51,16 +59,16 @@ Explicit ordinary grant contract starts with TABLE SELECT_TABLE/ALLOW → `selec
 
 `DeltaRangerPolicySelector` accepts only policy type ACCESS, exact configured service, all three labels (`gravitino-managed`, metalake ID, catalog ID), exact expected resource keys/values and exclude/recursive=false; duplicate owned candidates fail. Gravitino grant/revoke/owner updates never mutate Ranger-owned column access, masks or filters. Reject unsupported rename/drop callback transformations rather than broad wildcard mutation; use the current provider lifecycle boundaries.
 
-- [ ] Add behavioral RED: ServiceLoader/newPlugin; rejected incompatible provider/service/metalake; allowed select with condition retained; exact selector/duplicates/adversarial wildcards; owner bootstrap/transfer; role create/update/membership/removal; two catalogs sharing one service; foreign access/mask/filter models unchanged.
-- [ ] Implement the production SPI/config/selector/translation, reusing existing Ranger client/helper APIs. Ensure selector coverage includes owner callbacks and every inherited mutating path. Reuse `RangerAuthorizationPlugin.onRoleCreated/onRoleUpdated/onGrantedRolesToUser/onGrantedRolesToGroup` only after these tests exercise actual resources. Do not promote CandidateDeltaPolicyPlugin unchanged.
-- [ ] Add real Gravitino REST/lifecycle tests through ordinary public client: create role/user, `grantRolesToUser`, `grantPrivilegesToRole`, `revokePrivilegesFromRole`; production SPI handles callbacks. Intercept only Admin boundary in unit/component tests, not the Gravitino dispatcher. Assert the actual callback matrix: explicit Owner PUT (including same-owner) and table POST report thrown failures after persisting ownership; table pending registration remains. Schema POST uses batch callbacks, logs their failures and may return success. Catalog POST attempts local deletion after failure without rolling back Ranger effects. After original request drain and current-owner read, explicit ordinary same-owner PUT is the supported serialized reconciliation retry; there is no expected-owner CAS or cross-system atomicity. Independently compare desired Ranger policy/role state and later downloaded versions. Owner relation presence is never Ranger convergence evidence. Test partial failures and stale prior-owner removal without broadening selectors. Real Ranger endpoint acceptance follows Task 4.
-- [ ] Build a dedicated 2.8 artifact using the existing ranger module's `runtimeJars`/`copyAuthorizationLibs` pattern, with no duplicate 2.4 classes or tests. Run focused module tests/Javadoc/format, inspect jars, report and commit task-owned files for review.
+- [x] Add behavioral RED: ServiceLoader/newPlugin; rejected incompatible provider/service/metalake; allowed select with condition retained; exact selector/duplicates/adversarial wildcards; owner bootstrap/transfer; role create/update/membership/removal; two catalogs sharing one service; foreign access/mask/filter models unchanged.
+- [x] Implement the production SPI/config/selector/translation, reusing existing Ranger client/helper APIs. Ensure selector coverage includes owner callbacks and every inherited mutating path. Reuse `RangerAuthorizationPlugin.onRoleCreated/onRoleUpdated/onGrantedRolesToUser/onGrantedRolesToGroup` only after these tests exercise actual resources. Do not promote CandidateDeltaPolicyPlugin unchanged.
+- [x] Add real Gravitino REST/lifecycle tests through ordinary public client: create role/user, `grantRolesToUser`, `grantPrivilegesToRole`, `revokePrivilegesFromRole`; production SPI handles callbacks. Intercept only Admin boundary in unit/component tests, not the Gravitino dispatcher. Assert the actual callback matrix: explicit Owner PUT (including same-owner) and table POST report thrown failures after persisting ownership; table pending registration remains. Schema POST uses batch callbacks, logs their failures and may return success. Catalog POST attempts local deletion after failure without rolling back Ranger effects. After original request drain and current-owner read, explicit ordinary same-owner PUT is the supported serialized reconciliation retry; there is no expected-owner CAS or cross-system atomicity. Independently compare desired Ranger policy/role state and later downloaded versions. Owner relation presence is never Ranger convergence evidence. Test partial failures and stale prior-owner removal without broadening selectors. Real Ranger endpoint acceptance follows Task 4.
+- [x] Build a dedicated 2.8 artifact using the existing ranger module's `runtimeJars`/`copyAuthorizationLibs` pattern, with no duplicate 2.4 classes or tests. Run focused module tests/Javadoc/format, inspect jars, report and commit task-owned files for review.
 
 Commands at implementation time (not executed by this draft):
 
 ```bash
 ./gradlew :authorizations:authorization-ranger-delta:test --tests '*TestRangerDeltaAuthorization' --tests '*TestDeltaRangerPolicySelector' --tests '*TestRangerDeltaProductionCallbacks' -PskipITs
-./gradlew :authorizations:authorization-ranger-delta:checkstyleMain :authorizations:authorization-ranger-delta:spotlessCheck :authorizations:authorization-ranger-delta:copyLibAndConfig
+./gradlew :authorizations:authorization-ranger-delta:javadoc :authorizations:authorization-ranger-delta:spotlessCheck :authorizations:authorization-ranger-delta:copyLibAndConfig
 ```
 
 ### Task 2: Add the real policy-engine, subject and metadata-resolution adapters
@@ -123,7 +131,7 @@ Obtain each table filter and each applicable column mask from Task 2, anchored t
 
 ```bash
 ./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests '*TestDeltaRangerReadRule' --tests '*TestDeltaRangerMaskRules' --tests '*TestDeltaRangerNativeSelect' -PdeltaSparkVersion=3.5.4 -PdeltaVersion=3.3.0
-./gradlew :spark-connector:spark-delta-ranger-3.5:spotlessCheck :spark-connector:spark-delta-ranger-3.5:checkstyleMain
+./gradlew :spark-connector:spark-delta-ranger-3.5:spotlessCheck :spark-connector:spark-delta-ranger-3.5:javadoc
 ```
 
 ### Task 4: Package and qualify the real Gravitino → Ranger → Spark chain
