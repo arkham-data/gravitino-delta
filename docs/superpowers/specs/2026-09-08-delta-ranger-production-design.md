@@ -17,6 +17,12 @@ Ranger implementation or live qualification has already happened.
 - One four-level Ranger service is provisioned for exactly one Gravitino metalake.
   Catalog/database/table/column identities are preserved before deduplication and
   policy evaluation. Owner labels constrain mutations, not resource matching.
+  The required service/definition binding key is
+  `ranger.plugin.spark.gravitino.metalake`, which Ranger propagates in policy
+  downloads. The server adapter and engine compare this value with their trusted
+  canonical metalake; `authorization.ranger.delta.metalake` remains the Gravitino
+  configuration property. There is no fallback to the earlier unpropagated service
+  key. Initial provisioned services must migrate before engine activation.
 - Gravitino manages its explicitly owned access policies and roles. Ranger-owned
   column policies, masks and row filters are preserved. Foreign models must survive
   Gravitino grant/revoke/owner operations byte-for-byte where unchanged.
@@ -101,6 +107,13 @@ mask/filter expression rewriting and marker order with actual rows and fresh
 expression IDs; fixed-point analysis must not repeatedly apply decisions.
 Top-level struct permission does not establish nested-leaf grants or struct masking.
 
+The initial subject adapter qualifies non-token mode against the actual current
+Hadoop UGI and its groups. A Kyuubi session-user string cannot establish identity
+when it contradicts that UGI. Existing Gravitino JWT parsing partitions a client
+cache and does not attest a token-to-UGI binding; reject token query mode until an
+authenticated deployment bridge is qualified. Metadata clients may independently
+use existing token/custom authentication without becoming the query subject.
+
 Require a valid policy/role/service snapshot before evaluation; null/error/deny
 rejects. A documented valid cache may continue during outage, with observed versions
 and revocation effective after refresh. Fresh-analysis qualification does not prove
@@ -127,3 +140,16 @@ target authorization, streaming/restarts, maintenance/history/time travel, cache
 role/grant reconciliation, authentication expiry and supported launcher boundaries.
 Admin metadata lookup stays disabled until its separate production loader/client
 acceptance. Isolated catalog-demo integration follows production qualification.
+
+
+Ranger startup logging is part of the credential boundary: the optional adapter
+checks that `org.apache.ranger.audit.provider.AuditProviderFactory` cannot log at
+INFO before touching the singleton, because the pinned implementation dumps its
+configuration there. Deployment must provide WARN-or-stricter startup logging.
+No global logging mutation or secret-bearing diagnostic is permitted.
+
+The initial engine contract uses Ranger full-snapshot policy downloads. Reject
+`ranger.plugin.spark.supports.policy.deltas=true` at trusted startup: incremental
+updates may reuse an authorization context and are not qualified by the completed
+context binding contract. The default absent/false setting remains supported. This
+Ranger transport restriction is independent of Delta Lake table feature support.

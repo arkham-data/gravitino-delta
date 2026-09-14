@@ -73,6 +73,16 @@ Commands at implementation time (not executed by this draft):
 
 ### Task 2: Add the real policy-engine, subject and metadata-resolution adapters
 
+**Verified protocol corrections (September 14):** use the single required Ranger
+service/definition key `ranger.plugin.spark.gravitino.metalake`; secure downloads do
+not propagate the earlier arbitrary `gravitino.metalake` key. Task 2 also owns the
+narrow matching optional-provider config, definition, tests and README correction.
+The Gravitino property `authorization.ranger.delta.metalake` is unchanged. Qualify
+actual UGI non-token subjects; token query mode must reject while the existing
+manager offers only unverified JWT cache identity. An authenticated token-to-UGI
+bridge remains a full-goal gate. Separate metadata-client token authentication stays
+supported through ordinary client builders.
+
 **Owned files:** new module `spark-connector/v3.5/spark-delta-ranger/build.gradle.kts`, mapping `:spark-connector:spark-delta-ranger-3.5` in `settings.gradle.kts`; production package `org.apache.gravitino.spark.connector.delta.ranger` with `DeltaRangerConfig`, `DeltaRangerPolicyEngine`, `DeltaRangerResourceKey`, `DeltaRangerQuerySubject`, `DeltaRangerMetadataClient`. Matching tests `TestDeltaRangerConfig`, `TestDeltaRangerPolicyEngine`, `TestDeltaRangerQuerySubject`, `TestDeltaRangerMetadataClient`.
 
 
@@ -91,7 +101,9 @@ DeltaRangerQuerySubject.current(SparkSession): authenticated UGI snapshot
 DeltaRangerMetadataClient: existing runtime read-metadata supplier interface
 ```
 
-Use the actual pinned Kyuubi `SparkRangerAdminPlugin` singleton/Ranger downloader. A synchronized lease owner initializes once, rejects incompatible service/metalake/config leases in one JVM, drains/closes only after last owned user; do not one-catalog-close another's shared engine. Use ordinary `ranger-spark-security.xml`/credential mechanisms and a private cache directory; no Admin password passed to queries. Require exact runtime class provenance for Ranger 2.8 engine/roles/audit and Kyuubi 1.10.2. Record service binding, not secret-bearing config/maps.
+Use the actual pinned Kyuubi `SparkRangerAdminPlugin` singleton/Ranger downloader. A synchronized lease owner initializes once, rejects incompatible service/metalake/config leases in one JVM, drains/closes only after last owned user; do not one-catalog-close another's shared engine. Use ordinary `ranger-spark-security.xml`/credential mechanisms and a private cache directory; no Admin password passed to queries. Require exact runtime class provenance for Ranger 2.8 engine/roles/audit and Kyuubi 1.10.2. Record service binding, not secret-bearing config/maps. Require full-snapshot policy downloads: reject effective `ranger.plugin.spark.supports.policy.deltas=true` before singleton initialization; absent/false is the supported Ranger default. Both in-place and cloned incremental policy engines can reuse authorization context, so disabling only in-place updates is insufficient. This is independent of Delta Lake table support.
+
+Ranger 2.8 AuditProviderFactory logs configuration properties at INFO, including Basic downloader passwords. Before accessing the Kyuubi singleton, the optional adapter must reject an INFO-enabled logger with that exact name. Deployment supplies WARN-or-stricter startup logging; test-only suppression is insufficient. Keep the diagnostic free of credentials and do not modify application logging globally. The first affected fixture credential was rotated and its old authentication rejected; retain that interrupted run separately from the safe live acceptance evidence.
 
 Build AccessResource with owner/catalog fields **and** call `setValue("catalog", canonicalCatalog)` before any set/map insertion or evaluation. Deduplicate by immutable `DeltaRangerResourceKey(catalog, database, table, column, accessType, relevant owner)`; do not rely on inherited Ranger equals/hashCode. Preserve every table and every original column set from privilege extraction, including predicates and both join sides. Split columns only after retaining catalog; count/no-column reads require an explicit table-wide/select resource, never zero requests.
 
@@ -99,10 +111,10 @@ Capture the authenticated query UGI through the existing engine mechanism (`Auth
 
 For CUSTOM masks, retain `{col}` substitution semantics without turning column strings into unquoted SQL; for NULL return typed NULL. Fail explicitly for unsupported mask kinds. The public pinned `SparkRangerAdminPlugin.getMaskingExpr(AccessRequest)` already implements standard MASK, SHOW_FIRST_4, SHOW_LAST_4, HASH, DATE_SHOW_YEAR and service-definition transformer strings. Add a dedicated compatibility test of that API with catalog-bearing requests, quoted/unusual columns and real mask definitions before selecting it for additional types. Its null result alone cannot distinguish disabled mask from absent engine; combine with readiness/real evaluation semantics. Do not claim full mask support from CUSTOM/NULL acceptance or silently pass through an unknown enabled mask.
 
-- [ ] Add RED for same resource in two catalogs, immutable key coverage, missing/contradictory identity, actual query groups/roles, metadata-versus-query principal, null engine result, missing service definition, incompatible leases and closing one catalog.
-- [ ] Implement config/lease/request/subject adapters and real downloader configuration. No direct `setPolicies` in production. Tests may inject an evaluation boundary for deterministic errors, but deployment tests use Ranger's downloader.
-- [ ] Define explicit startup/outage contract: no ready policy snapshot means reject; last-known-good policy cache may continue during outage only as documented Ranger behavior, with active versions observable and revocation effective after refresh. No instantaneous revocation/no-cache claim. Test policy and role refresh independently.
-- [ ] Run focused tests, pinned dependency/JAR inspection and review. Keep engine dependencies optional and out of base Delta/default runtime.
+- [x] Add RED for same resource in two catalogs, immutable key coverage, missing/contradictory identity, actual query groups/roles, metadata-versus-query principal, null engine result, missing service definition, incompatible leases and closing one catalog.
+- [x] Implement config/lease/request/subject adapters and real downloader configuration. No direct `setPolicies` in production. Tests may inject an evaluation boundary for deterministic errors, but deployment tests use Ranger's downloader.
+- [x] Define explicit startup/outage contract: no ready policy snapshot means reject; last-known-good policy cache may continue during outage only as documented Ranger behavior, with active versions observable and revocation effective after refresh. No instantaneous revocation/no-cache claim. Test policy and role refresh independently.
+- [x] Run focused tests, pinned dependency/JAR inspection and review. Keep engine dependencies optional and out of base Delta/default runtime.
 
 ```bash
 ./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests '*TestDeltaRangerConfig' --tests '*TestDeltaRangerPolicyEngine' --tests '*TestDeltaRangerQuerySubject' --tests '*TestDeltaRangerMetadataClient' -PdeltaSparkVersion=3.5.4 -PdeltaVersion=3.3.0

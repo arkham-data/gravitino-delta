@@ -87,9 +87,10 @@ casts in a unit fixture, and representative mask/filter payloads in the local
 foreign-model preservation test. Genuine live model preservation remains a later
 gate. Inherited build/environment warnings are recorded separately.
 
-Remaining work includes the Spark policy engine, authenticated query and separate
-metadata identities, genuine Ranger policy and role downloads, and executed column
-access, masks, filters and joins across all four required Spark/Delta pairs. General
+The optional policy-engine and separate metadata adapters subsequently passed their
+[task review](delta-ranger-policy-engine-results.md), including genuine Ranger
+downloads and explicit identity boundaries. Executed Spark column access, masks,
+filters and joins across all four required Spark/Delta pairs remain unfinished. General
 ordinary grant reconciliation, broader Delta operations and catalog-demo integration
 also remain. Same-owner repair covers owners only; identical ordinary grant/revoke
 retries can skip callbacks after local persistence. Global role-delete guards and
