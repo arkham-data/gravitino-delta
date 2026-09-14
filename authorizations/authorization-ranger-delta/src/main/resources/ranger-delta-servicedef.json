@@ -300,7 +300,7 @@
   "configs": [
     {
       "itemId": 1,
-      "name": "gravitino.metalake",
+      "name": "ranger.plugin.spark.gravitino.metalake",
       "type": "string",
       "mandatory": true,
       "label": "Canonical Gravitino metalake"

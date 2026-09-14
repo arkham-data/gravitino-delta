@@ -1,0 +1,180 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.gravitino.spark.connector.delta.ranger;
+
+import java.time.Duration;
+import java.util.Objects;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import javax.annotation.Nullable;
+import org.apache.gravitino.Catalog;
+import org.apache.gravitino.client.GravitinoClient;
+
+/**
+ * Lazy metadata read supplier with one owned client and a finite lifetime. Construct before the
+ * no-arg catalog wrapper initializes; configure once with trusted metadata credentials. Mutation
+ * actor transport remains owned by the existing runtime.
+ */
+public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoCloseable {
+  private static final ScheduledThreadPoolExecutor EXPIRATIONS = expirations();
+  @Nullable private Supplier<GravitinoClient> clients;
+  @Nullable private GravitinoClient client;
+  @Nullable private ScheduledFuture<?> expiration;
+  @Nullable private String catalog;
+  private long lifetimeMillis;
+  private boolean closed;
+
+  /** Creates an unconfigured supplier for use in the catalog wrapper's super constructor. */
+  public DeltaRangerMetadataClient() {}
+
+  /**
+   * Configures a separate metadata identity using existing public authentication builders. The
+   * callback must explicitly select authentication (including custom/token providers), sourcing
+   * credentials from a private deployment mechanism. No default actor identity is used.
+   *
+   * @param uri Gravitino endpoint
+   * @param metalake canonical metalake
+   * @param catalog canonical catalog
+   * @param lifetime maximum owned client lifetime, positive and at most 24 hours
+   * @param authentication trusted metadata authentication builder callback
+   */
+  public synchronized void configure(
+      String uri,
+      String metalake,
+      String catalog,
+      Duration lifetime,
+      Consumer<GravitinoClient.ClientBuilder> authentication) {
+    DeltaRangerResourceKey.literal(metalake);
+    DeltaRangerConfig.require(uri != null && !uri.trim().isEmpty(), "Metadata endpoint required");
+    DeltaRangerConfig.require(authentication != null, "Separate metadata authentication required");
+    configure(
+        catalog,
+        lifetime,
+        () -> {
+          MetadataBuilder builder = new MetadataBuilder(uri, metalake);
+          authentication.accept(builder);
+          return builder.build();
+        });
+  }
+
+  /**
+   * Resolves metadata using the owned service client, creating it only on first use.
+   *
+   * @return catalog read handle using the separate metadata transport
+   * @throws IllegalStateException if unconfigured, closed, or expired
+   */
+  @Override
+  public Catalog get() {
+    GravitinoClient active;
+    String boundCatalog;
+    synchronized (this) {
+      if (closed || clients == null) {
+        throw new IllegalStateException("Metadata lease is unconfigured, closed, or expired");
+      }
+      if (client == null) {
+        client = Objects.requireNonNull(clients.get(), "Metadata client factory returned null");
+        expiration = EXPIRATIONS.schedule(this::close, lifetimeMillis, TimeUnit.MILLISECONDS);
+      }
+      active = client;
+      boundCatalog = catalog;
+    }
+    Catalog result =
+        Objects.requireNonNull(active.loadCatalog(boundCatalog), "Metadata catalog missing");
+    synchronized (this) {
+      if (closed || client != active) {
+        throw new IllegalStateException("Metadata lease closed or expired during the read");
+      }
+      return result;
+    }
+  }
+
+  /** Closes only this lease's owned client; repeated close is harmless. */
+  @Override
+  public synchronized void close() {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    clients = null;
+    if (expiration != null) {
+      expiration.cancel(false);
+      expiration = null;
+    }
+    GravitinoClient owned = client;
+    client = null;
+    if (owned != null) {
+      owned.close();
+    }
+  }
+
+  synchronized void configure(
+      String catalog, Duration lifetime, Supplier<GravitinoClient> clients) {
+    if (closed || this.clients != null) {
+      throw new IllegalStateException("Metadata lease cannot be rebound");
+    }
+    this.catalog = DeltaRangerResourceKey.literal(catalog);
+    DeltaRangerConfig.require(
+        lifetime != null
+            && !lifetime.isNegative()
+            && lifetime.compareTo(Duration.ofMillis(1)) >= 0
+            && lifetime.compareTo(Duration.ofHours(24)) <= 0,
+        "Metadata lifetime must be between one millisecond and 24 hours");
+    this.lifetimeMillis = lifetime.toMillis();
+    this.clients = Objects.requireNonNull(clients, "Separate metadata client factory required");
+  }
+
+  private static ScheduledThreadPoolExecutor expirations() {
+    ScheduledThreadPoolExecutor executor =
+        new ScheduledThreadPoolExecutor(
+            1,
+            task -> {
+              Thread thread = new Thread(task, "delta-ranger-metadata-expiration");
+              thread.setDaemon(true);
+              return thread;
+            });
+    executor.setRemoveOnCancelPolicy(true);
+    return executor;
+  }
+
+  private static final class MetadataBuilder extends GravitinoClient.ClientBuilder {
+    private final String expectedMetalake;
+
+    private MetadataBuilder(String uri, String metalake) {
+      super(uri);
+      expectedMetalake = metalake;
+      withMetalake(metalake);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public GravitinoClient build() {
+      DeltaRangerConfig.require(
+          authDataProvider != null,
+          "Metadata authentication callback must select an explicit provider");
+      DeltaRangerConfig.require(
+          expectedMetalake.equals(metalakeName),
+          "Metadata authentication callback changed the metalake binding");
+      return super.build();
+    }
+  }
+}

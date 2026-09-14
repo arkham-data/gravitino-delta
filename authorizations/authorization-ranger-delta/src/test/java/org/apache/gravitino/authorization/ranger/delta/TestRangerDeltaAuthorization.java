@@ -151,13 +151,23 @@ class TestRangerDeltaAuthorization {
   }
 
   @Test
+  void unpropagatedLegacyMetalakeBindingRejectsBeforeAdminMutation() throws Exception {
+    try (Admin admin = new Admin()) {
+      admin.service.setConfigs(Map.of("gravitino.metalake", "lake"));
+      assertThrows(RuntimeException.class, TestRangerDeltaAuthorization::plugin);
+      assertTrue(admin.roles.isEmpty());
+      assertTrue(admin.policies.isEmpty());
+    }
+  }
+
+  @Test
   void ordinaryRolesAreGlobalButNamesAreMetalakeScoped() throws Exception {
     try (Admin admin = new Admin()) {
       plugin().onRoleCreated(role("reader", select()));
       Map<String, String> second = new HashMap<>(config());
       second.put("authorization.metalake.id", "11");
       second.put("authorization.ranger.delta.metalake", "lake_two");
-      admin.service.setConfigs(Map.of("gravitino.metalake", "lake_two"));
+      admin.service.setConfigs(Map.of("ranger.plugin.spark.gravitino.metalake", "lake_two"));
       ((RangerAuthorizationHadoopSQLPlugin)
               provider().newPlugin("lake_two", "lakehouse-delta", second))
           .onRoleCreated(role("reader", select()));
@@ -442,7 +452,7 @@ class TestRangerDeltaAuthorization {
               RangerServiceDef.class);
       service.setName("delta_local");
       service.setType("spark");
-      service.setConfigs(Map.of("gravitino.metalake", "lake"));
+      service.setConfigs(Map.of("ranger.plugin.spark.gravitino.metalake", "lake"));
       baseConstruction = mockConstruction(RangerClientExtension.class);
       construction =
           mockConstruction(

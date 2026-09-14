@@ -1,0 +1,266 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.gravitino.spark.connector.delta.ranger;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import com.sun.net.httpserver.HttpServer;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.security.PrivilegedExceptionAction;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.gravitino.Catalog;
+import org.apache.gravitino.client.CustomTokenProvider;
+import org.apache.gravitino.client.GravitinoClient;
+import org.apache.hadoop.security.UserGroupInformation;
+import org.junit.jupiter.api.Test;
+
+class TestDeltaRangerMetadataClient {
+  @Test
+  void lazyReadSupplierOwnsOnlyItsClientAndDoesNotUseMutationActor() {
+    GravitinoClient client = mock(GravitinoClient.class);
+    Catalog metadata = mock(Catalog.class);
+    when(client.loadCatalog("delta_a")).thenReturn(metadata);
+    AtomicInteger opens = new AtomicInteger();
+    AtomicInteger closes = new AtomicInteger();
+    doAnswer(
+            call -> {
+              closes.incrementAndGet();
+              return null;
+            })
+        .when(client)
+        .close();
+    DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient();
+    lease.configure(
+        "delta_a",
+        Duration.ofMinutes(5),
+        () -> {
+          opens.incrementAndGet();
+          return client;
+        });
+    assertEquals(0, opens.get());
+    assertSame(metadata, lease.get());
+    assertSame(metadata, lease.get());
+    assertEquals(1, opens.get());
+    lease.close();
+    lease.close();
+    assertEquals(1, closes.get());
+    assertThrows(IllegalStateException.class, lease::get);
+  }
+
+  @Test
+  void missingConfigurationAndRebindingRejectBeforeClientUse() {
+    DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient();
+    assertThrows(IllegalStateException.class, lease::get);
+    lease.configure("delta_a", Duration.ofMinutes(1), () -> mock(GravitinoClient.class));
+    assertThrows(
+        IllegalStateException.class,
+        () -> lease.configure("delta_b", Duration.ofMinutes(1), () -> mock(GravitinoClient.class)));
+    lease.close();
+  }
+
+  @Test
+  void lifetimeExpiresAndClosesClientWithoutFurtherQuery() throws Exception {
+    GravitinoClient client = mock(GravitinoClient.class);
+    Catalog metadata = mock(Catalog.class);
+    when(client.loadCatalog("delta_a")).thenReturn(metadata);
+    CountDownLatch closed = new CountDownLatch(1);
+    doAnswer(
+            call -> {
+              closed.countDown();
+              return null;
+            })
+        .when(client)
+        .close();
+    try (DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient()) {
+      lease.configure("delta_a", Duration.ofMillis(80), () -> client);
+      assertSame(metadata, lease.get());
+      assertTrue(closed.await(5, TimeUnit.SECONDS));
+      assertThrows(IllegalStateException.class, lease::get);
+    }
+  }
+
+  @Test
+  void invalidLifetimeAndMissingAuthenticationReject() {
+    DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient();
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> lease.configure("delta_a", Duration.ZERO, () -> mock(GravitinoClient.class)));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> lease.configure("http://localhost", "lake", "delta_a", Duration.ofMinutes(1), null));
+  }
+
+  @Test
+  void realClientBuilderUsesSeparateMetadataPrincipalAndPreservesQueryUgi() throws Exception {
+    assertMetadataTransport(false);
+    assertMetadataTransport(true);
+  }
+
+  @Test
+  void authenticationCallbackCannotFallBackOrChangeMetalake() {
+    try (DeltaRangerMetadataClient missing = new DeltaRangerMetadataClient();
+        DeltaRangerMetadataClient changed = new DeltaRangerMetadataClient()) {
+      missing.configure(
+          "http://localhost:1", "lake", "delta_a", Duration.ofMinutes(1), builder -> {});
+      assertThrows(IllegalArgumentException.class, missing::get);
+      changed.configure(
+          "http://localhost:1",
+          "lake",
+          "delta_a",
+          Duration.ofMinutes(1),
+          builder -> {
+            builder.withSimpleAuth("metadata-service");
+            builder.withMetalake("other-lake");
+          });
+      assertThrows(IllegalArgumentException.class, changed::get);
+    }
+  }
+
+  @Test
+  void expiryCanCloseAnInFlightMetadataRead() throws Exception {
+    GravitinoClient client = mock(GravitinoClient.class);
+    CountDownLatch entered = new CountDownLatch(1);
+    CountDownLatch closed = new CountDownLatch(1);
+    when(client.loadCatalog("delta_a"))
+        .thenAnswer(
+            call -> {
+              entered.countDown();
+              if (!closed.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Read did not drain");
+              }
+              return mock(Catalog.class);
+            });
+    doAnswer(
+            call -> {
+              closed.countDown();
+              return null;
+            })
+        .when(client)
+        .close();
+    ExecutorService reads = Executors.newSingleThreadExecutor();
+    try (DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient()) {
+      lease.configure("delta_a", Duration.ofMillis(100), () -> client);
+      Future<?> read = reads.submit(() -> assertThrows(IllegalStateException.class, lease::get));
+      assertTrue(entered.await(5, TimeUnit.SECONDS));
+      assertTrue(closed.await(1, TimeUnit.SECONDS));
+      read.get(5, TimeUnit.SECONDS);
+    } finally {
+      closed.countDown();
+      reads.shutdownNow();
+    }
+  }
+
+  private static void assertMetadataTransport(boolean token) throws Exception {
+    List<String> authorizations = Collections.synchronizedList(new ArrayList<>());
+    List<String> paths = Collections.synchronizedList(new ArrayList<>());
+    HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    server.createContext(
+        "/",
+        exchange -> {
+          authorizations.add(exchange.getRequestHeaders().getFirst("Authorization"));
+          paths.add(exchange.getRequestURI().getPath());
+          String audit =
+              "\"audit\":{\"creator\":\"fixture\",\"createTime\":\"2026-09-14T00:00:00Z\"}";
+          String body =
+              exchange.getRequestURI().getPath().endsWith("/catalogs/delta_a")
+                  ? "{\"code\":0,\"catalog\":{\"name\":\"delta_a\",\"type\":\"RELATIONAL\",\"provider\":\"lakehouse-delta\",\"properties\":{},"
+                      + audit
+                      + "}}"
+                  : "{\"code\":0,\"metalake\":{\"name\":\"lake\",\"properties\":{}," + audit + "}}";
+          byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+          exchange.getResponseHeaders().set("Content-Type", "application/json");
+          exchange.sendResponseHeaders(200, bytes.length);
+          try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+          }
+        });
+    server.start();
+    try (DeltaRangerMetadataClient metadata = new DeltaRangerMetadataClient()) {
+      metadata.configure(
+          "http://127.0.0.1:" + server.getAddress().getPort(),
+          "lake",
+          "delta_a",
+          Duration.ofMinutes(1),
+          builder -> {
+            builder.withVersionCheckDisabled();
+            if (token) {
+              builder.withCustomTokenAuth(new MetadataToken());
+            } else {
+              builder.withSimpleAuth("metadata-service");
+            }
+          });
+      assertTrue(paths.isEmpty());
+      UserGroupInformation query =
+          UserGroupInformation.createUserForTesting("query-reader", new String[] {"query-group"});
+      query.doAs(
+          (PrivilegedExceptionAction<Void>)
+              () -> {
+                assertEquals("delta_a", metadata.get().name());
+                assertEquals(
+                    "query-reader",
+                    DeltaRangerQuerySubject.current(
+                            TestDeltaRangerQuerySubject.session(null, "simple"))
+                        .user());
+                return null;
+              });
+      assertEquals(
+          Arrays.asList("/api/metalakes/lake", "/api/metalakes/lake/catalogs/delta_a"), paths);
+      String expected =
+          token
+              ? "Bearer metadata-token"
+              : "Basic "
+                  + Base64.getEncoder()
+                      .encodeToString("metadata-service:dummy".getBytes(StandardCharsets.UTF_8));
+      assertEquals(Arrays.asList(expected, expected), authorizations);
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  private static final class MetadataToken extends CustomTokenProvider {
+    private MetadataToken() {
+      schemeName = "Bearer";
+    }
+
+    @Override
+    protected String getCustomTokenInfo() {
+      return "metadata-token";
+    }
+  }
+}

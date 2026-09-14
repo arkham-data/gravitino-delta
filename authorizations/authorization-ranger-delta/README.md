@@ -25,7 +25,7 @@ and policy/role downloads belong to the separate Spark enforcement stage.
 
 Provision the bundled `ranger-delta-servicedef.json` under the chosen service type,
 then provision one service for exactly one metalake. Its required, nonsecret
-`gravitino.metalake` service configuration must equal the canonical metalake name.
+`ranger.plugin.spark.gravitino.metalake` service configuration must equal the canonical metalake name.
 The plugin validates the service and definition at startup and before callback
 mutations. It never creates a service or installs/updates a definition.
 

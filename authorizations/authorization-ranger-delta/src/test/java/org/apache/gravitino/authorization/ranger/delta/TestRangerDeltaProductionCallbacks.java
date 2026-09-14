@@ -478,7 +478,7 @@ class TestRangerDeltaProductionCallbacks {
           service.setId(1L);
           service.setName("delta_local");
           service.setType("spark");
-          service.setConfigs(Map.of("gravitino.metalake", LAKE));
+          service.setConfigs(Map.of("ranger.plugin.spark.gravitino.metalake", LAKE));
           response = service;
         } else if (path.contains("/xusers/users")) {
           if (method.equals("POST")) {

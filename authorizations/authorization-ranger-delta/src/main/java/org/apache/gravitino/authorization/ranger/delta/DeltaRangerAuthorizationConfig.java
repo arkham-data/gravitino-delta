@@ -37,7 +37,7 @@ import org.apache.ranger.plugin.model.RangerServiceDef;
 final class DeltaRangerAuthorizationConfig {
   static final String METALAKE = "authorization.ranger.delta.metalake";
   static final String CATALOG = "authorization.ranger.delta.catalog";
-  static final String SERVICE_METALAKE = "gravitino.metalake";
+  static final String SERVICE_METALAKE = "ranger.plugin.spark.gravitino.metalake";
   private static final Set<String> ACTIONS =
       Set.of("select", "read", "write", "create", "drop", "alter", "update");
   final Map<String, String> properties;
