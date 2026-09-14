@@ -17,7 +17,10 @@
  * under the License.
  */
 
-plugins { id("java") }
+plugins {
+  id("java")
+  id("scala")
+}
 
 val deltaSparkVersion = providers.gradleProperty("deltaSparkVersion").getOrElse("3.5.4")
 val deltaVersion = providers.gradleProperty("deltaVersion").getOrElse("3.3.0")
@@ -26,7 +29,10 @@ require(deltaVersion in setOf("3.3.0", "3.3.2")) { "Unsupported deltaVersion" }
 require(providers.gradleProperty("scalaVersion").getOrElse("2.12") == "2.12") {
   "The Delta Ranger adapter requires Scala 2.12"
 }
-configurations.configureEach {
+// Pin deployed Spark classpaths without changing Zinc or formatter tool Scala versions.
+configurations.matching {
+  it.name in setOf("compileClasspath", "runtimeClasspath", "testCompileClasspath", "testRuntimeClasspath")
+}.configureEach {
   resolutionStrategy.eachDependency {
     if (requested.group == "org.apache.ranger") { useVersion("2.8.0") }
     if (requested.group == "org.apache.spark") { useVersion(deltaSparkVersion) }
@@ -47,13 +53,18 @@ dependencies {
   }
   // The base Delta runtime alone supplies the 33 compatible Kyuubi utility classes.
   compileOnly("org.apache.kyuubi:kyuubi-spark-connector-hive_2.12:1.11.0") { isTransitive = false }
+  compileOnly(project(":spark-connector:spark-delta-3.5")) { isTransitive = false }
+  compileOnly("io.delta:delta-spark_2.12:$deltaVersion")
   compileOnly(project(":api"))
   compileOnly(project(":clients:client-java")) { isTransitive = false }
   compileOnly(project(":spark-connector:spark-common")) { isTransitive = false }
   compileOnly("org.apache.spark:spark-sql_2.12:$deltaSparkVersion")
   compileOnly("org.scala-lang:scala-library:2.12.21")
   compileOnly("com.google.code.findbugs:jsr305:3.0.2")
+  testCompileOnly(project(":spark-connector:spark-delta-3.5")) { isTransitive = false }
+  testImplementation("io.delta:delta-spark_2.12:$deltaVersion")
   testImplementation(project(":api"))
+  testImplementation(project(":delta:delta-common"))
   testImplementation(project(":clients:client-java"))
   testImplementation(project(":spark-connector:spark-common")) { isTransitive = false }
   testImplementation("org.apache.spark:spark-sql_2.12:$deltaSparkVersion")
@@ -72,4 +83,14 @@ tasks.withType<Javadoc>().configureEach {
 tasks.test {
   maxParallelForks = 1
   environment("SPARK_LOCAL_IP", "127.0.0.1")
+}
+
+tasks.withType<ScalaCompile>().configureEach {
+  scalaCompileOptions.additionalParameters = listOf("-target:jvm-1.8")
+}
+
+configure<com.diffplug.gradle.spotless.SpotlessExtension> {
+  scala {
+    scalafmt("3.8.3").configFile(file(".scalafmt.conf"))
+  }
 }

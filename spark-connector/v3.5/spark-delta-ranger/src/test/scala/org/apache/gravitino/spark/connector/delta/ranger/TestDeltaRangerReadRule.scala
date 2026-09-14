@@ -1,0 +1,397 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.gravitino.spark.connector.delta.ranger
+
+import java.nio.file.Files
+
+import org.apache.hadoop.fs.Path
+import org.apache.kyuubi.plugin.spark.authz.PrivilegesBuilder
+import org.apache.kyuubi.plugin.spark.authz.rule.RuleEliminateMarker
+import org.apache.kyuubi.plugin.spark.authz.rule.datamasking.{
+  DataMaskingStage0Marker,
+  RuleApplyDataMaskingStage1
+}
+import org.apache.kyuubi.plugin.spark.authz.rule.rowfilter.RowFilterMarker
+import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, Project}
+import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.{Row, SparkSession, SparkSessionExtensions}
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableChange}
+import org.apache.spark.sql.connector.expressions.Transform
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.junit.jupiter.api.Assertions._
+import org.junit.jupiter.api.Test
+
+class TestDeltaRangerReadRule {
+  @Test
+  def nativeWrapperPreservesDescriptorAndCollidingSessionCatalog(): Unit = {
+    NativeSelectFixture.withSpark { spark =>
+      val location = NativeSelectFixture.locations("a")
+      TestDeltaRangerNativeSelect.verifyWrapperDescriptor(
+        spark,
+        location,
+        DeltaTableV2(spark, new Path(location)).update()
+      )
+    }
+  }
+
+  @Test
+  def startupRequiresOneCompanionBeforeNativeAndRejectsStockRules(): Unit = {
+    val companion = classOf[DeltaRangerSparkExtension].getName
+    val native = "io.delta.sql.DeltaSparkSessionExtension"
+    DeltaRangerSparkExtension.validateExtensions(s"$companion,$native,example.Compatible")
+    Seq(
+      s"$native,$companion",
+      s"$companion,$companion,$native",
+      s"$companion,$native,org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension",
+      companion
+    ).foreach { value =>
+      assertThrows(
+        classOf[IllegalArgumentException],
+        () => DeltaRangerSparkExtension.validateExtensions(value)
+      )
+    }
+  }
+
+  @Test
+  def nativeScopeIsSynchronousTypedAndCannotEscapeOrAdmitOtherPlans(): Unit = {
+    NativeSelectFixture.withSpark { spark =>
+      import org.apache.spark.sql.catalyst.InternalRow
+      import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Literal}
+      import org.apache.spark.sql.catalyst.plans.logical.{DeserializeToObject, LocalRelation}
+      import org.apache.spark.sql.delta.actions.{AddFile, SingleAction}
+      import org.apache.spark.sql.execution.LogicalRDD
+      import org.apache.spark.sql.types.{ObjectType, StringType}
+      val schema = org.apache.spark.sql.Encoders.product[SingleAction].schema
+      val attributes =
+        schema.fields.map(f => AttributeReference(f.name, f.dataType, f.nullable)()).toSeq
+      val rdd = LogicalRDD(attributes, spark.sparkContext.emptyRDD[InternalRow])(spark)
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(rdd))
+      DeltaRangerPlanAdmission.withNativeMetadata {
+        assertTrue(DeltaRangerPlanAdmission.internalMetadata(rdd))
+        val otherThread = new java.util.concurrent.atomic.AtomicBoolean(true)
+        val thread =
+          new Thread(() => otherThread.set(DeltaRangerPlanAdmission.internalMetadata(rdd)))
+        thread.start(); thread.join()
+        assertFalse(otherThread.get())
+        val foreign = LogicalRDD(
+          Seq(AttributeReference("id", StringType)()),
+          spark.sparkContext.emptyRDD[InternalRow]
+        )(spark)
+        assertFalse(DeltaRangerPlanAdmission.internalMetadata(foreign))
+      }
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(rdd))
+      assertThrows(
+        classOf[IllegalArgumentException],
+        () =>
+          DeltaRangerPlanAdmission.withNativeMetadata {
+            throw new IllegalArgumentException("failure")
+          }
+      )
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(rdd))
+      val index = spark
+        .sql("SELECT secret FROM a.db.t")
+        .queryExecution
+        .analyzed
+        .collectFirst { case relation: LogicalRelation =>
+          relation.relation
+            .asInstanceOf[org.apache.spark.sql.execution.datasources.HadoopFsRelation]
+            .location
+            .asInstanceOf[org.apache.spark.sql.delta.files.TahoeLogFileIndex]
+        }
+        .get
+      val snapshot = index.getSnapshot
+      val stats = StructType(
+        org.apache.spark.sql.Encoders
+          .product[AddFile]
+          .schema
+          .fields
+          .map(f =>
+            if (f.name == "stats") f.copy(dataType = snapshot.statsSchema, nullable = true) else f
+          )
+      )
+      val statsAttrs =
+        stats.fields.map(f => AttributeReference(f.name, f.dataType, f.nullable)()).toSeq
+      val statsRdd = LogicalRDD(statsAttrs, spark.sparkContext.emptyRDD[InternalRow])(spark)
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
+      assertThrows(
+        classOf[SecurityException],
+        () => DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
+      )
+      DeltaRangerPlanAdmission.withNativeMetadata {
+        assertThrows(
+          classOf[SecurityException],
+          () => DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
+        )
+      }
+      DeltaRangerPlanAdmission.withNativeScans(Seq(index)) {
+        assertFalse(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
+        DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
+        assertTrue(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
+        assertFalse(
+          DeltaRangerPlanAdmission.internalMetadata(
+            LogicalRDD(statsAttrs.dropRight(1), spark.sparkContext.emptyRDD[InternalRow])(spark)
+          )
+        )
+      }
+      DeltaRangerPlanAdmission.withNativeMetadata {
+        assertFalse(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
+      }
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
+      val objectType = ObjectType(classOf[SingleAction])
+      val binding = DeserializeToObject(
+        Literal.create(null, objectType),
+        AttributeReference("obj", objectType)(),
+        LocalRelation(attributes)
+      )
+      assertTrue(DeltaRangerPlanAdmission.internalMetadata(binding))
+      assertFalse(
+        DeltaRangerPlanAdmission.internalMetadata(
+          binding.copy(child = LocalRelation(attributes, Seq(InternalRow.empty)))
+        )
+      )
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(binding.copy(child = rdd)))
+      val addType = ObjectType(classOf[AddFile])
+      val addBinding = binding.copy(
+        deserializer = Literal.create(null, addType),
+        outputObjAttr = AttributeReference("obj", addType)()
+      )
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(addBinding))
+      DeltaRangerPlanAdmission.withNativeMetadata {
+        assertTrue(DeltaRangerPlanAdmission.internalMetadata(addBinding))
+        assertFalse(DeltaRangerPlanAdmission.internalMetadata(addBinding.copy(child = rdd)))
+        assertFalse(
+          DeltaRangerPlanAdmission.internalMetadata(
+            addBinding.copy(child = LocalRelation(attributes, Seq(InternalRow.empty)))
+          )
+        )
+      }
+      val rowType = ObjectType(classOf[Row])
+      val rowBinding = binding.copy(
+        deserializer = Literal.create(null, rowType),
+        outputObjAttr = AttributeReference("obj", rowType)()
+      )
+      assertTrue(DeltaRangerPlanAdmission.internalMetadata(rowBinding))
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(rowBinding.copy(child = rdd)))
+      assertFalse(
+        DeltaRangerPlanAdmission.internalMetadata(
+          rowBinding.copy(child = LocalRelation(attributes, Seq(InternalRow.empty)))
+        )
+      )
+      val udf = org.apache.spark.sql.catalyst.expressions.ScalaUDF(() => null, rowType, Seq.empty)
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(rowBinding.copy(deserializer = udf)))
+      val subquery = org.apache.spark.sql.catalyst.expressions
+        .ScalarSubquery(LocalRelation(Seq(AttributeReference("sub", StringType)())))
+      val conditional = org.apache.spark.sql.catalyst.expressions.If(
+        org.apache.spark.sql.catalyst.expressions.IsNull(subquery),
+        Literal.create(null, rowType),
+        Literal.create(null, rowType)
+      )
+      assertFalse(
+        DeltaRangerPlanAdmission.internalMetadata(rowBinding.copy(deserializer = conditional))
+      )
+      val foreignType = ObjectType(classOf[String])
+      assertFalse(
+        DeltaRangerPlanAdmission.internalMetadata(
+          binding.copy(
+            deserializer = Literal.create(null, foreignType),
+            outputObjAttr = AttributeReference("obj", foreignType)()
+          )
+        )
+      )
+    }
+  }
+
+  @Test
+  def pinnedExtractionPreservesBothCatalogsAndOriginalPredicateAndJoinColumns(): Unit = {
+    NativeSelectFixture.withSpark { spark =>
+      Seq(("a", "b"), ("b", "a")).foreach { case (left, right) =>
+        val plan = spark
+          .sql(
+            s"SELECT x.secret, y.secret FROM $left.db.t x JOIN $right.db.t y ON x.id = y.id WHERE x.region = 'keep'"
+          )
+          .queryExecution
+          .analyzed
+        val (inputs, outputs, _) = PrivilegesBuilder.build(plan, spark)
+        assertTrue(outputs.isEmpty)
+        assertTrue(
+          inputs.forall(_.catalog.isEmpty),
+          "Pinned V1 extraction is catalogless; never use it for request identity"
+        )
+        val columns = DeltaRangerReadRule
+          .extract(plan, spark)
+          .map { case (scan, columns) => scan.catalog -> columns }
+          .toMap
+        assertEquals(Set("a", "b"), columns.keySet)
+        assertEquals(Set("secret", "id", "region"), columns(left))
+        assertEquals(Set("secret", "id"), columns(right))
+      }
+    }
+  }
+  @Test
+  def pinnedMarkersResolveFreshAliasIdsAndFilterBeforeMasks(): Unit = {
+    NativeSelectFixture.withSpark { spark =>
+      val original = spark
+        .sql("SELECT x.secret, y.secret FROM a.db.t x JOIN b.db.t y ON x.id = y.id")
+        .queryExecution
+        .analyzed
+      val marked = original.transformUp { case scan: LogicalRelation =>
+        val filtered =
+          Filter(spark.sessionState.sqlParser.parseExpression("id <> 2"), RowFilterMarker(scan))
+        val aliases = scan.output.map { attr =>
+          if (attr.name == "secret")
+            Alias(
+              spark.sessionState.sqlParser.parseExpression("concat(secret, '-masked')"),
+              attr.name
+            )()
+          else attr
+        }
+        DataMaskingStage0Marker(Project(aliases, filtered), scan)
+      }
+      val resolved = spark.sessionState.analyzer.execute(marked)
+      val stage1 = RuleApplyDataMaskingStage1(spark)(resolved)
+      val rewritten = RuleEliminateMarker(stage1)
+      assertTrue(rewritten.resolved)
+      assertTrue(
+        rewritten.output.zip(original.output).forall { case (a, b) => a.exprId != b.exprId }
+      )
+      val rows = TestDeltaRangerNativeSelect.rows(spark, rewritten).toSet
+      assertEquals(Set(Row("a-one-masked", "b-one-masked"), Row(null, null)), rows)
+      assertEquals(stage1, RuleApplyDataMaskingStage1(spark)(stage1))
+    }
+  }
+
+}
+
+/** Native named scans with explicit descriptors; no registration or policy transport is simulated
+  * here.
+  */
+class NativeSelectTestCatalog extends TableCatalog {
+  private var catalogName: String = _
+  override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
+    catalogName = name
+  }
+  override def name(): String = catalogName
+  override def listTables(namespace: Array[String]): Array[Identifier] = Array(
+    Identifier.of(namespace, "t")
+  )
+  override def loadTable(id: Identifier): Table = {
+    val spark = SparkSession.active
+    val path = new Path(NativeSelectFixture.locations(catalogName))
+    val native = DeltaTableV2(spark, path)
+    val descriptor = CatalogTable(
+      TableIdentifier(id.name(), Some(id.namespace().head), Some(catalogName)),
+      CatalogTableType.EXTERNAL,
+      CatalogStorageFormat.empty.copy(locationUri = Some(path.toUri)),
+      native.schema(),
+      provider = Some("delta"),
+      owner = "same-owner"
+    )
+    native.copy(catalogTable = Some(descriptor))
+  }
+  override def createTable(
+      id: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: java.util.Map[String, String]
+  ): Table = throw new UnsupportedOperationException
+  override def alterTable(id: Identifier, changes: TableChange*): Table =
+    throw new UnsupportedOperationException
+  override def dropTable(id: Identifier): Boolean = throw new UnsupportedOperationException
+  override def renameTable(oldId: Identifier, newId: Identifier): Unit =
+    throw new UnsupportedOperationException
+}
+
+class NativeSelectInstalledExtension extends (SparkSessionExtensions => Unit) {
+  override def apply(extensions: SparkSessionExtensions): Unit =
+    NativeSelectFixture.installer.get(extensions)
+}
+
+private[ranger] object NativeSelectFixture {
+  var installer: Option[SparkSessionExtensions => Unit] = None
+  var locations: Map[String, String] = Map.empty
+  def withSpark(
+      test: SparkSession => Unit,
+      extension: Option[SparkSessionExtensions => Unit] = None
+  ): Unit = {
+    val directory = Files.createTempDirectory("delta-ranger-native")
+    locations = Seq("a", "b", "q").map(c => c -> directory.resolve(c).toString).toMap
+    val builder = SparkSession
+      .builder()
+      .master("local[2]")
+      .appName("delta-ranger-native")
+      .config("spark.ui.enabled", "false")
+      .config("spark.driver.host", "127.0.0.1")
+      .config("spark.sql.shuffle.partitions", "2")
+      .config("spark.databricks.delta.snapshotPartitions", "2")
+      .config("spark.sql.warehouse.dir", directory.resolve("warehouse").toString)
+      .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+      .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+      .config("spark.databricks.delta.catalog.update.enabled", "false")
+      .config("spark.sql.catalog.a", classOf[NativeSelectTestCatalog].getName)
+      .config("spark.sql.catalog.b", classOf[NativeSelectTestCatalog].getName)
+      .config("spark.sql.catalog.q", classOf[NativeSelectTestCatalog].getName)
+    var spark = builder.getOrCreate()
+    spark.sparkContext.setLogLevel("WARN")
+    try {
+      locations.foreach { case (catalog, location) =>
+        val data = spark.sql(
+          s"SELECT CAST(1 AS BIGINT) id, '$catalog-one' secret, 'keep' region UNION ALL SELECT 2L, '$catalog-two', 'drop' UNION ALL SELECT 3L, CAST(NULL AS STRING), 'keep'"
+        )
+        if (catalog == "q")
+          data
+            .withColumn("odd` name", org.apache.spark.sql.functions.col("secret"))
+            .write
+            .format("delta")
+            .option("delta.columnMapping.mode", "name")
+            .save(location)
+        else data.write.format("delta").save(location)
+      }
+      extension.foreach { install =>
+        org.apache.spark.sql.delta.DeltaLog.clearCache()
+        val conf = spark.sparkContext.getConf
+        spark.stop()
+        SparkSession.clearActiveSession()
+        SparkSession.clearDefaultSession()
+        installer = Some(install)
+        spark = SparkSession
+          .builder()
+          .config(conf)
+          .config(
+            "spark.sql.extensions",
+            classOf[
+              NativeSelectInstalledExtension
+            ].getName + ",io.delta.sql.DeltaSparkSessionExtension"
+          )
+          .getOrCreate()
+      }
+      test(spark)
+    } finally {
+      spark.stop()
+      installer = None
+      SparkSession.clearActiveSession()
+      SparkSession.clearDefaultSession()
+    }
+  }
+}

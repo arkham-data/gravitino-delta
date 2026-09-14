@@ -33,6 +33,10 @@ public class GravitinoSparkConfig {
   /** Whether optional Delta discovery and native Spark bootstrap are enabled. */
   public static final String GRAVITINO_ENABLE_DELTA_SUPPORT = "spark.gravitino.enableDeltaSupport";
 
+  /** Opts into the optional bounded Delta Ranger SELECT runtime; requires Delta support. */
+  public static final String GRAVITINO_ENABLE_DELTA_RANGER_SUPPORT =
+      "spark.gravitino.enableDeltaRangerSupport";
+
   public static final String GRAVITINO_CLIENT_CONFIG_PREFIX = GRAVITINO_PREFIX + "client.";
 
   /**

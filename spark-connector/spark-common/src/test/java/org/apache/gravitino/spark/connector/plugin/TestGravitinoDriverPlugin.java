@@ -31,7 +31,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import org.apache.gravitino.Catalog;
 import org.apache.gravitino.auth.AuthProperties;
 import org.apache.gravitino.spark.connector.GravitinoSparkConfig;
 import org.apache.gravitino.spark.connector.authorization.GravitinoAuthorizationSparkSessionExtensions;
@@ -42,11 +44,64 @@ import org.apache.spark.sql.internal.StaticSQLConf;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 
 public class TestGravitinoDriverPlugin {
 
   private static final String DELTA_CATALOG =
       "org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35";
+
+  @Test
+  void testDeltaRangerDiscoveryRegistersOnlyApplicationVisibleCatalogs() {
+    SparkConf conf = deltaEnabledConf().set("spark.gravitino.enableDeltaRangerSupport", "true");
+    GravitinoDriverPlugin plugin = new GravitinoDriverPlugin(() -> DELTA_CATALOG, name -> {});
+    plugin.configureDeltaSupport(conf);
+    Catalog visible = Mockito.mock(Catalog.class);
+    Mockito.when(visible.provider()).thenReturn("lakehouse-delta");
+    plugin.registerGravitinoCatalogs(conf, Collections.singletonMap("visible", visible));
+    assertEquals(
+        "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerCatalogSpark35",
+        conf.get("spark.sql.catalog.visible"));
+    assertFalse(conf.contains("spark.sql.catalog.hidden"));
+  }
+
+  @Test
+  void testDeltaRangerRequiresDeltaAndOptionalClasses() {
+    SparkConf conf = new SparkConf(false).set("spark.gravitino.enableDeltaRangerSupport", "true");
+    GravitinoDriverPlugin plugin = new GravitinoDriverPlugin(() -> DELTA_CATALOG, name -> {});
+    assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(conf));
+    conf.set("spark.gravitino.enableDeltaSupport", "true");
+    List<String> loaded = new ArrayList<>();
+    GravitinoDriverPlugin enabled = new GravitinoDriverPlugin(() -> DELTA_CATALOG, loaded::add);
+    enabled.configureDeltaSupport(conf);
+    enabled.registerSqlExtensions(conf);
+    assertTrue(
+        loaded.contains(
+            "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerCatalogSpark35"));
+    assertTrue(
+        loaded.contains(
+            "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerSparkExtension"));
+    assertTrue(
+        conf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS().key())
+            .contains("DeltaRangerSparkExtension"));
+    String order = conf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS().key());
+    assertTrue(
+        order.indexOf("DeltaRangerSparkExtension")
+            < order.indexOf("io.delta.sql.DeltaSparkSessionExtension"));
+  }
+
+  @Test
+  void testDeltaRangerRejectsStockAuthorizationConflictBeforeChangingNativeSettings() {
+    SparkConf conf =
+        deltaEnabledConf()
+            .set("spark.gravitino.enableDeltaRangerSupport", "true")
+            .set(
+                StaticSQLConf.SPARK_SESSION_EXTENSIONS().key(),
+                "org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension");
+    GravitinoDriverPlugin plugin = new GravitinoDriverPlugin(() -> DELTA_CATALOG, name -> {});
+    assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(conf));
+    assertFalse(conf.contains(GravitinoDriverPlugin.SPARK_SESSION_CATALOG));
+  }
 
   @Test
   void testIcebergExtensionName() {

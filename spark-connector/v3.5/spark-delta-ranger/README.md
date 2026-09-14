@@ -19,10 +19,97 @@
 
 # Optional Spark Delta Ranger adapters
 
-This module supplies the policy-engine, query-subject and metadata-read boundaries for the
-optional Spark 3.5 Delta wrapper. It does not install stock Kyuubi rules or extensions, and it
-is not a query-plan enforcement extension by itself. The base/default Delta runtime has no
+This optional module supplies the native Delta catalog wrapper, separate metadata reader,
+policy engine and bounded fresh SELECT extension. The base/default Delta runtime has no
 Ranger dependency. Spark 3.5.4/3.5.6, Delta 3.3.0/3.3.2 and Scala 2.12 remain deployment inputs.
+Packaged four-pair public Gravitino/Ranger acceptance is a separate qualification gate.
+
+## Fresh SELECT startup and boundary
+
+Configure the Gravitino driver plugin before creating the first Spark session. Both
+`spark.gravitino.enableDeltaSupport=true` and
+`spark.gravitino.enableDeltaRangerSupport=true` are required; Ranger support defaults to false.
+The string-only common wiring selects `DeltaRangerCatalogSpark35` for application-visible
+Delta catalogs and orders `DeltaRangerSparkExtension` before `io.delta.sql.DeltaSparkSessionExtension`.
+Use the full package prefix `org.apache.gravitino.spark.connector.delta.ranger.` for the two
+optional classes. Exactly one companion and one native extension are required in that order.
+Stock `org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension` conflicts and rejects.
+Keep `spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog` and
+`spark.databricks.delta.catalog.update.enabled=false`. Each catalog still needs its explicit
+`spark.sql.catalog.<catalog>.journal-directory` from the base adapter contract.
+
+Bind `spark.gravitino.deltaRanger.service` and `spark.gravitino.deltaRanger.definition` to the
+provisioned Ranger service/definition. Existing `spark.sql.gravitino.uri` and
+`spark.sql.gravitino.metalake` remain the trusted Gravitino endpoint/metalake. The wrapper reads
+these immutable SparkContext startup values, never table properties or query/session overrides.
+Set `spark.gravitino.deltaRanger.metadata.config` to an absolute regular owner-only properties
+file (for example mode 0600), containing exactly these keys:
+
+```properties
+auth-type=simple
+principal=separate-metadata-reader
+lifetime-seconds=300
+```
+
+The principal must be explicit and distinct from application/current-actor identity; lifetime
+is 1–86400 seconds from the first metadata read attempt, including construction. This wrapper
+currently qualifies only existing SIMPLE metadata authentication. Basic/custom-token wrapper
+configuration and authenticated token query identity remain separate gates. The lower-level
+metadata adapter retains its existing explicit authentication-builder API. Endpoint, metalake
+and catalog cannot be overridden by the metadata file. The wrapper remains lazy about metadata,
+uses application discovery only for visibility, and looks up the current actor afresh for inherited
+mutation transport. It closes its owned metadata client/engine lease on close, failed initialization
+or Spark application end; it never closes the application/current-actor manager.
+
+Application discovery must already expose each catalog using the local-only
+`CATALOG/USE_CATALOG/ALLOW` visibility grant. A hidden catalog is absent from Spark registration;
+metadata credentials do not discover it. Visibility grants no table SELECT. The separate reader
+needs scoped registration/schema/table metadata reads, while query SELECT decisions use the
+current authenticated UGI and Ranger policies. Actual public visibility/revocation/metadata-only
+transport composition is part of the packaged acceptance gate.
+
+Admitted fresh plans are resolved named native Delta scans with projections, predicates,
+top-level columns, ordinary aliases and inner equijoins/predicate joins. Original projected,
+predicate and join columns are authorized for all scans before any mask/filter request.
+CUSTOM expressions and typed NULL masks preserve original column types; cross-column mask
+expressions, nested references, UDFs and unsupported expressions reject. Row filters operate
+on original rows before masks; user predicates operate on the rewritten columns. Table and
+column identity remains case-sensitive. Count, aggregates and columnless SELECT are currently
+rejected, along with outer joins, views, subqueries, raw paths, DML/DDL, streaming, time travel
+and maintenance commands. Standard mask kinds beyond CUSTOM/NULL remain unqualified.
+
+Pinned Kyuubi V1 privilege extraction loses catalog names. The companion first characterizes
+and validates the original whole-plan extraction, then extracts an otherwise identical copy
+whose per-scan descriptor carries a unique opaque table token. It maps each result through that
+exact local token-to-canonical-scan map and independently validates original ExprId references.
+It never groups catalogless results by database/table or changes execution descriptors/ExprIds.
+Unknown, missing, duplicate or lossy helper resources reject. Public row-filter/mask markers,
+stage-1 ExprId remapping and marker elimination are used after original authorization; stock
+request-generating authorization/filter/mask rules are not installed.
+
+The native optimizer delegate runs only after authorized fresh analysis, before Delta's own
+`PrepareDeltaScan`. Its private synchronous metadata scope preserves native reconstruction and
+caching while constraining observed internal metadata RDD/encoder routes. A narrow protected
+`getDeltaScanGenerator` override calls the public native superclass once, registers only the actual
+selected Snapshot's statistics schema for that authorized index, and returns it unchanged. No
+snapshot/schema registration survives the delegation. Scope clears on exceptions and does not
+propagate to other threads; user RDD/raw scan routes outside it reject. Native DeltaLogFileIndex
+reconstruction and exact readless SingleAction/Row encoder bindings are separate exceptions;
+AddFile binding requires the scope. All binding exceptions require an empty LocalRelation and
+reject child reads, nonnative targets, UDFs and subqueries.
+
+Native reconstruction needs two narrowly qualified ScalaUDF forms: Delta's canonical path
+function and its nondeterministic four-argument size collector. Admission jointly requires the
+active scope, native leaf/snapshot lineage, function class/family, pinned Delta classloader and
+CodeSource, signature/nullability/determinism, and exact argument lineage. It rejects other
+same-signature functions and unrelated arguments. Python UDFs, subqueries and commands reject.
+The native private testing callback is neither called nor replaced by the companion; trusted
+launcher code must not inject callbacks or replace pinned classes. This finite reconstruction
+qualification covers the tested native fixture routes, not every checkpoint/table-feature shape.
+These exceptions do not establish metadata confidentiality or arbitrary-job security.
+A per-analysis subject marker prevents repeated masking and rejects a changed subject; it is not
+revocation protection for cached/reused plans. Those deployment and full Delta-operation gates
+remain open.
 
 ## Deployment
 
@@ -130,5 +217,5 @@ the existing current-actor transport. Application catalog discovery uses its sep
 Gravitino visibility grant, never table SELECT inferred from visibility.
 
 These adapters do not establish DML/DDL, cached-plan, streaming, arbitrary-job or full Delta
-security. Fresh-query plan enforcement, companion packaging, live Gravitino transport acceptance,
-and the remaining runtime matrix are subsequent gates.
+security. Companion packaging, live Gravitino transport acceptance and the remaining runtime
+matrix are subsequent gates.

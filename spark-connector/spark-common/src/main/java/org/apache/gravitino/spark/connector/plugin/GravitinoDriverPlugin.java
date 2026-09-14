@@ -75,6 +75,12 @@ public class GravitinoDriverPlugin implements DriverPlugin {
 
   private static final Logger LOG = LoggerFactory.getLogger(GravitinoDriverPlugin.class);
   private static final String DELTA_PROVIDER = "lakehouse-delta";
+  private static final String DELTA_RANGER_CATALOG =
+      "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerCatalogSpark35";
+  private static final String DELTA_RANGER_EXTENSION =
+      "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerSparkExtension";
+  private static final String STOCK_RANGER_EXTENSION =
+      "org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension";
 
   @VisibleForTesting
   static final String PAIMON_SPARK_EXTENSIONS =
@@ -106,6 +112,7 @@ public class GravitinoDriverPlugin implements DriverPlugin {
   private boolean enableIcebergSupport = false;
   private boolean enablePaimonSupport = false;
   private boolean enableDeltaSupport = false;
+  private boolean enableDeltaRangerSupport = false;
 
   /** Creates the Spark driver plugin. */
   public GravitinoDriverPlugin() {
@@ -168,8 +175,8 @@ public class GravitinoDriverPlugin implements DriverPlugin {
     }
   }
 
-  private void registerGravitinoCatalogs(
-      SparkConf sparkConf, Map<String, Catalog> gravitinoCatalogs) {
+  @VisibleForTesting
+  void registerGravitinoCatalogs(SparkConf sparkConf, Map<String, Catalog> gravitinoCatalogs) {
     gravitinoCatalogs
         .entrySet()
         .forEach(
@@ -198,7 +205,10 @@ public class GravitinoDriverPlugin implements DriverPlugin {
       return;
     }
 
-    String catalogClassName = CatalogNameAdaptor.getCatalogName(provider);
+    String catalogClassName =
+        enableDeltaRangerSupport && DELTA_PROVIDER.equalsIgnoreCase(provider)
+            ? DELTA_RANGER_CATALOG
+            : CatalogNameAdaptor.getCatalogName(provider);
     if (StringUtils.isBlank(catalogClassName)) {
       LOG.warn("Skip registering {} because {} is not supported yet.", catalogName, provider);
       return;
@@ -235,8 +245,25 @@ public class GravitinoDriverPlugin implements DriverPlugin {
   void configureDeltaSupport(SparkConf conf) {
     enableDeltaSupport =
         conf.getBoolean(GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT, false);
+    enableDeltaRangerSupport =
+        conf.getBoolean(GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_SUPPORT, false);
+    Preconditions.checkArgument(
+        !enableDeltaRangerSupport || enableDeltaSupport,
+        "%s requires %s",
+        GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_SUPPORT,
+        GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT);
     if (!enableDeltaSupport) {
       return;
+    }
+    if (enableDeltaRangerSupport) {
+      String extensions = conf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS().key(), "");
+      Preconditions.checkArgument(
+          Arrays.stream(extensions.split(COMMA))
+              .map(String::trim)
+              .noneMatch(STOCK_RANGER_EXTENSION::equals),
+          "Delta Ranger support conflicts with stock RangerSparkExtension");
+      validateDeltaClass(DELTA_RANGER_CATALOG);
+      validateDeltaClass(DELTA_RANGER_EXTENSION);
     }
 
     String catalogClassName = deltaCatalogName.get();
@@ -262,6 +289,10 @@ public class GravitinoDriverPlugin implements DriverPlugin {
     }
     if (!gravitinoDriverExtensions.contains(DELTA_SPARK_EXTENSIONS)) {
       gravitinoDriverExtensions.add(DELTA_SPARK_EXTENSIONS);
+    }
+    if (enableDeltaRangerSupport && !gravitinoDriverExtensions.contains(DELTA_RANGER_EXTENSION)) {
+      gravitinoDriverExtensions.add(
+          gravitinoDriverExtensions.indexOf(DELTA_SPARK_EXTENSIONS), DELTA_RANGER_EXTENSION);
     }
   }
 
