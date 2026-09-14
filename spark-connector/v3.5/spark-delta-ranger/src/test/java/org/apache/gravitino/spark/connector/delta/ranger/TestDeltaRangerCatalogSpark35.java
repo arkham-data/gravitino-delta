@@ -21,15 +21,20 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.PrivilegedExceptionAction;
 import java.time.Duration;
 import java.util.Collections;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.gravitino.Catalog;
+import org.apache.gravitino.spark.connector.GravitinoSparkConfig;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkContext;
 import org.apache.spark.scheduler.SparkListener;
@@ -39,6 +44,9 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
@@ -46,8 +54,11 @@ import org.mockito.Mockito;
 class TestDeltaRangerCatalogSpark35 {
   @TempDir Path directory;
 
-  @Test
-  void visibleCatalogInitializesWithoutMetadataReadAndClosesOnlyOwnedLease() throws Exception {
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"simple", "SIMPLE"})
+  void visibleCatalogInitializesWithoutMetadataReadAndClosesOnlyOwnedLease(String applicationAuth)
+      throws Exception {
     SparkSession session = Mockito.mock(SparkSession.class);
     SparkContext context = Mockito.mock(SparkContext.class);
     RuntimeConfig runtime = Mockito.mock(RuntimeConfig.class);
@@ -67,6 +78,9 @@ class TestDeltaRangerCatalogSpark35 {
             .set("spark.sql.gravitino.uri", "http://127.0.0.1:1")
             .set("spark.sql.gravitino.metalake", "lake")
             .set("spark.gravitino.deltaRanger.metadata.config", config.toString());
+    if (applicationAuth != null) {
+      conf.set(GravitinoSparkConfig.GRAVITINO_AUTH_TYPE, applicationAuth);
+    }
     Mockito.when(context.getConf()).thenReturn(conf);
     Mockito.when(context.sparkUser()).thenReturn("application-reader");
     Mockito.when(session.sparkContext()).thenReturn(context);
@@ -120,6 +134,85 @@ class TestDeltaRangerCatalogSpark35 {
       fixture.engine.close();
       SparkSession.clearActiveSession();
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"basic", "BASIC", "kerberos", "token", "oauth2", "unknown", ""})
+  void unqualifiedApplicationAuthRejectsBeforeEngineAndTransport(String applicationAuth)
+      throws Exception {
+    UserGroupInformation worker =
+        UserGroupInformation.createUserForTesting("worker", new String[0]);
+    worker.doAs(
+        (PrivilegedExceptionAction<Void>)
+            () -> {
+              SparkSession session = Mockito.mock(SparkSession.class);
+              SparkContext context = Mockito.mock(SparkContext.class);
+              RuntimeConfig runtime = Mockito.mock(RuntimeConfig.class);
+              Catalog visible = Mockito.mock(Catalog.class);
+              Mockito.when(visible.name()).thenReturn("a");
+              Mockito.when(visible.provider()).thenReturn("lakehouse-delta");
+              Path config = directory.resolve("application-auth.properties");
+              Files.write(
+                  config,
+                  "auth-type=simple\nprincipal=metadata-reader\nlifetime-seconds=30\n"
+                      .getBytes(StandardCharsets.UTF_8));
+              Files.setPosixFilePermissions(config, PosixFilePermissions.fromString("rw-------"));
+              SparkConf conf =
+                  new SparkConf(false)
+                      .set(GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT, "true")
+                      .set(GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_SUPPORT, "true")
+                      .set(GravitinoSparkConfig.GRAVITINO_AUTH_TYPE, applicationAuth)
+                      .set(GravitinoSparkConfig.GRAVITINO_BASIC_USERNAME, "metadata-reader")
+                      .set(GravitinoSparkConfig.GRAVITINO_URI, "http://127.0.0.1:1")
+                      .set(GravitinoSparkConfig.GRAVITINO_METALAKE, "lake")
+                      .set("spark.gravitino.deltaRanger.metadata.config", config.toString());
+              Mockito.when(context.getConf()).thenReturn(conf);
+              Mockito.when(context.sparkUser()).thenReturn("worker");
+              Mockito.when(session.sparkContext()).thenReturn(context);
+              Mockito.when(session.conf()).thenReturn(runtime);
+              Mockito.when(runtime.get(ArgumentMatchers.anyString(), ArgumentMatchers.anyString()))
+                  .thenAnswer(call -> call.getArgument(1));
+              Mockito.when(runtime.get("spark.sql.extensions", ""))
+                  .thenReturn(
+                      DeltaRangerCatalogSpark35.EXTENSION
+                          + ",io.delta.sql.DeltaSparkSessionExtension");
+              Mockito.when(runtime.get("spark.sql.catalog.spark_catalog", ""))
+                  .thenReturn("org.apache.spark.sql.delta.catalog.DeltaCatalog");
+              SparkSession.setActiveSession(session);
+              AtomicInteger engineAcquisitions = new AtomicInteger();
+              DeltaRangerMetadataClient metadata = new DeltaRangerMetadataClient();
+              DeltaRangerCatalogSpark35.State state =
+                  new DeltaRangerCatalogSpark35.State(
+                      metadata,
+                      () -> {
+                        throw new AssertionError("Unsupported auth must not use actor transport");
+                      },
+                      () -> visible,
+                      ignored -> {
+                        engineAcquisitions.incrementAndGet();
+                        throw new AssertionError(
+                            "Unsupported auth must reject before engine acquisition");
+                      });
+              try (DeltaRangerCatalogSpark35 catalog = new DeltaRangerCatalogSpark35(state)) {
+                IllegalArgumentException failure =
+                    assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                            catalog.initialize(
+                                "a",
+                                new CaseInsensitiveStringMap(
+                                    Collections.singletonMap(
+                                        "journal-directory",
+                                        directory.resolve("journal").toString()))));
+                assertTrue(
+                    failure.getMessage().contains("SIMPLE Gravitino application authentication"));
+                assertEquals(0, engineAcquisitions.get());
+                assertThrows(IllegalStateException.class, metadata::get);
+              } finally {
+                SparkSession.clearActiveSession();
+              }
+              return null;
+            });
   }
 
   @Test

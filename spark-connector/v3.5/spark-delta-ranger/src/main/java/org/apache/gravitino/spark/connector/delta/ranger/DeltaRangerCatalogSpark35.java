@@ -87,6 +87,10 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
           conf.getBoolean(GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT, false)
               && conf.getBoolean(GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_SUPPORT, false),
           "Delta Ranger catalog requires both startup opt-ins");
+      // Match the effective SIMPLE default and case handling of the common client factory.
+      require(
+          "simple".equalsIgnoreCase(conf.get(GravitinoSparkConfig.GRAVITINO_AUTH_TYPE, "simple")),
+          "Delta Ranger requires SIMPLE Gravitino application authentication; other application auth modes are not qualified");
       Set<String> extensions =
           new HashSet<>(Arrays.asList(session.conf().get("spark.sql.extensions", "").split(",")));
       require(

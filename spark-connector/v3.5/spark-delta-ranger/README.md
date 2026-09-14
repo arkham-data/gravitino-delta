@@ -42,6 +42,13 @@ Bind `spark.gravitino.deltaRanger.service` and `spark.gravitino.deltaRanger.defi
 provisioned Ranger service/definition. Existing `spark.sql.gravitino.uri` and
 `spark.sql.gravitino.metalake` remain the trusted Gravitino endpoint/metalake. The wrapper reads
 these immutable SparkContext startup values, never table properties or query/session overrides.
+The effective Gravitino application/current-actor authentication must be SIMPLE:
+`spark.sql.gravitino.authType=simple`, which is also the common client's default when the key
+is absent. Explicit SIMPLE is case-insensitive. Basic, Kerberos, OAuth2, token, unknown and empty
+configured modes reject before metadata configuration or engine acquisition; their authenticated
+identity separation remains a later qualification gate. This restriction applies to the Gravitino
+application/current-actor client; Ranger downloader authentication retains the Task2 contract.
+
 Set `spark.gravitino.deltaRanger.metadata.config` to an absolute regular owner-only properties
 file (for example mode 0600), containing exactly these keys:
 
