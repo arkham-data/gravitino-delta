@@ -21,6 +21,7 @@ package org.apache.gravitino.authorization.ranger.delta;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.google.common.base.Preconditions;
+import com.sun.jersey.api.client.ClientResponse;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Collections;
@@ -39,6 +40,7 @@ import org.apache.ranger.RangerServiceException;
 import org.apache.ranger.plugin.model.RangerBaseModelObject;
 import org.apache.ranger.plugin.model.RangerPolicy;
 import org.apache.ranger.plugin.model.RangerRole;
+import org.apache.ranger.plugin.util.JsonUtilsV2;
 import org.codehaus.jackson.map.ObjectMapper;
 
 /** Ranger 2.8 wire boundaries for legacy principals and timestamp-bearing policy models. */
@@ -48,10 +50,11 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
   private static final API SEARCH_GROUP =
       new API("/service/xusers/groups", HttpMethod.GET, Response.Status.OK);
   private static final API CREATE_USER =
-      new API("/service/xusers/users/external", HttpMethod.POST, Response.Status.OK);
+      new API("/service/xusers/users/external", HttpMethod.POST, Response.Status.NO_CONTENT);
   private static final API CREATE_GROUP =
       new API("/service/xusers/groups", HttpMethod.POST, Response.Status.OK);
   private final Method mapCall;
+  private final Method principalResponse;
   private final ObjectMapper legacy = new ObjectMapper();
   private final JsonMapper wire = new JsonMapper();
 
@@ -62,6 +65,10 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
           RangerClient.class.getDeclaredMethod(
               "callAPI", API.class, Map.class, Object.class, Class.class);
       mapCall.setAccessible(true);
+      principalResponse =
+          RangerClient.class.getDeclaredMethod(
+              "responseHandler", API.class, Map.class, Object.class);
+      principalResponse.setAccessible(true);
     } catch (ReflectiveOperationException e) {
       throw new AuthorizationPluginException("Pinned Ranger 2.8 principal API unavailable");
     }
@@ -80,6 +87,12 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
   @Override
   public Boolean createUser(VXUser user) {
     call(CREATE_USER, null, legacy.convertValue(user, Map.class));
+    VXUserList observed = searchUser(Collections.singletonMap("name", user.getName()));
+    if (observed.getListSize() != 1
+        || !user.getName().equals(observed.getList().get(0).getName())) {
+      throw new AuthorizationPluginException(
+          "Ranger external user readback was not an exact match; authoritative reconciliation required");
+    }
     return true;
   }
   /** {@inheritDoc} */
@@ -159,12 +172,32 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
     }
   }
 
+  @Nullable
   private Object call(API api, @Nullable Map<String, String> filters, @Nullable Map<?, ?> request) {
+    ClientResponse response = null;
     try {
-      return mapCall.invoke(this, api, filters, request, Map.class);
-    } catch (IllegalAccessException | InvocationTargetException e) {
+      response = (ClientResponse) principalResponse.invoke(this, api, filters, request);
+      // Pinned responseHandler returns a raw 503 response instead of throwing. Never decode an
+      // error body as a successful principal result, even when it happens to look like valid JSON.
+      if (response == null || response.getStatus() != api.getExpectedStatus().getStatusCode()) {
+        throw new AuthorizationPluginException(
+            "Ranger principal status failed; authoritative readback required");
+      }
+      if (api == CREATE_USER) {
+        return null;
+      }
+      Map<?, ?> decoded = JsonUtilsV2.readResponse(response, Map.class);
+      if (decoded == null) {
+        throw new AuthorizationPluginException("Ranger principal response must be a JSON object");
+      }
+      return decoded;
+    } catch (Exception e) {
       throw new AuthorizationPluginException(
           "Ranger principal request failed; authoritative readback required");
+    } finally {
+      if (response != null) {
+        response.close();
+      }
     }
   }
 }
