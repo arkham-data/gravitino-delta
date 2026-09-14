@@ -68,6 +68,13 @@ only its ownership; the final close drains the downloader and shuts down its aud
 That singleton is terminal after final close, and reuse requires a fresh driver process.
 Do not install or initialize another owner of the stock singleton in the same driver.
 
+Full Ranger policy snapshots are required. Leave
+`ranger.plugin.spark.supports.policy.deltas` absent or set it to `false`; effective `true`
+rejects during trusted configuration validation before singleton initialization. Both copied
+and in-place incremental Ranger policy updates can reuse auth contexts, so disabling only
+`supports.in.place.policy.updates` is insufficient. This is a Ranger policy-download transport
+constraint, independent of Delta Lake table features.
+
 Readiness requires nonnegative policy and role versions, the bound service, a downloaded
 metalake binding, a complete validated definition, and matching downloaded roles. The default
 empty engine is never ready. Each evaluation rechecks the snapshot; null, error or denial rejects.

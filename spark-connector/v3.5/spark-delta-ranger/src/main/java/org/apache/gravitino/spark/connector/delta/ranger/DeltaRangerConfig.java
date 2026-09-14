@@ -66,6 +66,9 @@ public final class DeltaRangerConfig {
         configuration.get(PREFIX + "policy.rest.url") != null
             && !configuration.get(PREFIX + "policy.rest.url").trim().isEmpty(),
         "Ranger Admin download endpoint required");
+    require(
+        !configuration.getBoolean(PREFIX + "supports.policy.deltas", false),
+        "Full Ranger policy snapshots required; ranger.plugin.spark.supports.policy.deltas must be false");
     for (String option :
         Arrays.asList(
             "use.usergroups.from.userstore.enabled",

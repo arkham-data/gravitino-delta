@@ -19,10 +19,12 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -49,6 +51,31 @@ class TestDeltaRangerConfig {
     assertThrows(
         IllegalArgumentException.class,
         () -> new DeltaRangerConfig("service", "delta", "lake", conf));
+  }
+
+  @Test
+  void incrementalRangerPolicyDownloadsRejectWithEitherEngineUpdateStrategy() throws Exception {
+    Configuration conf = configuration(directory);
+    conf.setBoolean("fixture.policy.deltas", true);
+    conf.set("ranger.plugin.spark.supports.policy.deltas", "${fixture.policy.deltas}");
+    for (boolean inPlace : new boolean[] {false, true}) {
+      conf.setBoolean("ranger.plugin.spark.supports.in.place.policy.updates", inPlace);
+      IllegalArgumentException failure =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> new DeltaRangerConfig("service", "delta", "lake", conf));
+      assertTrue(failure.getMessage().contains("Full Ranger policy snapshots required"));
+    }
+  }
+
+  @Test
+  void defaultAndExplicitFullRangerPolicySnapshotsRemainSupported() throws Exception {
+    Configuration conf = configuration(directory);
+    assertDoesNotThrow(() -> new DeltaRangerConfig("service", "delta", "lake", conf));
+    conf.setBoolean("ranger.plugin.spark.supports.policy.deltas", false);
+    // In-place policy updates cannot activate without incremental downloads.
+    conf.setBoolean("ranger.plugin.spark.supports.in.place.policy.updates", true);
+    assertDoesNotThrow(() -> new DeltaRangerConfig("service", "delta", "lake", conf));
   }
 
   @Test
