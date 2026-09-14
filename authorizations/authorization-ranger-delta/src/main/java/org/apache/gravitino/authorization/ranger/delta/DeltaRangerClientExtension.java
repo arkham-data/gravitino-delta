@@ -37,9 +37,11 @@ import org.apache.gravitino.authorization.ranger.reference.VXUserList;
 import org.apache.gravitino.exceptions.AuthorizationPluginException;
 import org.apache.ranger.RangerClient;
 import org.apache.ranger.RangerServiceException;
+import org.apache.ranger.admin.client.datatype.RESTResponse;
 import org.apache.ranger.plugin.model.RangerBaseModelObject;
 import org.apache.ranger.plugin.model.RangerPolicy;
 import org.apache.ranger.plugin.model.RangerRole;
+import org.apache.ranger.plugin.util.GrantRevokeRoleRequest;
 import org.apache.ranger.plugin.util.JsonUtilsV2;
 import org.codehaus.jackson.map.ObjectMapper;
 
@@ -53,22 +55,17 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
       new API("/service/xusers/users/external", HttpMethod.POST, Response.Status.NO_CONTENT);
   private static final API CREATE_GROUP =
       new API("/service/xusers/groups", HttpMethod.POST, Response.Status.OK);
-  private final Method mapCall;
-  private final Method principalResponse;
+  private final Method responseHandler;
   private final ObjectMapper legacy = new ObjectMapper();
   private final JsonMapper wire = new JsonMapper();
 
   DeltaRangerClientExtension(String host, String auth, String user, String password) {
     super(host, auth, user, password);
     try {
-      mapCall =
-          RangerClient.class.getDeclaredMethod(
-              "callAPI", API.class, Map.class, Object.class, Class.class);
-      mapCall.setAccessible(true);
-      principalResponse =
+      responseHandler =
           RangerClient.class.getDeclaredMethod(
               "responseHandler", API.class, Map.class, Object.class);
-      principalResponse.setAccessible(true);
+      responseHandler.setAccessible(true);
     } catch (ReflectiveOperationException e) {
       throw new AuthorizationPluginException("Pinned Ranger 2.8 principal API unavailable");
     }
@@ -138,6 +135,37 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
         UPDATE_POLICY_BY_NAME.applyUrlFormat(service, name), null, policy, RangerPolicy.class);
   }
 
+  /** {@inheritDoc} */
+  @Override
+  public void deletePolicy(long id) throws RangerServiceException {
+    writeRequest(DELETE_POLICY_BY_ID.applyUrlFormat(id), null, null, null);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public void deleteRole(String name, String execUser, String service)
+      throws RangerServiceException {
+    writeRequest(
+        DELETE_ROLE_BY_NAME.applyUrlFormat(name),
+        Map.of("execUser", execUser, "serviceName", service),
+        null,
+        null);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public RESTResponse grantRole(String service, GrantRevokeRoleRequest request)
+      throws RangerServiceException {
+    return writeRequest(GRANT_ROLE.applyUrlFormat(service), null, request, RESTResponse.class);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public RESTResponse revokeRole(String service, GrantRevokeRoleRequest request)
+      throws RangerServiceException {
+    return writeRequest(REVOKE_ROLE.applyUrlFormat(service), null, request, RESTResponse.class);
+  }
+
   private void requireResources(RangerPolicy policy) {
     Preconditions.checkArgument(
         !policy.getResources().isEmpty(), "Ranger policy resources cannot be empty!");
@@ -159,45 +187,56 @@ final class DeltaRangerClientExtension extends RangerClientExtension {
     if (model.getUpdateTime() != null) {
       request.put("updateTime", model.getUpdateTime().toInstant().toEpochMilli());
     }
+    return writeRequest(api, filters, request, response);
+  }
+
+  @Nullable
+  private <T> T writeRequest(
+      API api,
+      @Nullable Map<String, String> filters,
+      @Nullable Object request,
+      @Nullable Class<T> responseType)
+      throws RangerServiceException {
+    ClientResponse response = null;
     try {
-      return response.cast(mapCall.invoke(this, api, filters, request, response));
+      response = (ClientResponse) responseHandler.invoke(this, api, filters, request);
+      // Unlike GET, Ranger 2.8 write transports let responseHandler return a raw 503 response.
+      // Validate the status before decoding even an apparently successful response body.
+      if (response == null || response.getStatus() != api.getExpectedStatus().getStatusCode()) {
+        throw new AuthorizationPluginException(
+            "Ranger callback status failed; authoritative readback required");
+      }
+      if (responseType == null) {
+        return null;
+      }
+      T decoded = JsonUtilsV2.readResponse(response, responseType);
+      if (decoded == null) {
+        throw new AuthorizationPluginException("Ranger callback response must not be null");
+      }
+      return decoded;
     } catch (InvocationTargetException e) {
       if (e.getCause() instanceof RangerServiceException) {
         throw (RangerServiceException) e.getCause();
       }
       throw new AuthorizationPluginException(
-          "Ranger model request failed; authoritative readback required");
-    } catch (IllegalAccessException e) {
-      throw new AuthorizationPluginException("Pinned Ranger 2.8 model API unavailable");
+          "Ranger callback request failed; authoritative readback required");
+    } catch (Exception e) {
+      throw new AuthorizationPluginException(
+          "Ranger callback request failed; authoritative readback required");
+    } finally {
+      if (response != null) {
+        response.close();
+      }
     }
   }
 
   @Nullable
   private Object call(API api, @Nullable Map<String, String> filters, @Nullable Map<?, ?> request) {
-    ClientResponse response = null;
     try {
-      response = (ClientResponse) principalResponse.invoke(this, api, filters, request);
-      // Pinned responseHandler returns a raw 503 response instead of throwing. Never decode an
-      // error body as a successful principal result, even when it happens to look like valid JSON.
-      if (response == null || response.getStatus() != api.getExpectedStatus().getStatusCode()) {
-        throw new AuthorizationPluginException(
-            "Ranger principal status failed; authoritative readback required");
-      }
-      if (api == CREATE_USER) {
-        return null;
-      }
-      Map<?, ?> decoded = JsonUtilsV2.readResponse(response, Map.class);
-      if (decoded == null) {
-        throw new AuthorizationPluginException("Ranger principal response must be a JSON object");
-      }
-      return decoded;
-    } catch (Exception e) {
+      return writeRequest(api, filters, request, api == CREATE_USER ? null : Map.class);
+    } catch (RangerServiceException e) {
       throw new AuthorizationPluginException(
           "Ranger principal request failed; authoritative readback required");
-    } finally {
-      if (response != null) {
-        response.close();
-      }
     }
   }
 }
