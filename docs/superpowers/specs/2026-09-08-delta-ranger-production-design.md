@@ -114,6 +114,15 @@ cache and does not attest a token-to-UGI binding; reject token query mode until 
 authenticated deployment bridge is qualified. Metadata clients may independently
 use existing token/custom authentication without becoming the query subject.
 
+The initial no-arg Ranger catalog wrapper additionally requires SIMPLE Gravitino
+application/current-actor authentication. The common SIMPLE client uses Spark's
+application user; Basic, OAuth2 and Kerberos can use a different configured identity
+that the original Spark/UGI comparison does not establish. Reject those and unknown
+modes before acquiring wrapper resources, retaining the distinct metadata-principal
+checks. Broader application modes require their own effective-identity qualification.
+This does not restrict Ranger's separate Basic-authenticated downloader or remove
+the generic metadata-client builder's supported authentication modes.
+
 Require a valid policy/role/service snapshot before evaluation; null/error/deny
 rejects. A documented valid cache may continue during outage, with observed versions
 and revocation effective after refresh. Fresh-analysis qualification does not prove
@@ -153,3 +162,11 @@ The initial engine contract uses Ranger full-snapshot policy downloads. Reject
 updates may reuse an authorization context and are not qualified by the completed
 context binding contract. The default absent/false setting remains supported. This
 Ranger transport restriction is independent of Delta Lake table feature support.
+
+Privilege extraction must preserve canonical scan identity even though the pinned
+CatalogTableTableExtractor omits catalog names. A private extraction-only copy may
+use opaque per-scan identifiers with an exact local map while preserving output
+ExprIds, expressions and owners. The original plan remains the executed plan. No
+name/path/position heuristic may reconstruct catalogs after helper aggregation;
+unknown, missing or ambiguous results reject. Both join orders and asymmetric
+original column references require executed qualification.

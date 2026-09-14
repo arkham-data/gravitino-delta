@@ -130,21 +130,71 @@ For CUSTOM masks, retain `{col}` substitution semantics without turning column s
 
 `DeltaRangerSparkExtension extends (SparkSessionExtensions => Unit)` installs its admission/check and resolution/optimizer rules before the first session. Reject duplicate stock RangerSparkExtension configuration, since it would install incompatible rules and duplicate decisions. Preserve native Delta extension and unrelated explicitly compatible extensions. No global engine monkeypatch.
 
-Admit fresh resolved SELECT plans over canonical native Delta TahoeLogFileIndex scans, covering projection, predicates, ordinary aliases and joins. Use an explicit finite plan-shape check; reject DML/DDL commands, views/UDFs, time-travel/streaming/maintenance or other unqualified routes in enforcement-enabled mode until their matrix cases exist. Internal native DeltaLogFileIndex reconstruction receives its narrowly typed metadata allowance; it must not become permission for arbitrary JSON/Parquet/path scans. This limitation does not claim metadata confidentiality or arbitrary-job safety.
+Admit fresh resolved SELECT plans over canonical native Delta TahoeLogFileIndex scans, covering projection, predicates, ordinary aliases and joins. Use an explicit finite plan-shape check; reject DML/DDL commands, views/UDFs, time-travel/streaming/maintenance or other unqualified routes in enforcement-enabled mode until their matrix cases exist. Internal native DeltaLogFileIndex reconstruction receives its narrowly typed metadata allowance; it must not become permission for arbitrary JSON/Parquet/path scans. Actual native caches also create LogicalRDD without that lineage. After authorizing the original finite canonical SELECT, an optional pre-CBO rule may delegate to public PrepareDeltaScan inside a private synchronous metadata scope for exactly qualified internal routes. Require finally cleanup/thread isolation, correct extension ordering before the native rule, and second-pass idempotence on both Delta patches. External LogicalRDD/raw/mixed sources still reject; no cache-disable, stack-based admission or broad schema/name heuristic. The separate readless SingleAction encoder exception remains narrow and tested. This limitation does not claim metadata confidentiality or arbitrary-job safety.
 
-Before adding masks/filters, invoke `PrivilegesBuilder.build(originalResolvedPlan, spark)` and validate extracted tables/column sets against canonical native scan identities. Do not call stock RuleAuthorization. Build/deduplicate canonical requests as Task 2 specifies and authorize **original** columns, including denied predicate/join columns and SELECT *. Keep source and target resources separate even if names coincide. Masks do not grant access to denied original columns.
+Before adding masks/filters, invoke `PrivilegesBuilder.build(originalResolvedPlan, spark)` and validate extracted tables/column sets against canonical native scan identities. Pinned native qualification shows CatalogTableTableExtractor drops catalog names. For required same-name joins, use a separate extraction-only copy with a unique opaque identifier per canonical scan and an exact local identifier-to-scan map, preserving all output ExprIds, expressions and owners; run the public whole-plan helper on that copy and execute the untouched original plan. Never reconstruct catalog identity after db/table grouping or infer it from names, paths or positions. Unknown, missing or ambiguous extraction results reject. Qualify asymmetric projection/predicate/join columns and aliases in both join orders before accepting this adaptation. Do not call stock RuleAuthorization. Build/deduplicate canonical requests as Task 2 specifies and authorize **original** columns, including denied predicate/join columns and SELECT *. Keep source and target resources separate even if names coincide. Masks do not grant access to denied original columns.
 
 Obtain each table filter and each applicable column mask from Task 2, anchored to its scan identity. Install filters/mask aliases using the same marker topology as pinned Kyuubi's row-filter-before-mask order; reuse `RowFilterMarker`, `DataMaskingStage0Marker`, `RuleApplyDataMaskingStage1` and `RuleEliminateMarker` only after a small compatibility test proves resolution and fresh expression-ID remapping. Do not reuse stock request-generating stage-0/filter rules. Preserve original column authorization before helper marker elimination. Fixed-point application must not repeatedly filter/mask or reuse an earlier subject's decision. A per-analysis marker establishes only this fresh-analysis milestone, not revocation safety for cached/reused plans.
 
-- [ ] Add native RED: two catalogs with same schema/table/owners; distinct allow/mask/filter outcomes; join in both orders; denied projected, predicate and join columns; SELECT *; columnless/count behavior if admitted; raw Delta path rejection; malformed/unsupported enabled mask; internal metadata reconstruction; no repeated mask under analyzer fixed point.
-- [ ] Implement bounded admission and canonical authorization; verify PrivilegesBuilder preserves complete source/predicate resources before using its output. If a tested extraction shape loses required identity/columns, reject that shape and report it rather than guess. Reuse public pinned APIs only.
-- [ ] Implement/verify expression rewrites with actual executed rows, fresh alias IDs, quoting, nulls and joined identical column names. Add parameterized engine tests for standard mask helpers; qualify additional kinds explicitly or list exact remaining gates.
-- [ ] Verify subject changes/new sessions, class/module isolation, native descriptor/colliding session-catalog sentinel and disabled-update flag. Run focused tests on both Delta patches and review; defer live/pair qualification to Task 4.
+- [x] Add native RED: two catalogs with same schema/table/owners; distinct allow/mask/filter outcomes; join in both orders; denied projected, predicate and join columns; SELECT *; columnless/count behavior if admitted; raw Delta path rejection; malformed/unsupported enabled mask; internal metadata reconstruction; no repeated mask under analyzer fixed point.
+- [x] Implement bounded admission and canonical authorization; verify PrivilegesBuilder preserves complete source/predicate resources before using its output. If a tested extraction shape loses required identity/columns, reject that shape and report it rather than guess. Reuse public pinned APIs only.
+- [x] Implement/verify expression rewrites with actual executed rows, fresh alias IDs, quoting, nulls and joined identical column names. Add parameterized engine tests for standard mask helpers; qualify additional kinds explicitly or list exact remaining gates.
+- [x] Verify subject changes/new sessions, class/module isolation, native descriptor/colliding session-catalog sentinel and disabled-update flag. Run focused tests on both Delta patches and review; defer live/pair qualification to Task 4.
 
 ```bash
 ./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests '*TestDeltaRangerReadRule' --tests '*TestDeltaRangerMaskRules' --tests '*TestDeltaRangerNativeSelect' -PdeltaSparkVersion=3.5.4 -PdeltaVersion=3.3.0
 ./gradlew :spark-connector:spark-delta-ranger-3.5:spotlessCheck :spark-connector:spark-delta-ranger-3.5:javadoc
 ```
+
+Native qualification additionally observed `Snapshot.allFilesViaStateReconstruction`
+binding an `AddFile` encoder over a truly empty `LocalRelation`. Admit this exact
+readless target only inside the synchronous `PrepareDeltaScan` scope, with the same
+read/command/subquery/UDF exclusions and an outside-scope rejection test. This does
+not expand the separate `SingleAction` exception to arbitrary encoder targets.
+The native parsed-statistics cache also creates `LogicalRDD`. A narrow subclass of
+public `PrepareDeltaScan` may override protected `getDeltaScanGenerator`, call
+`super` once, require its actual selected `Snapshot`, and register that snapshot's
+exact statistics-cache schema only in the current synchronous scope. Register only
+for an already-authorized canonical index and return the generator unchanged.
+`Snapshot.statsSchema` derives from metadata/configuration without preparing reads.
+Do not infer the selected snapshot from a separate volatile read or cache schemas
+across queries. Require wrong-schema/outside-scope negatives, both-patch linkage and
+second-pass idempotence. The native private-in-Delta test callback is part of the
+trusted-launcher boundary; do not replace or invoke it as an integration seam.
+Final Spark `Dataset.collectFromPlan` also binds the exact `Row` object type over
+empty `LocalRelation` after native preparation. Admit this readless binding with
+the same guards, without requiring metadata scope or admitting generic object
+encoders. Invalid `DeserializeToObject` roots must reject directly rather than
+falling through to another metadata allowance. Preserve nonempty/read-backed/UDF/
+subquery negatives and qualify actual result collection on both Delta patches.
+Two native Scala UDF forms are required inside metadata preparation: Delta's
+`CanonicalPathFunction` for add/remove paths and the nondeterministic
+`DataSkippingReaderBase` size-collector function. Qualify each using the conjunction
+of active authorized scope, exact native leaf/snapshot lineage, runtime class or
+generated-lambda family, the same classloader and code origin as pinned `DeltaLog`,
+function arity, input/output types, flags and argument lineage. Class name, origin
+or signature alone is insufficient. Reject different same-signature user lambdas,
+wrong arguments and either native form outside scope; original user plans and
+readless encoder bindings still reject UDFs. Both patches require observed evidence.
+This narrowly replaces the earlier blanket internal no-UDF shorthand and depends
+on trusted runtime artifacts; no private API, reflective access or stack detection.
+Restrict optional-module Spark/Ranger/Scala version overrides to its main/test
+compile/runtime classpaths. Zinc and scalafmt require independent tool versions;
+the earlier Zinc-only exemption was insufficient for the detached formatter
+configuration. Preserve tool setup failures separately and verify actual Spark
+classpaths retain Scala 2.12 and the required Ranger closure.
+The existing trusted endpoint and metalake keys are `spark.sql.gravitino.uri` and
+`spark.sql.gravitino.metalake`; use common configuration constants.
+
+Task3 review correction: the initial wrapper requires SIMPLE for the effective
+Gravitino application/current-actor client authentication mode, including the
+existing default. A Basic username may equal the metadata principal even when
+Spark/UGI differs, so the old comparison alone is insufficient. Reject Basic,
+OAuth2, Kerberos, token and unknown modes before wrapper resource acquisition;
+retain distinct-principal checks for admitted SIMPLE. Qualify the counterexample
+and distinct SIMPLE positive in focused startup tests. Other application modes
+remain later gates; Ranger downloader Basic and generic metadata builders remain
+separate and unchanged.
 
 ### Task 4: Package and qualify the real Gravitino → Ranger → Spark chain
 

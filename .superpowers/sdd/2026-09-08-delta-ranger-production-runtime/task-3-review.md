@@ -1,0 +1,59 @@
+# Task 3 independent review
+
+Reviewed BASE `dc5e9cddefbcdcfd929c1f34f871ebb36a20e22e` through HEAD `d5e35f6e17862b0a86c7090f87e49571e622f0b4`, using the supplied 15-file contextual package, task brief/assignment/interface/report, current design, and binding review rulings. This is the bounded Task 3 review, not branch, merge, deployment, or Task 4 acceptance.
+
+## Verdicts
+
+- **Spec: changes required.** One P2 finding in the required metadata/application/current-actor identity separation. The bounded canonical SELECT implementation otherwise meets the reviewed Task 3 contract under the explicit native-scope rulings.
+- **Code quality: changes required.** The same P2 needs a fail-closed startup check and regression. No additional P0/P1/P2 findings. Two minor follow-ups are deferred below.
+- Counts: **0 P0, 0 P1, 1 P2; 2 deferred minors.** No suite replay or source/Git/service/cache mutation occurred. Only this report was written.
+
+## Actionable finding
+
+### P2 — Validate the effective Gravitino application/actor identity, not only Spark/UGI names
+
+Location: `spark-connector/v3.5/spark-delta-ranger/src/main/java/org/apache/gravitino/spark/connector/delta/ranger/DeltaRangerCatalogSpark35.java:105` and `:109`.
+
+The two distinct-principal checks compare the private metadata principal with `SparkContext.sparkUser()` and the current UGI short name. Those are not necessarily the identity used by the application discovery/current-actor Gravitino client. The existing supported Basic client path takes `GravitinoSparkConfig.GRAVITINO_BASIC_USERNAME` (`spark.sql.gravitino.basic.username`) and calls `withBasicAuth(username, password)` in `GravitinoDriverPlugin.java:338–341`. `GravitinoCatalogManager.currentIdentity()` at `:200–203` selects the application identity for this non-token mode; `getGravitinoCatalogInfo()` at `:154` consequently returns that application's catalog/transport. The new `State.actor()` preserves this path.
+
+Concrete counterexample: run Spark/current UGI as `worker`, configure common `GRAVITINO_AUTH_TYPE=basic` with Basic username `metadata-reader`, and give the private wrapper file `auth-type=simple`, `principal=metadata-reader`, and a valid lifetime. With the catalog visible to that Basic principal, both new comparisons pass and initialization proceeds. Where the server's Basic and SIMPLE authenticators resolve that username to the same Gravitino user, application discovery, current-actor transport and metadata reads use the same principal. The query subject remains `worker`; this is a failure of the required distinct metadata-reader identity, not evidence that the query UGI was replaced or that a SELECT bypass occurred. `DeltaRangerQuerySubject.current()` rejects token mode, but does not reject Basic mode, so it does not close this gap.
+
+Correct the startup contract within the optional wrapper: either validate separation against the effective authenticated application/current-actor principal for the modes actually admitted, or explicitly reject modes for which that distinction cannot be established. Do not infer OAuth/token identity from unverified claims. Restricting the initial application mode is sufficient if broader modes remain unqualified; this finding does **not** request Basic metadata-file support or an authentication bridge. Add a regression with application auth identity different from Spark/UGI and equal to the metadata principal, plus a distinct-principal positive for the admitted mode. Existing wrapper tests only exercise Spark/UGI-style identities through controlled seams and do not cover this configuration.
+
+## Source assessment
+
+The no-arg wrapper constructs lazy suppliers, binds the canonical catalog and trusted SparkContext endpoint/metalake before delegate initialization, checks application visibility before acquiring Ranger, preserves fresh actor lookup, and closes owned metadata/engine resources on close, application end and initialization failure. Time-travel overloads reject. The base descriptor/update invariant remains intact. The principal check above is the remaining separation defect.
+
+Common changes are string-only and default false, require Delta support, load optional classes without initialization, reject the stock Ranger extension, and put the companion ahead of native Delta. The production extension validates the single-companion/single-native order. No forbidden core/API/server/client/storage-schema source changed.
+
+The read rule applies finite resolved SELECT admission, rejects unqualified plans and columnless/count routes, and authorizes complete original projected/predicate/join column sets before requesting any filter or mask. The opaque extraction-only descriptor tokens map directly to original canonical scans; original expression IDs and executable descriptors remain unchanged. Exact token/resource/owner/database checks and an independent original ExprId-use check prevent identity reconstruction by table name or path. Same-owner, same-name catalogs, both join orders, self-join identities, denials and star projection are covered by the supplied tests.
+
+Row filters precede mask projections. CUSTOM expressions resolve against the single original column, filters against the original scan, quoted identifiers and typed NULL are handled, and unsupported expressions/type changes reject. Pinned marker helpers remap fresh alias IDs. Subject tags prevent repeated fixed-point rewriting and reject a marked plan under another subject; they do not establish cache/revocation safety.
+
+Native preparation uses a synchronous non-inherited scope with finally cleanup, calls public PrepareDeltaScan before the native pass, and registers statistics schema from the actual superclass-selected Snapshot. The exact readless SingleAction/AddFile/Row targets, DeltaLogFileIndex paths, scoped state/statistics RDD schemas, and qualified native UDF origin/signature/argument checks follow the supplied rulings. General raw sources, outside-scope RDD/UDF routes and invalid root object bindings reject. The scoped schema/encoder allowances are accepted only under the trusted-launcher/pinned-artifact boundary; they do not attest arbitrary programmatic plans. Both patches have actual result-collection and native second-pass-idempotence coverage.
+
+## Named unchanged-code risk checks
+
+- **Actor/discovery identity mismatch:** inspected common `GravitinoDriverPlugin.createGravitinoClient`, `GravitinoCatalogManager.getGravitinoCatalogInfo/currentIdentity/loadRelationalCatalogs/getCatalogs`, `GravitinoIdentity.application`, and relevant authentication constants. This established the P2 counterexample; discovery is application-owned and the actor lookup is current, but its effective authentication principal can differ from Spark/UGI.
+- **Early delegate use or accidental application-client close:** inspected base `GravitinoDeltaCatalogSpark35` constructors, initialize and close. Supplier construction is lazy; native delegate initialization follows wrapper binding, and base close does not close application transports.
+- **Common extension merge disturbing required order:** inspected unchanged `registerSqlExtensions` and `ConnectorUtil.removeDuplicateSparkExtensions`. The inserted driver extension list is merged first using LinkedHashSet order, preserving companion-before-native for normal configured names.
+- **Existing Gravitino extension imposing an extra table SELECT check:** inspected `GravitinoAuthorizationSparkSessionExtensions` and `RequiredPrivilegesCheck`. The latter drains previously recorded resolution failures; it does not independently issue a table SELECT authorization request for the native wrapper. Actual public transport composition remains Task 4.
+- **Mask quoting/unsupported kind accidentally granting access:** inspected accepted `DeltaRangerPolicyEngine.mask`. It quotes the canonical column with escaped backticks, uses typed NULL decisions, and rejects other enabled mask kinds; new rules authorize original columns first.
+- **Pinned extraction and native callback/cache assumptions:** inspected retained Kyuubi `PrivilegesBuilder.buildQuery`, native `PrepareDeltaScan.getDeltaScanGenerator/prepareDeltaScan`, `util/StateCache.CachedDS`, and `DataSkippingReader.buildSizeCollectorFilter`. They corroborate original-reference extraction, native cached LogicalRDD creation, the selected Snapshot seam, and native collector argument lineage. The superclass private testing callback is real and remains the expressly documented trusted-launcher limitation; no companion callback injection was found.
+
+## Evidence inspected and limits
+
+Independently parsed the copied XML and read commands/exits and selected Gradle task lines for `task-3-evidence/accepted-source-delta330` and `final-source-delta332`: each contains 8 suites, 69 tests (52 optional + 17 common), zero failures/errors/skips, process exit 0, and completed strict Javadoc/JAR tasks. The native behavior is asserted in Scala suites; `TestDeltaRangerNativeSelect.java` supplies the JVM helper/engine transport fixture, not a separately counted JUnit suite.
+
+Independently hashed all six archived connector JARs per run against their manifests: no mismatches. Inspected optional JAR entries/class headers: no Spark/Hadoop/Scala/Delta platform classes and class major 52. Read root source/dependency/isolation check records: 199 external dependencies per run match, Spark 3.5.4/Scala 2.12.21/Ranger 2.8.0 and the corresponding Delta patch; base JARs contain no Ranger/authz/companion classes. Read the explicit post-verification patch: the sole source-manifest difference is formatter license-comment trailing whitespace, not executable/test source.
+
+Classpath resolution-time capture is not uniformly post-build: verified the native base shadowJar precedes capture in the 330 log and follows capture in the 332 log. Post-build archive identities therefore remain distinct from resolution-time project-path hashes. The whole root `common` 330 JAR was not retained; the later 332 project capture does not repair that earlier binary gap. This limits complete historical binary reproducibility, not the observed native test results. Do not relabel any earlier binary as the current artifact.
+
+The tests use honestly scoped visibility/metadata/catalog/engine seams. They do not prove public CATALOG/USE_CATALOG/ALLOW visibility with no table grant/owner workaround, fresh-driver visibility revocation, Ranger-only column-user metadata REST access, genuine downloaded policy composition, or the packaged all-four-pair chain. Those are mandatory Task 4 gates, including Spark 3.5.6. No new Task 4 gate is claimed or requested as part of this review. Earlier RED/setup evidence remains distinguished in the report; no suites were silently broadened or replayed.
+
+## Deferred minor follow-ups
+
+- **M3, failed-init coverage after resource acquisition:** `spark-connector/v3.5/spark-delta-ranger/src/test/java/org/apache/gravitino/spark/connector/delta/ranger/TestDeltaRangerCatalogSpark35.java:126` exercises failure before the engine is acquired. Add a focused failure after acquisition (for example missing journal option) and assert both the acquired engine and metadata lease close. Source cleanup is present; this is a coverage improvement, not a second established runtime defect.
+- **M4, repeated whole-plan reference traversal:** `spark-connector/v3.5/spark-delta-ranger/src/main/scala/org/apache/gravitino/spark/connector/delta/ranger/DeltaRangerReadRule.scala:191` recomputes the same original used-ExprId set for every scan. Hoist it once outside the per-input mapping when touching this code. It has no demonstrated correctness impact on the bounded joins.
+
+Task 1's previously deferred M1/M2 remain final branch-review items and were not reopened. No claude-mem/mcp-search memory capability was available in the active tool inventory; no memory read/write was claimed.
