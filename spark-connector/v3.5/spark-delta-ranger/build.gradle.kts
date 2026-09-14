@@ -61,9 +61,11 @@ dependencies {
   compileOnly("org.apache.spark:spark-sql_2.12:$deltaSparkVersion")
   compileOnly("org.scala-lang:scala-library:2.12.21")
   compileOnly("com.google.code.findbugs:jsr305:3.0.2")
+  testCompileOnly("org.apache.kyuubi:kyuubi-spark-connector-hive_2.12:1.11.0") { isTransitive = false }
   testCompileOnly(project(":spark-connector:spark-delta-3.5")) { isTransitive = false }
   testImplementation("io.delta:delta-spark_2.12:$deltaVersion")
   testImplementation(project(":api"))
+  testImplementation(project(":common"))
   testImplementation(project(":delta:delta-common"))
   testImplementation(project(":clients:client-java"))
   testImplementation(project(":spark-connector:spark-common")) { isTransitive = false }
@@ -92,5 +94,33 @@ tasks.withType<ScalaCompile>().configureEach {
 configure<com.diffplug.gradle.spotless.SpotlessExtension> {
   scala {
     scalafmt("3.8.3").configFile(file(".scalafmt.conf"))
+  }
+}
+
+val rangerDeltaProductionEnabled = providers.gradleProperty("rangerDeltaProductionEnabled").orNull == "true"
+val rangerDeltaProductionProperties = mapOf(
+  "gravitinoUrl" to providers.gradleProperty("rangerDeltaProductionGravitinoUrl").orNull,
+  "adminUrl" to providers.gradleProperty("rangerDeltaProductionAdminUrl").orNull,
+  "fixtureFile" to providers.gradleProperty("rangerDeltaProductionFixtureFile").orNull
+)
+if (rangerDeltaProductionEnabled) {
+  require(providers.gradleProperty("skipDockerTests").orNull == "false") {
+    "rangerDeltaProductionEnabled requires -PskipDockerTests=false"
+  }
+  require(rangerDeltaProductionProperties.values.all { !it.isNullOrBlank() }) {
+    "Production acceptance requires explicit Gravitino/Admin endpoints and a private fixture file"
+  }
+} else {
+  require(rangerDeltaProductionProperties.values.all { it == null }) {
+    "Production acceptance endpoints require explicit rangerDeltaProductionEnabled=true"
+  }
+}
+tasks.test {
+  if (rangerDeltaProductionEnabled) {
+    extensions.extraProperties["gravitinoExternalTestEndpoints"] = true
+    systemProperty("gravitino.ranger.delta.production.enabled", "true")
+    rangerDeltaProductionProperties.forEach { (key, value) ->
+      systemProperty("gravitino.ranger.delta.production.$key", requireNotNull(value))
+    }
   }
 }
