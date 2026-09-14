@@ -18,6 +18,7 @@
  */
 package org.apache.gravitino.authorization.ranger.delta;
 
+import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -25,9 +26,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
@@ -41,6 +44,7 @@ import java.util.stream.Collectors;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.MetadataObjects;
 import org.apache.gravitino.authorization.AuthorizationSecurableObject;
+import org.apache.gravitino.authorization.Group;
 import org.apache.gravitino.authorization.Owner;
 import org.apache.gravitino.authorization.Privilege;
 import org.apache.gravitino.authorization.Privileges;
@@ -48,6 +52,7 @@ import org.apache.gravitino.authorization.Role;
 import org.apache.gravitino.authorization.RoleChange;
 import org.apache.gravitino.authorization.SecurableObject;
 import org.apache.gravitino.authorization.SecurableObjects;
+import org.apache.gravitino.authorization.User;
 import org.apache.gravitino.authorization.ranger.RangerAuthorizationHadoopSQLPlugin;
 import org.apache.gravitino.authorization.ranger.RangerClientExtension;
 import org.apache.gravitino.authorization.ranger.RangerHelper;
@@ -64,10 +69,21 @@ import org.apache.ranger.plugin.model.RangerServiceDef;
 import org.apache.ranger.plugin.util.JsonUtilsV2;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.mockito.MockedConstruction;
 import org.slf4j.LoggerFactory;
 
 class TestRangerDeltaAuthorization {
+  @Test
+  void userRemovalRejectsGlobalDeletionWithoutAdminMutation() throws Exception {
+    assertPrincipalRemovalRejected(Owner.Type.USER);
+  }
+
+  @Test
+  void groupRemovalRejectsGlobalDeletionWithoutAdminMutation() throws Exception {
+    assertPrincipalRemovalRejected(Owner.Type.GROUP);
+  }
+
   @Test
   void missingPrincipalAndMembershipReadbackFailuresNeverReportOwnerSuccess() throws Exception {
     try (Admin admin = new Admin()) {
@@ -352,6 +368,60 @@ class TestRangerDeltaAuthorization {
     when(owner.name()).thenReturn(name);
     when(owner.type()).thenReturn(type);
     return owner;
+  }
+
+  private void assertPrincipalRemovalRejected(Owner.Type type) throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin plugin = plugin();
+      RangerClientExtension client = plugin.getRangerClient();
+      plugin.onRoleCreated(role("reader", select()));
+      RangerPolicy foreign = admin.clonePolicies().get(0);
+      foreign.setId(900L);
+      foreign.setService("independent_service");
+      foreign.setPolicyLabels(List.of());
+      foreign.getPolicyItems().get(0).setUsers(List.of("shared_user"));
+      foreign.getPolicyItems().get(0).setGroups(List.of("shared_group"));
+      admin.policies.put(900L, foreign);
+      VXUserList users = new VXUserList();
+      users
+          .getList()
+          .add(admin.mapper.convertValue(Map.of("id", 71L, "name", "shared_user"), VXUser.class));
+      VXGroupList groups = new VXGroupList();
+      groups
+          .getList()
+          .add(admin.mapper.convertValue(Map.of("id", 72L, "name", "shared_group"), VXGroup.class));
+      when(client.searchUser(anyMap())).thenReturn(users);
+      when(client.searchGroup(anyMap())).thenReturn(groups);
+      when(client.deleteUser(anyLong()))
+          .thenAnswer(
+              call -> {
+                users.getList().clear();
+                return true;
+              });
+      when(client.deleteGroup(anyLong()))
+          .thenAnswer(
+              call -> {
+                groups.getList().clear();
+                return true;
+              });
+      User user = mock(User.class);
+      when(user.name()).thenReturn("shared_user");
+      Group group = mock(Group.class);
+      when(group.name()).thenReturn("shared_group");
+      Map<String, Object> state =
+          Map.of(
+              "users", users, "groups", groups, "policies", admin.policies, "roles", admin.roles);
+      String before = admin.mapper.writeValueAsString(state);
+      Executable removal =
+          type == Owner.Type.USER
+              ? () -> plugin.onUserRemoved(user)
+              : () -> plugin.onGroupRemoved(group);
+      clearInvocations(client);
+      assertAll(
+          () -> assertThrows(UnsupportedOperationException.class, removal),
+          () -> verifyNoInteractions(client),
+          () -> assertEquals(before, admin.mapper.writeValueAsString(state)));
+    }
   }
 
   static final class Admin implements AutoCloseable {

@@ -61,6 +61,12 @@ Ranger dependencies.
   descendant selectors remain distinct; braces, backslashes and token-looking
   names retain literal meaning under the closed matcher options.
 * Rename/drop callback transformations are unqualified and explicitly rejected.
+* Global user/group removal callbacks are unqualified and throw
+  `UnsupportedOperationException` before any Ranger Admin interaction. A catalog's
+  service binding does not authorize deletion of a shared Ranger principal.
+  Supporting removal requires a separate global identity ownership/reference and
+  reconciliation contract. This callable SPI boundary does not imply that current
+  public Gravitino `removeUser`/`removeGroup` requests dispatch these callbacks.
 
 Ranger's role namespace is global. Ordinary roles use
 `GRAVITINO_METALAKE_<metalakeId>_ROLE_<roleName>` and are shared across that

@@ -334,17 +334,27 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
     owners.ensurePrincipal(group.name(), Owner.Type.GROUP);
     return true;
   }
-  /** {@inheritDoc} */
+  /**
+   * {@inheritDoc}
+   *
+   * <p>A catalog binding does not establish ownership of a global Ranger principal.
+   *
+   * @throws UnsupportedOperationException always, before any Ranger Admin interaction
+   */
   @Override
   public Boolean onUserRemoved(User user) {
-    validateService();
-    return super.onUserRemoved(user);
+    throw new UnsupportedOperationException("Delta Ranger global user removal is not qualified");
   }
-  /** {@inheritDoc} */
+  /**
+   * {@inheritDoc}
+   *
+   * <p>A catalog binding does not establish ownership of a global Ranger principal.
+   *
+   * @throws UnsupportedOperationException always, before any Ranger Admin interaction
+   */
   @Override
   public Boolean onGroupRemoved(Group group) {
-    validateService();
-    return super.onGroupRemoved(group);
+    throw new UnsupportedOperationException("Delta Ranger global group removal is not qualified");
   }
   /** {@inheritDoc} */
   @Override
