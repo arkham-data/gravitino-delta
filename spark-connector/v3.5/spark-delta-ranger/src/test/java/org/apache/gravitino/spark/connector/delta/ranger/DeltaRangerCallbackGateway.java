@@ -76,6 +76,7 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
   private final AtomicLong attempts = new AtomicLong();
   private final AtomicLong completed = new AtomicLong();
   private final AtomicReference<Fault> fault = new AtomicReference<>();
+  private final AtomicReference<IOException> evidenceFailure = new AtomicReference<>();
 
   DeltaRangerCallbackGateway(URI upstream, Path evidence) throws IOException {
     this(upstream, evidence, 0);
@@ -125,12 +126,19 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
    * Stops only after observed local handlers finish; this does not certify Gravitino completion.
    */
   @Override
-  public void close() throws InterruptedException {
-    if (!awaitDrained()) {
-      throw new IllegalStateException("Callback completion is unresolved");
+  public void close() throws InterruptedException, IOException {
+    try {
+      if (!awaitDrained()) {
+        throw new IllegalStateException("Callback completion is unresolved");
+      }
+      IOException failure = evidenceFailure.get();
+      if (failure != null) {
+        throw new IOException("Callback evidence was lost; acceptance is invalid", failure);
+      }
+    } finally {
+      server.stop(0);
+      executor.shutdown();
     }
-    server.stop(0);
-    executor.shutdown();
   }
 
   private void forward(HttpExchange exchange) throws IOException {
@@ -143,8 +151,8 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
     event.put("path", exchange.getRequestURI().getPath());
     event.put("started", Instant.now().toString());
     event.put("activeAtStart", active.get());
-    record(event);
     try {
+      record(event);
       byte[] request = exchange.getRequestBody().readAllBytes();
       Fault candidate = fault.get();
       if (candidate != null
@@ -204,18 +212,26 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
       event.put("upstreamCompletionUnresolved", !event.containsKey("upstreamResponseCompleted"));
       throw e;
     } finally {
-      exchange.close();
-      event.put("finished", Instant.now().toString());
-      event.put("activeAfter", active.get() - 1);
-      record(event);
-      completed.incrementAndGet();
-      active.decrementAndGet();
+      try {
+        exchange.close();
+        event.put("finished", Instant.now().toString());
+        event.put("activeAfter", active.get() - 1);
+        record(event);
+      } finally {
+        completed.incrementAndGet();
+        active.decrementAndGet();
+      }
     }
   }
 
   private synchronized void record(Map<String, Object> event) throws IOException {
-    Files.writeString(
-        evidence, new ObjectMapper().writeValueAsString(event) + "\n", StandardOpenOption.APPEND);
+    try {
+      Files.writeString(
+          evidence, new ObjectMapper().writeValueAsString(event) + "\n", StandardOpenOption.APPEND);
+    } catch (IOException e) {
+      evidenceFailure.compareAndSet(null, e);
+      throw e;
+    }
   }
 
   private static final class Fault {

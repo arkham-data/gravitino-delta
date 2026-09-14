@@ -88,7 +88,7 @@ public class TestDeltaRangerDownloadedPolicies {
   /**
    * Executes one explicit public-chain checkpoint from immutable test-application inputs.
    *
-   * @param args one checkpoint: bootstrap or fresh-principal
+   * @param args one checkpoint: bootstrap, resume-catalog-bootstrap, or fresh-principal
    * @throws Exception if setup or an acceptance assertion fails
    */
   public static void main(String[] args) throws Exception {
@@ -100,6 +100,13 @@ public class TestDeltaRangerDownloadedPolicies {
       }
       if ("bootstrap".equals(args[0])) {
         harness.bootstrapPublishedCatalogs();
+      } else if ("resume-catalog-bootstrap".equals(args[0])) {
+        harness.lake = harness.client.loadMetalake(harness.required("metalake"));
+        assertEquals(
+            0,
+            harness.lake.listCatalogs().length,
+            "Resume requires authoritative empty catalog state");
+        harness.bootstrapCatalogEntries();
       } else if ("fresh-principal".equals(args[0])) {
         harness.freshPrincipalMembershipUsesActualExternalUserProtocol();
       } else {
@@ -140,14 +147,22 @@ public class TestDeltaRangerDownloadedPolicies {
 
   @AfterAll
   void close() throws Exception {
-    if (client != null) {
-      client.close();
+    Exception failure = null;
+    for (AutoCloseable resource : new AutoCloseable[] {client, publicGateway, gateway}) {
+      if (resource != null) {
+        try {
+          resource.close();
+        } catch (Exception e) {
+          if (failure == null) {
+            failure = e;
+          } else {
+            failure.addSuppressed(e);
+          }
+        }
+      }
     }
-    if (publicGateway != null) {
-      publicGateway.close();
-    }
-    if (gateway != null) {
-      gateway.close();
+    if (failure != null) {
+      throw failure;
     }
   }
 
@@ -157,6 +172,10 @@ public class TestDeltaRangerDownloadedPolicies {
     // Creation is intentionally one-shot. Existing metadata is not a reason to replay callbacks.
     client.createMetalake(required("metalake"), "Isolated production Ranger acceptance", Map.of());
     lake = client.loadMetalake(required("metalake"));
+    bootstrapCatalogEntries();
+  }
+
+  private void bootstrapCatalogEntries() throws Exception {
     for (JsonNode catalog : fixture.path("catalogs")) {
       JsonNode nativeInput =
           JSON.readTree(privateFile(catalog.path("nativeFixtureFile").asText()).toFile());

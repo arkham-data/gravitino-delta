@@ -21,16 +21,23 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -111,6 +118,70 @@ class TestDeltaRangerCallbackGateway {
       assertEquals(3, requests.get());
       assertTrue(gateway.awaitDrained());
       assertEquals(4, gateway.completed());
+    } finally {
+      upstream.stop(0);
+    }
+  }
+
+  @Test
+  void initialEvidenceFailureClosesExchangeDrainsAndStopsListener() throws Exception {
+    assertEvidenceFailure(false);
+  }
+
+  @Test
+  void finalEvidenceFailureClosesExchangeDrainsAndStopsListener() throws Exception {
+    assertEvidenceFailure(true);
+  }
+
+  private void assertEvidenceFailure(boolean failFinal) throws Exception {
+    Path evidence = directory.resolve("events.jsonl");
+    AtomicInteger requests = new AtomicInteger();
+    HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    upstream.createContext(
+        "/owned",
+        exchange -> {
+          try {
+            requests.incrementAndGet();
+            Files.delete(evidence);
+            Files.createDirectory(evidence);
+            exchange.sendResponseHeaders(204, -1);
+          } finally {
+            exchange.close();
+          }
+        });
+    upstream.start();
+    DeltaRangerCallbackGateway gateway =
+        new DeltaRangerCallbackGateway(
+            URI.create("http://127.0.0.1:" + upstream.getAddress().getPort()), evidence);
+    int port = gateway.uri().getPort();
+    try {
+      if (!failFinal) {
+        Files.delete(evidence);
+        Files.createDirectory(evidence);
+      }
+      // One socket means exactly one request, with no client transport retry after an empty reply.
+      try (Socket socket = new Socket("127.0.0.1", port)) {
+        socket.setSoTimeout(2000);
+        socket
+            .getOutputStream()
+            .write(
+                ("POST /owned HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx")
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        socket.getInputStream().readAllBytes();
+      }
+      assertTimeoutPreemptively(
+          Duration.ofSeconds(2),
+          () -> {
+            assertTrue(gateway.awaitDrained(), "Evidence errors cannot leak active handlers");
+            assertThrows(
+                IOException.class, gateway::close, "Lost evidence must prevent acceptance");
+          });
+      assertEquals(failFinal ? 1 : 0, requests.get());
+      assertEquals(1, gateway.completed());
+      try (ServerSocket released = new ServerSocket()) {
+        released.bind(new InetSocketAddress("127.0.0.1", port));
+      }
     } finally {
       upstream.stop(0);
     }
