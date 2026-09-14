@@ -16,9 +16,55 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-// Test-only feasibility module; no provider or distribution artifact is installed.
-plugins { id("java") }
+// Optional production authorization distribution with an independently pinned Ranger closure.
+plugins {
+  id("java")
+}
+configurations.configureEach {
+  resolutionStrategy.eachDependency {
+    if (requested.group == "org.apache.ranger") { useVersion("2.8.0") }
+  }
+}
 dependencies {
+  compileOnly(project(":api"))
+  compileOnly(project(":core"))
+  implementation(project(":authorizations:authorization-common")) { isTransitive = false }
+  implementation(project(":authorizations:authorization-ranger")) { isTransitive = false }
+  implementation(libs.guava)
+  implementation(libs.commons.lang3)
+  implementation("commons-lang:commons-lang:2.6")
+  implementation(libs.slf4j.api)
+  implementation(libs.javax.jaxb.api)
+  implementation(libs.javax.ws.rs.api)
+  implementation(libs.jettison)
+  implementation(libs.mail)
+  implementation(libs.rome)
+  implementation(libs.hadoop3.client.api)
+  implementation(libs.hadoop3.client.runtime)
+  implementation("org.codehaus.jackson:jackson-mapper-asl:1.9.13")
+  implementation("org.apache.ranger:ranger-intg:2.8.0") {
+    exclude("org.apache.hive", "hive-storage-api")
+    exclude("org.apache.lucene")
+    exclude("org.apache.solr")
+    exclude("org.apache.kafka")
+    exclude("org.elasticsearch")
+    exclude("org.elasticsearch.client")
+    exclude("org.elasticsearch.plugin")
+    exclude("org.apache.ranger", "ranger-plugins-audit")
+    exclude("org.apache.ranger", "ranger-plugins-cred")
+    exclude("org.apache.ranger", "ranger-plugin-classloader")
+    exclude("org.eclipse.jetty")
+    exclude("org.apache.hadoop", "hadoop-common")
+    exclude("javax.ws.rs")
+  }
+  testImplementation(project(":common"))
+  testImplementation(project(":delta:delta-common"))
+  testImplementation(project(":server-common"))
+  testImplementation(project(":clients:client-java"))
+  testImplementation(project(":server"))
+  testImplementation(project(":integration-test-common", "testArtifacts"))
+  testImplementation(project(":catalogs:catalog-lakehouse-delta"))
+
   testImplementation(project(":api"))
   testImplementation(project(":core"))
   testImplementation(project(":authorizations:authorization-ranger"))
@@ -63,5 +109,33 @@ tasks.test {
       "gravitino.ranger.delta.admin.credentialsFile",
       requireNotNull(rangerDeltaAdminCredentialsFile)
     )
+  }
+}
+
+val runtimeJars by tasks.registering(Sync::class) {
+  from(configurations.runtimeClasspath)
+  into(layout.buildDirectory.dir("runtime-libs"))
+}
+val copyAuthorizationLibs by tasks.registering(Sync::class) {
+  dependsOn(tasks.jar, runtimeJars)
+  from(tasks.jar.flatMap { it.archiveFile })
+  from(layout.buildDirectory.dir("runtime-libs")) {
+    exclude("guava-*.jar", "log4j-*.jar", "slf4j-*.jar")
+  }
+  into("$rootDir/distribution/package/authorizations/ranger-delta/libs")
+}
+tasks.register("copyLibAndConfig") { dependsOn(copyAuthorizationLibs) }
+tasks.withType<Javadoc>().configureEach {
+  (options as CoreJavadocOptions).addStringOption("Xwerror", "-quiet")
+  isFailOnError = true
+}
+
+providers.gradleProperty("rangerDeltaCallbackFixture").orNull?.let { fixture ->
+  require(providers.gradleProperty("skipDockerTests").orNull == "false") {
+    "rangerDeltaCallbackFixture requires -PskipDockerTests=false"
+  }
+  tasks.test {
+    extensions.extraProperties["gravitinoExternalTestEndpoints"] = true
+    systemProperty("delta.ranger.callback.fixture", fixture)
   }
 }

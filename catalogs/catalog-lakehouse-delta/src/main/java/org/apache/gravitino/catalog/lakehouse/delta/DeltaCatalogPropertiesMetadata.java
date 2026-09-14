@@ -20,6 +20,7 @@
 package org.apache.gravitino.catalog.lakehouse.delta;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import javax.annotation.Nullable;
 import org.apache.gravitino.connector.BaseCatalogPropertiesMetadata;
@@ -32,6 +33,19 @@ final class DeltaCatalogPropertiesMetadata extends BaseCatalogPropertiesMetadata
   @Override
   protected Map<String, PropertyEntry<?>> specificPropertyEntries() {
     Map<String, PropertyEntry<?>> entries = new LinkedHashMap<>();
+    for (String key :
+        List.of(
+            "admin.url",
+            "service.type",
+            "service.name",
+            "auth.type",
+            "username",
+            "service.create-if-absent")) {
+      add(entries, "authorization.ranger." + key, false, null, false);
+    }
+    add(entries, "authorization.ranger.password", false, null, true);
+    add(entries, "authorization.ranger.delta.catalog", false, null, false);
+    add(entries, "authorization.ranger.delta.metalake", false, null, false);
     add(entries, DeltaCatalogConfig.WAREHOUSE, true, null, false);
     add(entries, DeltaCatalogConfig.ADOPTION_ROOTS, false, "[]", false);
     add(entries, DeltaCatalogConfig.RECOVERY_PRINCIPALS, false, "[]", false);

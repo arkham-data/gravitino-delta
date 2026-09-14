@@ -28,27 +28,72 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.gravitino.Catalog;
 import org.apache.gravitino.CatalogProvider;
 import org.apache.gravitino.EntityStore;
 import org.apache.gravitino.NameIdentifier;
+import org.apache.gravitino.Namespace;
 import org.apache.gravitino.SchemaChange;
 import org.apache.gravitino.StringIdentifier;
 import org.apache.gravitino.catalog.lakehouse.delta.metadata.DeltaMetadataReader;
 import org.apache.gravitino.connector.BaseCatalog;
 import org.apache.gravitino.connector.capability.Capability;
+import org.apache.gravitino.meta.CatalogEntity;
 import org.apache.gravitino.secret.SecretBinding;
 import org.apache.gravitino.secret.SecretConstants;
 import org.apache.gravitino.secret.SecretReference;
 import org.apache.gravitino.storage.IdGenerator;
+import org.apache.gravitino.utils.IsolatedClassLoader;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 class TestDeltaCatalog {
+  @Test
+  void rangerBindingRejectsMismatchBeforeAuthorizationLoader() {
+    CatalogEntity entity = mock(CatalogEntity.class);
+    when(entity.name()).thenReturn("actual");
+    when(entity.namespace()).thenReturn(Namespace.of("lake"));
+    IsolatedClassLoader loader = mock(IsolatedClassLoader.class);
+    DeltaCatalog catalog =
+        new DeltaCatalog()
+            .withCatalogEntity(entity)
+            .withCatalogConf(
+                Map.of(
+                    Catalog.AUTHORIZATION_PROVIDER,
+                    "ranger-delta",
+                    "authorization.ranger.delta.catalog",
+                    "wrong",
+                    "authorization.ranger.delta.metalake",
+                    "lake"));
+    assertThrows(
+        IllegalArgumentException.class, () -> catalog.initAuthorizationPluginInstance(loader, 10));
+    catalog.withCatalogConf(
+        Map.of(
+            Catalog.AUTHORIZATION_PROVIDER,
+            "ranger-delta",
+            "authorization.ranger.delta.catalog",
+            "actual",
+            "authorization.ranger.delta.metalake",
+            "other_lake"));
+    assertThrows(
+        IllegalArgumentException.class, () -> catalog.initAuthorizationPluginInstance(loader, 10));
+    verifyNoInteractions(loader);
+    assertTrue(
+        catalog
+            .catalogPropertiesMetadata()
+            .isImmutableProperty("authorization.ranger.delta.catalog"));
+    assertTrue(
+        catalog
+            .catalogPropertiesMetadata()
+            .isImmutableProperty("authorization.ranger.delta.metalake"));
+  }
+
   @Test
   void productionServiceIsDiscoverableAndManagesOnlyTablesAndSchemas() {
     CatalogProvider provider =

@@ -20,15 +20,43 @@
 package org.apache.gravitino.catalog.lakehouse.delta;
 
 import java.util.Map;
+import java.util.Objects;
+import org.apache.gravitino.Catalog;
 import org.apache.gravitino.connector.BaseCatalog;
 import org.apache.gravitino.connector.CatalogOperations;
 import org.apache.gravitino.connector.PropertiesMetadata;
 import org.apache.gravitino.connector.capability.Capability;
+import org.apache.gravitino.utils.IsolatedClassLoader;
 
 /** Managed Delta registration catalog with read-only native metadata observation. */
 public final class DeltaCatalog extends BaseCatalog<DeltaCatalog> {
+  private Map<String, String> authorizationConfig = Map.of();
+
   /** Creates the production ServiceLoader provider. */
   public DeltaCatalog() {}
+  /** {@inheritDoc} */
+  @Override
+  public DeltaCatalog withCatalogConf(Map<String, String> config) {
+    authorizationConfig = Map.copyOf(config);
+    return super.withCatalogConf(config);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public void initAuthorizationPluginInstance(IsolatedClassLoader classLoader, long metalakeId) {
+    if ("ranger-delta".equalsIgnoreCase(authorizationConfig.get(Catalog.AUTHORIZATION_PROVIDER))) {
+      if (!Objects.equals(
+              entity().name(), authorizationConfig.get("authorization.ranger.delta.catalog"))
+          || !Objects.equals(
+              entity().namespace().level(0),
+              authorizationConfig.get("authorization.ranger.delta.metalake"))) {
+        throw new IllegalArgumentException(
+            "Ranger Delta bindings must match the actual catalog and metalake");
+      }
+    }
+    super.initAuthorizationPluginInstance(classLoader, metalakeId);
+  }
+
   /** {@inheritDoc} */
   @Override
   public String shortName() {
