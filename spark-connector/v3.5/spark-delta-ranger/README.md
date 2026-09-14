@@ -71,6 +71,12 @@ Do not install or initialize another owner of the stock singleton in the same dr
 Readiness requires nonnegative policy and role versions, the bound service, a downloaded
 metalake binding, a complete validated definition, and matching downloaded roles. The default
 empty engine is never ready. Each evaluation rechecks the snapshot; null, error or denial rejects.
+Readiness is tied to an immutable record captured by the public completed-auth-context listener,
+registered before startup cache/downloader initialization. Both public context identities must
+match that record; constructing/publishing a replacement rejects. Invalid downloaded contexts
+retain their rejected binding even when later same-context role notifications occur. Context
+replacement during evaluation rejects even if the downloaded version number is unchanged.
+`RangerAccessResult.policyVersion` is an individual policy revision, not an engine snapshot ID.
 A refresh observed during evaluation rejects so the caller can reanalyze. Ranger may continue
 using a valid last-known-good cache during an Admin outage. `versions()` exposes immutable
 service/definition/policy/role observations; policy and role refresh are independent. Revocation
@@ -104,8 +110,14 @@ Construct `new DeltaRangerMetadataClient()` for the no-arg wrapper's super-const
 Configure it once after trusted initialization with endpoint, canonical metalake/catalog,
 a positive lifetime of at most 24 hours, and a trusted callback using the existing
 `GravitinoClient.ClientBuilder` authentication methods. Authentication must be explicit and
-cannot change the bound metalake. Client creation is lazy; expiration/close rejects subsequent
-reads and closes only the owned metadata client. Provision that credential with only the
+cannot change the bound metalake. Client creation is lazy; the monotonic lifetime starts on the first read attempt and includes
+client construction. Deadline checks reject reads and results independently of timer execution.
+Construction and resource cleanup never hold the lease monitor; timer callbacks only terminate
+state and dispatch cleanup to separate daemon workers. A late-created client is closed, and a
+concurrent read while the initial client is being constructed rejects for retry. Explicit close
+terminates state promptly before closing only the owned metadata client outside the monitor;
+its resource cleanup may itself wait on the transport. Expiration does not wait on other leases'
+cleanup. Provision that credential with only the
 required metadata read permissions. Keep the accepted catalog constructor's actor supplier on
 the existing current-actor transport. Application catalog discovery uses its separate minimal
 Gravitino visibility grant, never table SELECT inferred from visibility.

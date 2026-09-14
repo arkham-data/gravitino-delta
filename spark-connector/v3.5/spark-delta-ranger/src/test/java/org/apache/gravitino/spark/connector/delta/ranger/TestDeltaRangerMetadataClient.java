@@ -25,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.sun.net.httpserver.HttpServer;
@@ -42,8 +44,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.client.CustomTokenProvider;
 import org.apache.gravitino.client.GravitinoClient;
@@ -112,6 +116,146 @@ class TestDeltaRangerMetadataClient {
       assertSame(metadata, lease.get());
       assertTrue(closed.await(5, TimeUnit.SECONDS));
       assertThrows(IllegalStateException.class, lease::get);
+    }
+  }
+
+  @Test
+  void blockingCleanupCannotStarveAnotherLeaseExpiration() throws Exception {
+    GravitinoClient a = mock(GravitinoClient.class);
+    GravitinoClient b = mock(GravitinoClient.class);
+    when(a.loadCatalog("delta_a")).thenReturn(mock(Catalog.class));
+    when(b.loadCatalog("delta_b")).thenReturn(mock(Catalog.class));
+    CountDownLatch cleanupEntered = new CountDownLatch(1);
+    CountDownLatch cleanupRelease = new CountDownLatch(1);
+    CountDownLatch bClosed = new CountDownLatch(1);
+    doAnswer(
+            call -> {
+              cleanupEntered.countDown();
+              cleanupRelease.await(5, TimeUnit.SECONDS);
+              return null;
+            })
+        .when(a)
+        .close();
+    doAnswer(
+            call -> {
+              bClosed.countDown();
+              return null;
+            })
+        .when(b)
+        .close();
+    DeltaRangerMetadataClient first = new DeltaRangerMetadataClient();
+    DeltaRangerMetadataClient second = new DeltaRangerMetadataClient();
+    try {
+      first.configure("delta_a", Duration.ofMillis(50), () -> a);
+      first.get();
+      assertTrue(cleanupEntered.await(2, TimeUnit.SECONDS));
+      second.configure("delta_b", Duration.ofMillis(50), () -> b);
+      second.get();
+      assertTrue(bClosed.await(1, TimeUnit.SECONDS), "Another cleanup blocked expiration");
+      assertThrows(IllegalStateException.class, second::get);
+      verify(b, times(1)).loadCatalog("delta_b");
+    } finally {
+      cleanupRelease.countDown();
+      first.close();
+      second.close();
+    }
+  }
+
+  @Test
+  void closeDoesNotWaitForStalledInitialBuilderAndClosesLateClient() throws Exception {
+    GravitinoClient client = mock(GravitinoClient.class);
+    CountDownLatch builderEntered = new CountDownLatch(1);
+    CountDownLatch builderRelease = new CountDownLatch(1);
+    CountDownLatch closed = new CountDownLatch(1);
+    doAnswer(
+            call -> {
+              closed.countDown();
+              return null;
+            })
+        .when(client)
+        .close();
+    ExecutorService threads = Executors.newFixedThreadPool(2);
+    DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient();
+    lease.configure(
+        "delta_a",
+        Duration.ofMinutes(1),
+        () -> {
+          builderEntered.countDown();
+          try {
+            builderRelease.await(5, TimeUnit.SECONDS);
+          } catch (InterruptedException e) {
+            throw new IllegalStateException(e);
+          }
+          return client;
+        });
+    try {
+      Future<?> read = threads.submit(() -> assertThrows(IllegalStateException.class, lease::get));
+      assertTrue(builderEntered.await(2, TimeUnit.SECONDS));
+      Future<?> close = threads.submit(lease::close);
+      close.get(1, TimeUnit.SECONDS);
+      builderRelease.countDown();
+      read.get(2, TimeUnit.SECONDS);
+      assertTrue(closed.await(2, TimeUnit.SECONDS));
+      verify(client, times(0)).loadCatalog("delta_a");
+    } finally {
+      builderRelease.countDown();
+      threads.shutdownNow();
+      lease.close();
+    }
+  }
+
+  @Test
+  void monotonicDeadlineRejectsReadsAndResultsWhenTimerNeverRuns() {
+    AtomicLong time = new AtomicLong();
+    ScheduledExecutorService delayedTimer = mock(ScheduledExecutorService.class);
+    GravitinoClient client = mock(GravitinoClient.class);
+    Catalog catalog = mock(Catalog.class);
+    when(client.loadCatalog("delta_a")).thenReturn(catalog);
+    try (DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient(time::get, delayedTimer)) {
+      lease.configure("delta_a", Duration.ofMillis(1), () -> client);
+      assertSame(catalog, lease.get());
+      time.set(TimeUnit.MILLISECONDS.toNanos(1));
+      assertThrows(IllegalStateException.class, lease::get);
+      verify(client, times(1)).loadCatalog("delta_a");
+    }
+    time.set(0);
+    GravitinoClient slow = mock(GravitinoClient.class);
+    when(slow.loadCatalog("delta_a"))
+        .thenAnswer(
+            call -> {
+              time.set(TimeUnit.MILLISECONDS.toNanos(1));
+              return catalog;
+            });
+    try (DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient(time::get, delayedTimer)) {
+      lease.configure("delta_a", Duration.ofMillis(1), () -> slow);
+      assertThrows(IllegalStateException.class, lease::get);
+    }
+  }
+
+  @Test
+  void initialConstructionTimeCountsAgainstDeadlineAndLateClientCloses() throws Exception {
+    AtomicLong time = new AtomicLong();
+    GravitinoClient client = mock(GravitinoClient.class);
+    CountDownLatch closed = new CountDownLatch(1);
+    doAnswer(
+            call -> {
+              closed.countDown();
+              return null;
+            })
+        .when(client)
+        .close();
+    try (DeltaRangerMetadataClient lease =
+        new DeltaRangerMetadataClient(time::get, mock(ScheduledExecutorService.class))) {
+      lease.configure(
+          "delta_a",
+          Duration.ofMillis(1),
+          () -> {
+            time.set(TimeUnit.MILLISECONDS.toNanos(1));
+            return client;
+          });
+      assertThrows(IllegalStateException.class, lease::get);
+      assertTrue(closed.await(2, TimeUnit.SECONDS));
+      verify(client, times(0)).loadCatalog("delta_a");
     }
   }
 

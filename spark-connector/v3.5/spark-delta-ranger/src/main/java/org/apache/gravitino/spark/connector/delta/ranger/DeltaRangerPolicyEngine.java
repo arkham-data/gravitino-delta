@@ -51,6 +51,7 @@ import org.apache.ranger.plugin.classloader.RangerPluginClassLoader;
 import org.apache.ranger.plugin.model.RangerServiceDef;
 import org.apache.ranger.plugin.policyengine.RangerAccessResult;
 import org.apache.ranger.plugin.policyengine.RangerPolicyEngineImpl;
+import org.apache.ranger.plugin.service.RangerAuthContext;
 import org.apache.ranger.plugin.service.RangerBasePlugin;
 import org.apache.ranger.plugin.util.RangerRoles;
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser$;
@@ -283,6 +284,8 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     @Nullable private DeltaRangerConfig config;
     private int users;
     private boolean terminal;
+    private final Object refreshLock = new Object();
+    @Nullable private volatile CompletedPolicy completedPolicy;
 
     Owner(Supplier<Backend> factory) {
       this.factory = factory;
@@ -303,6 +306,9 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
         Backend created = factory.get();
         try {
           requested.requireCompatible(created.plugin().getConfig());
+          created
+              .plugin()
+              .registerAuthContextEventListener(() -> completedRefresh(created.plugin()));
           created.start();
           backend = created;
         } catch (RuntimeException | LinkageError failure) {
@@ -317,6 +323,22 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
       }
       users++;
       return new DeltaRangerPolicyEngine(this);
+    }
+
+    private void completedRefresh(RangerBasePlugin plugin) {
+      synchronized (refreshLock) {
+        RangerAuthContext context = plugin.getCurrentRangerAuthContext();
+        // The constructor publishes plugin-context first; current-context follows engine
+        // assignment.
+        // Role-only notifications keep the same context and must never rebind a rejected policy.
+        if (context != null
+            && context == plugin.getPluginContext().getAuthContext()
+            && (completedPolicy == null || context != completedPolicy.context)) {
+          completedPolicy =
+              new CompletedPolicy(
+                  context, plugin.getPoliciesVersion(), plugin.getServiceConfigs().get(METALAKE));
+        }
+      }
     }
 
     private void release() {
@@ -352,6 +374,18 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
         "2.8.0");
     origin(origins, AuditProviderFactory.class, "org.apache.ranger", "ranger-audit-core", "2.8.0");
     return Collections.unmodifiableMap(origins);
+  }
+
+  private static final class CompletedPolicy {
+    private final RangerAuthContext context;
+    private final long version;
+    @Nullable private final String metalake;
+
+    private CompletedPolicy(RangerAuthContext context, long version, @Nullable String metalake) {
+      this.context = context;
+      this.version = version;
+      this.metalake = metalake;
+    }
   }
 
   private static final class KyuubiBackend implements Backend {
@@ -394,7 +428,16 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
   private Versions snapshot() {
     RangerBasePlugin plugin = owner.backend.plugin();
     DeltaRangerConfig config = owner.config;
+    CompletedPolicy completed = owner.completedPolicy;
+    DeltaRangerConfig.require(
+        completed != null
+            && completed.context == plugin.getCurrentRangerAuthContext()
+            && completed.context == plugin.getPluginContext().getAuthContext(),
+        "Policy refresh has not completed publication");
     long policy = plugin.getPoliciesVersion();
+    DeltaRangerConfig.require(
+        policy == completed.version && config.metalake.equals(completed.metalake),
+        "Completed policy binding/version mismatch");
     long role = plugin.getRolesVersion();
     DeltaRangerConfig.require(
         policy >= 0 && role >= 0, "Downloaded policy and role versions required");
@@ -410,6 +453,12 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
             && config.service.equals(roles.getServiceName())
             && Objects.equals(roles.getRoleVersion(), role),
         "Downloaded roles missing or bound to another service/version");
+    DeltaRangerConfig.require(
+        completed == owner.completedPolicy
+            && completed.context == plugin.getCurrentRangerAuthContext()
+            && completed.context == plugin.getPluginContext().getAuthContext()
+            && policy == plugin.getPoliciesVersion(),
+        "Policy context changed during readiness validation");
     return new Versions(config.service, config.definition, policy, role);
   }
 
@@ -419,6 +468,7 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     try {
       Objects.requireNonNull(subject, "Authenticated query subject required");
       Objects.requireNonNull(key, "Canonical resource required");
+      CompletedPolicy beforePolicy = owner.completedPolicy;
       Versions before = snapshot();
       RangerBasePlugin plugin = owner.backend.plugin();
       AccessResource resource = key.resource();
@@ -453,7 +503,9 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
       validateDefinition(result.getServiceDef(), before.definition);
       Versions after = snapshot();
       DeltaRangerConfig.require(
-          before.policy == after.policy && before.role == after.role,
+          beforePolicy == owner.completedPolicy
+              && before.policy == after.policy
+              && before.role == after.role,
           "Ranger snapshot refreshed during evaluation; reanalyze the query");
       return result;
     } catch (RuntimeException | LinkageError e) {

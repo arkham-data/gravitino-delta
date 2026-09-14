@@ -21,9 +21,12 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -54,6 +57,9 @@ import org.apache.ranger.plugin.model.RangerRole;
 import org.apache.ranger.plugin.model.RangerServiceDef;
 import org.apache.ranger.plugin.policyengine.RangerAccessRequest;
 import org.apache.ranger.plugin.policyengine.RangerAccessResult;
+import org.apache.ranger.plugin.policyengine.RangerPluginContext;
+import org.apache.ranger.plugin.service.RangerAuthContext;
+import org.apache.ranger.plugin.service.RangerAuthContextListener;
 import org.apache.ranger.plugin.service.RangerBasePlugin;
 import org.apache.ranger.plugin.util.RangerRoles;
 import org.apache.ranger.plugin.util.ServicePolicies;
@@ -150,6 +156,97 @@ class TestDeltaRangerPolicyEngine {
   }
 
   @Test
+  void restoredConfigCannotAuthorizeOldWrongBoundEngineBeforeCompletedRefresh() throws Exception {
+    Fixture f = new Fixture(directory);
+    try (DeltaRangerPolicyEngine lease = f.owner.acquire(f.config)) {
+      when(f.plugin.getServiceConfigs())
+          .thenReturn(Collections.singletonMap("ranger.plugin.spark.gravitino.metalake", "wrong"));
+      when(f.plugin.getPoliciesVersion()).thenReturn(13L);
+      f.completePolicy();
+      assertThrows(SecurityException.class, lease::requireReady);
+      // Ranger publishes the restoring config BEFORE replacing the old version-13 engine.
+      f.bindMetalake();
+      if (f.listener != null) {
+        f.listener.contextChanged(); // A same-context notification cannot rebind that engine.
+      }
+      assertThrows(SecurityException.class, lease::requireReady);
+      assertThrows(SecurityException.class, () -> lease.authorize(f.subject, f.key));
+      assertThrows(SecurityException.class, () -> lease.mask(f.subject, f.key));
+      assertThrows(SecurityException.class, () -> lease.rowFilter(f.subject, f.table));
+      when(f.plugin.getPoliciesVersion()).thenReturn(14L);
+      assertThrows(SecurityException.class, lease::requireReady);
+      f.completePolicy();
+      lease.requireReady();
+      lease.authorize(f.subject, f.key);
+      lease.mask(f.subject, f.key);
+      lease.rowFilter(f.subject, f.table);
+    }
+  }
+
+  @Test
+  void constructionAndSameVersionContextReplacementReject() throws Exception {
+    Fixture f = new Fixture(directory);
+    try (DeltaRangerPolicyEngine lease = f.owner.acquire(f.config)) {
+      when(f.pluginContext.getAuthContext()).thenReturn(mock(RangerAuthContext.class));
+      assertThrows(SecurityException.class, lease::requireReady);
+      f.completePolicy();
+      lease.requireReady();
+      when(f.plugin.isAccessAllowed(any(RangerAccessRequest.class)))
+          .thenAnswer(
+              call -> {
+                f.completePolicy(); // Same version, different engine context during evaluation.
+                RangerAccessResult result =
+                    new RangerAccessResult(0, "service", f.definition, call.getArgument(0));
+                result.setIsAllowed(true);
+                return result;
+              });
+      assertThrows(SecurityException.class, () -> lease.authorize(f.subject, f.key));
+    }
+  }
+
+  @Test
+  void pinnedListenerRunsSynchronouslyAfterEngineAndCurrentContextPublication() throws Exception {
+    Fixture fixture = new Fixture(directory);
+    RangerBasePlugin plugin = new RangerBasePlugin(fixture.plugin.getConfig());
+    AtomicInteger callbacks = new AtomicInteger();
+    List<RangerAuthContext> contexts = new ArrayList<>();
+    Thread caller = Thread.currentThread();
+    // Register before the startup cache can install policies. The production owner does likewise.
+    plugin.registerAuthContextEventListener(
+        () -> {
+          assertSame(caller, Thread.currentThread());
+          assertSame(
+              plugin.getPluginContext().getAuthContext(), plugin.getCurrentRangerAuthContext());
+          assertEquals(7, plugin.getPoliciesVersion());
+          assertEquals(
+              "lake", plugin.getServiceConfigs().get("ranger.plugin.spark.gravitino.metalake"));
+          contexts.add(plugin.getCurrentRangerAuthContext());
+          callbacks.incrementAndGet();
+        });
+    ServicePolicies policies = new ServicePolicies();
+    policies.setServiceName("service");
+    policies.setServiceDef(fixture.definition);
+    policies.setPolicyVersion(7L);
+    policies.setPolicies(Collections.emptyList());
+    policies.setServiceConfig(
+        Collections.singletonMap("ranger.plugin.spark.gravitino.metalake", "lake"));
+    try {
+      plugin.setPolicies(policies);
+      assertEquals(1, callbacks.get());
+      plugin.setPolicies(policies); // Even same downloaded version constructs a fresh context.
+      assertEquals(2, callbacks.get());
+      assertNotSame(contexts.get(0), contexts.get(1));
+      plugin.setRoles(fixture.roles);
+      assertEquals(3, callbacks.get());
+      assertSame(contexts.get(1), contexts.get(2));
+    } finally {
+      plugin.cleanup();
+    }
+    // RangerAccessResult.policyVersion describes a matched individual policy revision; it is
+    // deliberately not used as the downloaded engine version or as a completed-context identity.
+  }
+
+  @Test
   void sharedLeasesInitializeOnceAndCloseOnlyAfterLastOwner() throws Exception {
     Fixture f = new Fixture(directory);
     DeltaRangerPolicyEngine first = f.owner.acquire(f.config);
@@ -203,6 +300,7 @@ class TestDeltaRangerPolicyEngine {
       assertEquals(7, original.policy());
       assertEquals(3, original.role());
       when(f.plugin.getPoliciesVersion()).thenReturn(8L);
+      f.completePolicy();
       assertEquals(8, lease.versions().policy());
       assertEquals(3, lease.versions().role());
       f.roles.setRoleVersion(4L);
@@ -429,6 +527,8 @@ class TestDeltaRangerPolicyEngine {
         new DeltaRangerResourceKey("delta_a", "sales", "orders", "secret", "select", null);
     final DeltaRangerResourceKey table =
         new DeltaRangerResourceKey("delta_a", "sales", "orders", null, "select", null);
+    RangerAuthContextListener listener;
+    final RangerPluginContext pluginContext = mock(RangerPluginContext.class);
     Boolean allowed = true;
     RuntimeException failure;
     String maskType;
@@ -451,6 +551,14 @@ class TestDeltaRangerPolicyEngine {
           new RangerPluginConfig("spark", "service", "sparkSql", properties);
       config = new DeltaRangerConfig("service", "spark", "lake", pluginConf);
       when(plugin.getConfig()).thenReturn(pluginConf);
+      when(plugin.getPluginContext()).thenReturn(pluginContext);
+      doAnswer(
+              call -> {
+                listener = call.getArgument(0);
+                return null;
+              })
+          .when(plugin)
+          .registerAuthContextEventListener(any());
       when(plugin.getServiceName()).thenReturn("service");
       when(plugin.getServiceDef()).thenReturn(definition);
       when(plugin.getPoliciesVersion()).thenReturn(7L);
@@ -475,7 +583,7 @@ class TestDeltaRangerPolicyEngine {
                 RangerAccessResult result =
                     new RangerAccessResult(0, "service", definition, request);
                 result.setIsAllowed(allowed);
-                result.setPolicyVersion(7L);
+                result.setPolicyVersion(plugin.getPoliciesVersion());
                 return result;
               });
       when(plugin.evalDataMaskPolicies(any(), any()))
@@ -486,6 +594,7 @@ class TestDeltaRangerPolicyEngine {
                 }
                 RangerAccessResult result =
                     new RangerAccessResult(1, "service", definition, call.getArgument(0));
+                result.setPolicyVersion(plugin.getPoliciesVersion());
                 result.setMaskType(maskType);
                 result.setMaskedValue(maskValue);
                 return result;
@@ -498,6 +607,7 @@ class TestDeltaRangerPolicyEngine {
                 }
                 RangerAccessResult result =
                     new RangerAccessResult(2, "service", definition, call.getArgument(0));
+                result.setPolicyVersion(plugin.getPoliciesVersion());
                 result.setFilterExpr(filter);
                 return result;
               });
@@ -509,6 +619,15 @@ class TestDeltaRangerPolicyEngine {
                   () ->
                       DeltaRangerQuerySubject.current(
                           TestDeltaRangerQuerySubject.session(null, "simple")));
+    }
+
+    void completePolicy() {
+      RangerAuthContext context = mock(RangerAuthContext.class);
+      when(plugin.getCurrentRangerAuthContext()).thenReturn(context);
+      when(pluginContext.getAuthContext()).thenReturn(context);
+      if (listener != null) {
+        listener.contextChanged();
+      }
     }
 
     void bindMetalake() {
@@ -524,6 +643,7 @@ class TestDeltaRangerPolicyEngine {
     @Override
     public void start() {
       starts.incrementAndGet();
+      completePolicy();
     }
 
     @Override
