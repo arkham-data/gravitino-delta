@@ -22,21 +22,37 @@ package org.apache.gravitino.spark.connector.delta.ranger
 import org.apache.spark.sql.{Encoders, Row}
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.analysis.SimpleAnalyzer
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.optimizer.{ReassignLambdaVariableID, SimplifyCasts}
+import org.apache.spark.sql.catalyst.expressions.aggregate.{CollectSet, Count, Last, Sum}
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.delta.{DeltaLog, DeltaLogFileIndex, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaLogFileIndex, Snapshot, SnapshotState}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.actions.{AddFile, SingleAction}
-import org.apache.spark.sql.types.{BooleanType, LongType, ObjectType, StringType, StructType}
+import org.apache.spark.sql.types.{
+  BooleanType,
+  IntegerType,
+  LongType,
+  ObjectType,
+  StringType,
+  StructType
+}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 
 /** Finite admission for fresh SELECT; native log reconstruction is a separate typed route. */
 private[ranger] object DeltaRangerPlanAdmission {
   private class NativeScope(val indices: Seq[TahoeLogFileIndex]) {
     val statsSchemas = scala.collection.mutable.Set.empty[StructType]
+    val stateRdds = scala.collection.mutable.ArrayBuffer.empty[LogicalRDD]
+    val aggregateOutputs = scala.collection.mutable.ArrayBuffer.empty[Seq[Attribute]]
   }
   private val nativeScope = new ThreadLocal[NativeScope]()
   private lazy val actionSchema = Encoders.product[SingleAction].schema
+  private lazy val snapshotStateEncoder =
+    Encoders.product[SnapshotState].asInstanceOf[ExpressionEncoder[SnapshotState]]
+  private lazy val snapshotStateSchema = snapshotStateEncoder.schema
 
   def withNativeMetadata[T](body: => T): T = withNativeScans(Seq.empty)(body)
 
@@ -53,6 +69,13 @@ private[ranger] object DeltaRangerPlanAdmission {
       scope == null || !scope.indices.exists(_ eq index) || !(snapshot.deltaLog eq index.deltaLog)
     ) {
       throw new SecurityException("Native snapshot is outside authorized scan preparation")
+    }
+    // Capture native lineage before filesForScan can ask Snapshot for computedState. Reconstructing
+    // stateDF may reenter the existing typed log route; aggregate admission never initializes it.
+    snapshot.stateDF.queryExecution.analyzed match {
+      case rdd: LogicalRDD if !rdd.isStreaming && rdd.schema == actionSchema =>
+        scope.stateRdds += rdd
+      case _ => throw new SecurityException("Native snapshot state lineage is not qualified")
     }
     scope.statsSchemas += StructType(Encoders.product[AddFile].schema.fields.map { field =>
       if (field.name == "stats") field.copy(dataType = snapshot.statsSchema, nullable = true)
@@ -82,6 +105,15 @@ private[ranger] object DeltaRangerPlanAdmission {
   }
 
   def internalMetadata(plan: LogicalPlan): Boolean = {
+    if (snapshotStateAggregate(plan) || snapshotStateBinding(plan)) return true
+    plan match {
+      case GlobalLimit(
+            Literal(1, IntegerType),
+            LocalLimit(Literal(1, IntegerType), aggregate: Aggregate)
+          ) if snapshotStateAggregate(aggregate) =>
+        return true
+      case _ =>
+    }
     plan match {
       case binding: DeserializeToObject
           if binding.deserializer.dataType == ObjectType(
@@ -141,6 +173,97 @@ private[ranger] object DeltaRangerPlanAdmission {
         }
       case _ => false
     }
+  }
+
+  private def snapshotStateAggregate(plan: LogicalPlan): Boolean = plan match {
+    case aggregate: Aggregate
+        if nativeScope.get() != null && aggregate.groupingExpressions.isEmpty =>
+      val child = aggregate.child match {
+        case Project(columns, rdd: LogicalRDD)
+            if columns == rdd.output.filter(attribute =>
+              Set("txn", "add", "remove", "metaData", "protocol", "domainMetadata")
+                .contains(attribute.name)
+            ) =>
+          rdd
+        case other => other
+      }
+      child match {
+        case rdd: LogicalRDD if !rdd.isStreaming && nativeScope.get().stateRdds.exists {
+              registered =>
+                (registered.rdd eq rdd.rdd) && registered.output == rdd.output
+            } =>
+          val attributes = rdd.output.map(attribute => attribute.name -> attribute).toMap
+          val add = attributes("add")
+          val size = GetStructField(add, add.dataType.asInstanceOf[StructType].fieldIndex("size"))
+          val expected: Map[String, Expression] = Map(
+            "sizeInBytes" -> Coalesce(Seq(Sum(size).toAggregateExpression(), Literal(0L))),
+            "numOfSetTransactions" -> Count(Seq(attributes("txn"))).toAggregateExpression(),
+            "numOfFiles" -> Count(Seq(add)).toAggregateExpression(),
+            "numOfRemoves" -> Count(Seq(attributes("remove"))).toAggregateExpression(),
+            "numOfMetadata" -> Count(Seq(attributes("metaData"))).toAggregateExpression(),
+            "numOfProtocol" -> Count(Seq(attributes("protocol"))).toAggregateExpression(),
+            "setTransactions" -> CollectSet(attributes("txn")).toAggregateExpression(),
+            "domainMetadata" -> CollectSet(attributes("domainMetadata")).toAggregateExpression(),
+            "metadata" -> Last(attributes("metaData"), ignoreNulls = true).toAggregateExpression(),
+            "protocol" -> Last(attributes("protocol"), ignoreNulls = true).toAggregateExpression(),
+            "numDeletedRecordsOpt" -> Literal(null),
+            "numDeletionVectorsOpt" -> Literal(null),
+            "fileSizeHistogram" -> Cast(
+              Literal(null),
+              snapshotStateSchema("fileSizeHistogram").dataType
+            ),
+            "deletedRecordCountsHistogramOpt" -> Cast(
+              Literal(null),
+              snapshotStateSchema("deletedRecordCountsHistogramOpt").dataType
+            )
+          )
+          val aliases = aggregate.aggregateExpressions.collect { case alias: Alias => alias }
+          val valid = aggregate.aggregateExpressions.size == expected.size &&
+            aliases.size == expected.size && aliases.map(_.name).toSet == expected.keySet &&
+            aliases.forall { alias =>
+              alias.child.semanticEquals(expected(alias.name)) ||
+              (Set("fileSizeHistogram", "deletedRecordCountsHistogramOpt").contains(alias.name) &&
+                alias.child == Literal.create(null, snapshotStateSchema(alias.name).dataType))
+            }
+          if (valid && !nativeScope.get().aggregateOutputs.contains(aggregate.output)) {
+            nativeScope.get().aggregateOutputs += aggregate.output
+          }
+          valid
+        case _ => false
+      }
+    case _ => false
+  }
+
+  private def snapshotStateBinding(plan: LogicalPlan): Boolean = plan match {
+    case binding: DeserializeToObject
+        if nativeScope
+          .get() != null && binding.deserializer.dataType == ObjectType(classOf[SnapshotState]) =>
+      binding.child match {
+        case local: LocalRelation
+            if local.data.isEmpty && !local.isStreaming &&
+              nativeScope.get().aggregateOutputs.contains(local.output) && !binding.deserializer
+                .exists {
+                  case _: ScalaUDF | _: PythonUDF | _: SubqueryExpression => true
+                  case _                                                  => false
+                } =>
+          try {
+            val expected =
+              snapshotStateEncoder.resolveAndBind(local.output, SimpleAnalyzer).deserializer
+            val simplified = SimplifyCasts(binding).asInstanceOf[DeserializeToObject].deserializer
+            val actual = BindReferences.bindReference(simplified, AttributeSeq(local.output))
+            val normalizedActual = ReassignLambdaVariableID(binding.copy(deserializer = actual))
+              .asInstanceOf[DeserializeToObject]
+              .deserializer
+            val normalizedExpected = ReassignLambdaVariableID(binding.copy(deserializer = expected))
+              .asInstanceOf[DeserializeToObject]
+              .deserializer
+            normalizedActual == normalizedExpected
+          } catch {
+            case scala.util.control.NonFatal(_) => false
+          }
+        case _ => false
+      }
+    case _ => false
   }
 
   private def nativeUdf(udf: ScalaUDF, leaves: Seq[LogicalPlan]): Boolean = {
