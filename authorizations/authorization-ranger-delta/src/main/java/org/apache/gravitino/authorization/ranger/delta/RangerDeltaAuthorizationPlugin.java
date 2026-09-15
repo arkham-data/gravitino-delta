@@ -91,24 +91,29 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
         Privilege.Name.SELECT_TABLE,
         Set.of(RangerPrivileges.RangerHadoopSQLPrivilege.SELECT),
         Privilege.Name.USE_CATALOG,
+        Set.of(),
+        Privilege.Name.USE_SCHEMA,
         Set.of());
   }
   /** {@inheritDoc} */
   @Override
   public Set<Privilege.Name> allowPrivilegesRule() {
-    return Set.of(Privilege.Name.SELECT_TABLE, Privilege.Name.USE_CATALOG);
+    return Set.of(
+        Privilege.Name.SELECT_TABLE, Privilege.Name.USE_CATALOG, Privilege.Name.USE_SCHEMA);
   }
   /** {@inheritDoc} */
   @Override
   public Set<MetadataObject.Type> allowMetadataObjectTypesRule() {
-    return Set.of(MetadataObject.Type.CATALOG, MetadataObject.Type.TABLE);
+    return Set.of(
+        MetadataObject.Type.CATALOG, MetadataObject.Type.SCHEMA, MetadataObject.Type.TABLE);
   }
   /** {@inheritDoc} */
   @Override
   public List<AuthorizationSecurableObject> translatePrivilege(SecurableObject object) {
     List<String> names = literalNames(object);
     if (object.type() != MetadataObject.Type.TABLE
-        && object.type() != MetadataObject.Type.CATALOG) {
+        && object.type() != MetadataObject.Type.CATALOG
+        && object.type() != MetadataObject.Type.SCHEMA) {
       throw new IllegalArgumentException("Unsupported Delta grant type");
     }
     for (Privilege privilege : object.privileges()) {
@@ -116,11 +121,13 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
           || privilege.condition() != Privilege.Condition.ALLOW
           || (object.type() == MetadataObject.Type.TABLE
               ? privilege.name() != Privilege.Name.SELECT_TABLE
-              : privilege.name() != Privilege.Name.USE_CATALOG)) {
+              : object.type() == MetadataObject.Type.SCHEMA
+                  ? privilege.name() != Privilege.Name.USE_SCHEMA
+                  : privilege.name() != Privilege.Name.USE_CATALOG)) {
         throw new IllegalArgumentException("Unsupported Delta privilege or condition");
       }
     }
-    if (object.privileges().isEmpty() || object.type() == MetadataObject.Type.CATALOG) {
+    if (object.privileges().isEmpty() || object.type() != MetadataObject.Type.TABLE) {
       return List.of();
     }
     names.add("*");
