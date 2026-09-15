@@ -342,6 +342,13 @@ public class TestDeltaRangerDownloadedPolicies {
     }
   }
 
+  static void assertRoleAbsent(JsonNode response, String name) {
+    assertTrue(response.path("roles").isArray(), "Ranger roles array required");
+    for (JsonNode role : response.path("roles")) {
+      assertFalse(name.equals(role.path("name").asText()), "New role already exists in Ranger");
+    }
+  }
+
   static void assertResumeRoleIds(JsonNode original, JsonNode current, List<String> names) {
     for (String name : names) {
       JsonNode before = exactRole(original, name);
@@ -497,6 +504,7 @@ public class TestDeltaRangerDownloadedPolicies {
   private void grantMetadataSchemaVisibility() throws Exception {
     String name = required("rolesPrefix") + "metadata_schema";
     assertThrows(NoSuchRoleException.class, () -> lake.getRole(name));
+    assertRoleAbsent(adminGet("/service/roles/roles"), canonicalRole("metadata_schema"));
     JsonNode before =
         adminGet("/service/plugins/policies?serviceName=" + encoded(required("resourceService")))
             .path("policies");

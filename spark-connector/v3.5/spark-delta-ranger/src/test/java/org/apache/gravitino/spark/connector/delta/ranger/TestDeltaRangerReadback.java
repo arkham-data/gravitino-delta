@@ -32,6 +32,18 @@ class TestDeltaRangerReadback {
   private static final ObjectMapper JSON = new ObjectMapper();
 
   @Test
+  void newSchemaRoleMustNotExistInRanger() throws Exception {
+    TestDeltaRangerDownloadedPolicies.assertRoleAbsent(
+        JSON.readTree("{\"roles\":[]}"), "schema_role");
+    for (String response : List.of("{}", "{\"roles\":[{\"name\":\"schema_role\",\"id\":9}]}")) {
+      JsonNode roles = JSON.readTree(response);
+      Assertions.assertThrows(
+          AssertionError.class,
+          () -> TestDeltaRangerDownloadedPolicies.assertRoleAbsent(roles, "schema_role"));
+    }
+  }
+
+  @Test
   void resumeRequiresOriginalRoleIdsAndExactPrivileges() throws Exception {
     JsonNode original = JSON.readTree("{\"roles\":[{\"id\":7,\"name\":\"canonical\"}]}");
     TestDeltaRangerDownloadedPolicies.assertResumeRoleIds(original, original, List.of("canonical"));
