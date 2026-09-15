@@ -160,7 +160,10 @@ public final class DeltaRangerDownloadedQuery {
                 !spark.conf().contains("spark.sql.catalog." + command.path("catalog").asText()),
                 "Hidden catalog was registered by discovery");
           } else {
-            check(queryFailure == null, "Fresh native SELECT failed; private evidence retained");
+            if (queryFailure != null) {
+              throw new AssertionError(
+                  "Fresh native SELECT failed; private evidence retained", queryFailure);
+            }
             check(
                 normalized(JSON.valueToTree(rows)).equals(normalized(command.path("expectedRows"))),
                 "Executed native rows differ from independent expected rows");
