@@ -261,3 +261,65 @@ Task1 additionally admits exactly CATALOG / USE_CATALOG / ALLOW bound to this pl
 Task3/4 startup tests grant application catalog visibility without any effective USE_CATALOG deny, Gravitino table SELECT or ownership. The separate scoped metadata identity resolves schemas/tables; the actual query subject remains Ranger's subject. A visibility-only application must discover the optional catalog and remain denied every SELECT until an independent Ranger access policy permits it. Real REST tests cover role/membership creation, visibility grant/revoke and mixed roles; assert no wildcard/access policy from visibility, foreign models unchanged, unknown privilege rejection, and visibility removal preventing fresh-driver discovery. Exact source proof is the narrow followup in the independent preflight report.
 
 Ruling: explicitly support canonical catalog USE_CATALOG/ALLOW as local-only visibility — it is necessary before discovery and inherited HadoopSQL would broaden it into data SELECT — cost is deliberate filtering across all ordinary role lifecycle paths, backed by zero-access-policy and mixed-role tests. This does not alter owner access translation or authorize unknown privilege no-ops.
+
+
+### Task 4 runtime and packaging qualification
+
+Use immutable archived production server, optional plugins, coordinator application and actual Spark distribution classpaths. Qualify the companion on JDK17, excluding only Java21 multi-release entries unsupported by pinned Shadow ASM. Relocate only the three Ranger-owned ugsync helper families under the Hadoop namespace and verify direct/reflective references; preserve genuine Hadoop references. Kerberos remains outside this qualification. Resolve duplicate Hostname implementations to the pinned Kyuubi supplier with original bytecode provenance; use Spark-provided Servlet and JSR305 classes.
+
+The separate test application may record normal loopback callbacks and inject exactly one fault scoped to an owned endpoint and method. Preserve actual response bytes/status and record completed public Gravitino responses separately from local callback-handler drain. Unknown upstream work cannot be retried or reconciled based on local drain. Root controls the production server lifecycle and direct foreign-policy fixtures; the implementer controls public coordinator mutations after an explicit handoff. Keep one coordinator/gateway lifecycle across the final four-pair matrix.
+
+The deployed Ranger2.8 role update exposed incompatible client timestamp formatting. Keep the correction in the optional Delta client: detached complete request maps for role/policy writes, original createTime/updateTime expressed as epoch milliseconds, typed pinned responses, preserved resource validation and caller models. Do not mutate Ranger's shared serializer or Gravitino core. Qualify wire-level fields and actual deployed callbacks separately. The fresh-user204 and503 completion gates remain required after this earlier blocker is resolved.
+
+Pinned Ranger2.8 write methods can treat HTTP503 as success after decoding its body. Enforce the declared HTTP status in the optional client for the nine affected callback writes (role/policy create/update overloads, policy deletion, named role deletion, and role grant/revoke). Keep the four callback reads inherited: actual GET503 already throws before the shared response handler returns. Preserve authentication, typed decoding, numeric timestamps, resource validation and missing-role classification; no global serializer/core or unused CRUD changes. Unit wire failures and successful200/204 controls complement, rather than replace, the real failure-after-persistence tests.
+
+### Task4 live metadata admission correction (2026-09-15 UTC)
+
+Actual public table GET returned403 for the separate metadata reader. Existing server
+authorization requires USE_CATALOG, USE_SCHEMA and SELECT_TABLE; Task1's optional
+contract omitted USE_SCHEMA. Extend only the optional provider to accept canonical
+SCHEMA/USE_SCHEMA/ALLOW as local visibility with zero Ranger access resources/items.
+Retain exact catalog/literal/type/ALLOW validation and fail closed for all other
+unqualified combinations. Test schema-only and mixed SELECT role lifecycles,
+membership, and absence of wildcard or access policy contributions. Normal mirrored
+Ranger roles/principals are allowed. Give scoped schema visibility only to the
+metadata reader; query identities remain catalog visibility only. No core changes,
+ownership workaround, or use of local persistence after rejected callbacks.
+
+Preserve the original first-query failure: the fixture configured only native Delta
+in SparkSession while driver wiring installed the companion. A new private profile
+explicitly orders companion before Delta; isolate that configuration correction in
+a read-only query before qualifying metadata admission. Runtime/plugin archives
+remain immutable; any provider fix requires focused RED/GREEN, review, archive,
+completed coordinator close, and an owned server restart before new public grants.
+
+### Post-Task4 full Delta conformance order
+
+Independent source audit distinguishes the existing native four-pair tests from
+Ranger qualification. Task4 actual public-client/downloaded-policy fresh SELECT
+composition is still pending. Do not expand its accepted scope from packaging or
+native test results. Subsequent implementation slices, each requiring actual
+Ranger 2.8 downloads on all four pinned Spark/Delta pairs, are:
+
+1. Enforce subject and policy-generation checks when an analyzed plan or cached
+   Dataset is reused. Current identity tags and rewrite-time version checks only
+   qualify restricted fresh queries. Establish an execution boundary before
+   expanding authorization to writes.
+2. Map DML source SELECT and target write/update actions, including MERGE, UPDATE
+   and DELETE row-policy semantics; deny or safely implement unsupported cases.
+3. Authorize registration/DDL before reserve, native commit and publish. Qualify
+   CREATE/REPLACE/ALTER and implement missing native DROP/PURGE/RENAME with durable
+   registration recovery, not an uncoordinated native mutation.
+4. Gate metadata/history/refresh outputs and historical snapshots. Bind time travel
+   to current registration UUID/generation and prevent reads across replacement
+   incarnations.
+5. Extend aggregate, columnless/count, join and nested-column policy semantics;
+   retain field lineage and types and preserve row filters before aggregation.
+6. Qualify streaming/checkpoint policy generations and maintenance commands
+   (including OPTIMIZE/VACUUM/RESTORE) with command-specific authorization/recovery.
+
+These are remaining requirements, not completed features or extra authorization
+from the user. The audit preserves no-core source constraints and separate metadata
+identity. Plan details and tests will be developed from each concrete execution
+path; full Delta support cannot be claimed until the missing paths are implemented
+and qualified. Isolated demo integration remains a subsequent deployment gate.

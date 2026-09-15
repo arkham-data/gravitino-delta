@@ -52,9 +52,12 @@ Ranger implementation or live qualification has already happened.
 ## Role, grant and ownership contracts
 
 Ordinary Ranger access translation initially supports TABLE/SELECT_TABLE/ALLOW.
-Additionally, canonical CATALOG/USE_CATALOG/ALLOW is explicitly supported as
-Gravitino-only visibility and contributes zero Ranger access resources/items.
-Never inherit HadoopSQL's wildcard SELECT translation for USE_CATALOG. Validate
+Additionally, canonical CATALOG/USE_CATALOG/ALLOW and SCHEMA/USE_SCHEMA/ALLOW
+are explicitly supported as Gravitino-only visibility and contribute zero Ranger
+access resources/items. The scoped metadata reader needs both visibility privileges
+and table SELECT to satisfy Gravitino's existing metadata REST authorization.
+Application query subjects retain catalog visibility only in this qualification.
+Never inherit HadoopSQL's wildcard SELECT translation for visibility. Validate
 all role objects/changes, including mixed visibility/SELECT roles, before side
 effects; reject other unqualified combinations rather than ignore them.
 
