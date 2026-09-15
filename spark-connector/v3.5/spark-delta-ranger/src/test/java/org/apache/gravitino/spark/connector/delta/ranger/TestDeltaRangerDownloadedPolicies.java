@@ -22,6 +22,7 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -40,6 +41,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -47,6 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.NameIdentifier;
@@ -58,6 +61,8 @@ import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrati
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationReceipt;
 import org.apache.gravitino.client.GravitinoAdminClient;
 import org.apache.gravitino.client.GravitinoMetalake;
+import org.apache.gravitino.exceptions.ForbiddenException;
+import org.apache.gravitino.exceptions.NoSuchRoleException;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.TableChange;
@@ -91,7 +96,8 @@ public class TestDeltaRangerDownloadedPolicies {
   /**
    * Executes one explicit public-chain checkpoint from immutable test-application inputs.
    *
-   * @param args one checkpoint: bootstrap, resume-catalog-bootstrap, fresh-principal, or matrix
+   * @param args one checkpoint: bootstrap, resume-catalog-bootstrap, fresh-principal, matrix, or
+   *     matrix-resume
    * @throws Exception if setup or an acceptance assertion fails
    */
   public static void main(String[] args) throws Exception {
@@ -114,6 +120,9 @@ public class TestDeltaRangerDownloadedPolicies {
         harness.freshPrincipalMembershipUsesActualExternalUserProtocol();
       } else if ("matrix".equals(args[0])) {
         harness.bootstrapMatrixIdentities();
+        harness.matrixControlLoop();
+      } else if ("matrix-resume".equals(args[0])) {
+        harness.resumeMatrixIdentities();
         harness.matrixControlLoop();
       } else {
         throw new IllegalArgumentException("Unknown public-chain checkpoint");
@@ -333,6 +342,228 @@ public class TestDeltaRangerDownloadedPolicies {
     }
   }
 
+  static void assertResumeRoleIds(JsonNode original, JsonNode current, List<String> names) {
+    for (String name : names) {
+      JsonNode before = exactRole(original, name);
+      JsonNode after = exactRole(current, name);
+      assertTrue(before.path("id").isIntegralNumber());
+      assertEquals(before.path("id"), after.path("id"), "Ranger role identity changed");
+      for (String field : List.of("users", "groups", "roles")) {
+        assertEquals(
+            before.path(field), after.path(field), "Ranger membership changed before resume");
+      }
+    }
+  }
+
+  static void assertExactGrants(List<SecurableObject> expected, List<SecurableObject> actual) {
+    assertEquals(grantSignatures(expected), grantSignatures(actual), "Unexpected local grants");
+  }
+
+  private static List<String> grantSignatures(List<SecurableObject> objects) {
+    return objects.stream()
+        .map(
+            object ->
+                object.type()
+                    + ":"
+                    + object.fullName()
+                    + ":"
+                    + object.privileges().stream()
+                        .map(privilege -> privilege.name() + ":" + privilege.condition())
+                        .sorted()
+                        .collect(Collectors.toList()))
+        .sorted()
+        .collect(Collectors.toList());
+  }
+
+  private static JsonNode exactRole(JsonNode response, String name) {
+    assertTrue(response.path("roles").isArray(), "Ranger roles array required");
+    List<JsonNode> matches = new ArrayList<>();
+    response
+        .path("roles")
+        .forEach(
+            role -> {
+              if (name.equals(role.path("name").asText())) matches.add(role);
+            });
+    assertEquals(1, matches.size(), "Exactly one canonical role required");
+    return matches.get(0);
+  }
+
+  private List<SecurableObject> visibilityObjects() {
+    List<SecurableObject> result = new ArrayList<>();
+    fixture
+        .path("catalogs")
+        .forEach(
+            catalog ->
+                result.add(
+                    SecurableObjects.ofCatalog(
+                        catalog.path("name").asText(), List.of(Privileges.UseCatalog.allow()))));
+    return result;
+  }
+
+  private List<SecurableObject> metadataObjects(boolean schema) {
+    List<SecurableObject> result = new ArrayList<>();
+    fixture
+        .path("catalogs")
+        .forEach(
+            catalog ->
+                result.add(
+                    schema
+                        ? SecurableObjects.parse(
+                            catalog.path("name").asText() + "." + catalog.path("database").asText(),
+                            MetadataObject.Type.SCHEMA,
+                            List.of(Privileges.UseSchema.allow()))
+                        : tableObject(catalog)));
+    return result;
+  }
+
+  private void resumeMatrixIdentities() throws Exception {
+    JsonNode checkpoint = JSON.readTree(privateFile(required("resumeCheckpointFile")).toFile());
+    assertEquals("matrix-identities-ready", checkpoint.path("stage").asText());
+    assertEquals(
+        canonicalRole("metadata"), checkpoint.path("details").path("metadataRole").asText());
+    lake = client.loadMetalake(required("metalake"));
+    List<String> catalogNames = new ArrayList<>();
+    for (JsonNode catalog : fixture.path("catalogs")) {
+      String name = catalog.path("name").asText();
+      catalogNames.add(name);
+      Table table =
+          lake.loadCatalog(name)
+              .asTableCatalog()
+              .loadTable(
+                  NameIdentifier.of(
+                      catalog.path("database").asText(), catalog.path("table").asText()));
+      DeltaRegistrationReceipt receipt =
+          DeltaRegistrationReceipt.fromProperties(table.properties());
+      JsonNode nativeTable =
+          JSON.readTree(privateFile(catalog.path("nativeFixtureFile").asText()).toFile())
+              .path("table");
+      assertEquals(DeltaRegistrationReceipt.State.PUBLISHED, receipt.state());
+      assertEquals(
+          nativeTable.path("native").path("id").asText(), receipt.nativeId().orElseThrow());
+      assertEquals(nativeTable.path("version").asLong(), receipt.nativeVersion().orElseThrow());
+      assertEquals(nativeTable.path("location").asText(), receipt.location().orElseThrow());
+    }
+    assertEquals(
+        catalogNames.stream().sorted().collect(Collectors.toList()),
+        Arrays.stream(lake.listCatalogs()).sorted().collect(Collectors.toList()));
+    List<String> canonicalNames = new ArrayList<>();
+    for (String key :
+        List.of("metadata", "columnReader", "visibilityOnly", "groupReader", "freshCallback")) {
+      String suffix = "visibility_" + key;
+      assertExactGrants(
+          visibilityObjects(), lake.getRole(required("rolesPrefix") + suffix).securableObjects());
+      canonicalNames.add(canonicalRole(suffix));
+      List<String> expected = new ArrayList<>();
+      expected.add(required("rolesPrefix") + suffix);
+      if ("metadata".equals(key)) expected.add(required("rolesPrefix") + "metadata");
+      if ("freshCallback".equals(key)) expected.add(required("rolesPrefix") + "protocol");
+      assertEquals(
+          expected.stream().sorted().collect(Collectors.toList()),
+          lake.getUser(matrixPrincipal(key)).roles().stream()
+              .sorted()
+              .collect(Collectors.toList()));
+    }
+    assertExactGrants(
+        metadataObjects(false),
+        lake.getRole(required("rolesPrefix") + "metadata").securableObjects());
+    canonicalNames.add(canonicalRole("metadata"));
+    for (String suffix : List.of("ordinary", "group", "global_guard", "audit_cleanup")) {
+      assertExactGrants(
+          List.of(tableObject(fixture.path("catalogs").get(0))),
+          lake.getRole(required("rolesPrefix") + suffix).securableObjects());
+      canonicalNames.add(canonicalRole(suffix));
+    }
+    assertEquals(
+        List.of(required("rolesPrefix") + "group"),
+        lake.getGroup(fixture.path("groups").path("query").asText()).roles());
+    JsonNode roles = adminGet("/service/roles/roles");
+    assertResumeRoleIds(checkpoint.path("details").path("roles"), roles, canonicalNames);
+    assertTrue(gateway.awaitDrained() && publicGateway.awaitDrained());
+    event(
+        "matrix-resume-validated",
+        Map.of(
+            "roles",
+            roles,
+            "catalogs",
+            catalogNames,
+            "expectedMetalakeId",
+            required("expectedMetalakeId"),
+            "publicCompletions",
+            publicGateway.completed(),
+            "callbackCompletions",
+            gateway.completed()));
+  }
+
+  private void grantMetadataSchemaVisibility() throws Exception {
+    String name = required("rolesPrefix") + "metadata_schema";
+    assertThrows(NoSuchRoleException.class, () -> lake.getRole(name));
+    JsonNode before =
+        adminGet("/service/plugins/policies?serviceName=" + encoded(required("resourceService")))
+            .path("policies");
+    assertTrue(before.isArray());
+    List<String> queryKeys = List.of("columnReader", "visibilityOnly", "groupReader");
+    for (String key : queryKeys)
+      assertEquals(
+          List.of(required("rolesPrefix") + "visibility_" + key),
+          lake.getUser(matrixPrincipal(key)).roles());
+    lake.createRole(name, Map.of(), metadataObjects(true));
+    lake.grantRolesToUser(List.of(name), required("metadataPrincipal"));
+    assertExactGrants(metadataObjects(true), lake.getRole(name).securableObjects());
+    assertRoleMembership(
+        adminGet("/service/roles/roles"),
+        canonicalRole("metadata_schema"),
+        required("metadataPrincipal"));
+    JsonNode after =
+        adminGet("/service/plugins/policies?serviceName=" + encoded(required("resourceService")))
+            .path("policies");
+    assertEquals(before, after, "Schema visibility changed Ranger policies");
+    for (String key : queryKeys)
+      assertEquals(
+          List.of(required("rolesPrefix") + "visibility_" + key),
+          lake.getUser(matrixPrincipal(key)).roles());
+    assertEquals(
+        Set.of(
+            required("rolesPrefix") + "visibility_metadata",
+            required("rolesPrefix") + "metadata",
+            name),
+        Set.copyOf(lake.getUser(required("metadataPrincipal")).roles()));
+    verifyMetadataReadAdmission();
+    event(
+        "metadata-schema-granted",
+        Map.of(
+            "role",
+            name,
+            "policiesBefore",
+            before,
+            "policiesAfter",
+            after,
+            "metadataRoles",
+            lake.getUser(required("metadataPrincipal")).roles()));
+  }
+
+  private void verifyMetadataReadAdmission() throws Exception {
+    for (String key : List.of("metadata", "columnReader", "visibilityOnly", "groupReader")) {
+      try (GravitinoAdminClient reader =
+          GravitinoAdminClient.builder(publicGateway.uri().toString())
+              .withSimpleAuth(matrixPrincipal(key))
+              .build()) {
+        GravitinoMetalake readerLake = reader.loadMetalake(required("metalake"));
+        for (JsonNode catalog : fixture.path("catalogs")) {
+          Catalog loaded = readerLake.loadCatalog(catalog.path("name").asText());
+          NameIdentifier table =
+              NameIdentifier.of(catalog.path("database").asText(), catalog.path("table").asText());
+          if ("metadata".equals(key)) {
+            loaded.asSchemas().loadSchema(catalog.path("database").asText());
+            loaded.asTableCatalog().loadTable(table);
+          } else {
+            assertThrows(ForbiddenException.class, () -> loaded.asTableCatalog().loadTable(table));
+          }
+        }
+      }
+    }
+    event("metadata-read-admission", Map.of("metadataTables", 3, "queryPrincipalTableDenials", 9));
+  }
+
   private void bootstrapMatrixIdentities() throws Exception {
     lake = client.loadMetalake(required("metalake"));
     List<SecurableObject> visibility = new ArrayList<>();
@@ -450,6 +681,10 @@ public class TestDeltaRangerDownloadedPolicies {
       }
       snapshot.put("localMemberships", local);
       event("matrix-snapshot-" + command.path("id").asText(), snapshot);
+      return;
+    }
+    if ("metadata-schema".equals(operation)) {
+      grantMetadataSchemaVisibility();
       return;
     }
     String suffix = command.path("roleSuffix").asText("ordinary");

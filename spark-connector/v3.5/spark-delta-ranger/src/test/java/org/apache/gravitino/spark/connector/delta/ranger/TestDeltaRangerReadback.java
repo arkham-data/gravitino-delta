@@ -21,11 +21,47 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
+import org.apache.gravitino.MetadataObject;
+import org.apache.gravitino.authorization.Privileges;
+import org.apache.gravitino.authorization.SecurableObjects;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 class TestDeltaRangerReadback {
   private static final ObjectMapper JSON = new ObjectMapper();
+
+  @Test
+  void resumeRequiresOriginalRoleIdsAndExactPrivileges() throws Exception {
+    JsonNode original = JSON.readTree("{\"roles\":[{\"id\":7,\"name\":\"canonical\"}]}");
+    TestDeltaRangerDownloadedPolicies.assertResumeRoleIds(original, original, List.of("canonical"));
+    for (String changed :
+        List.of(
+            "{\"roles\":[]}",
+            "{\"roles\":[{\"id\":8,\"name\":\"canonical\"}]}",
+            "{\"roles\":[{\"id\":7,\"name\":\"canonical\"},{\"id\":7,\"name\":\"canonical\"}]}")) {
+      JsonNode current = JSON.readTree(changed);
+      Assertions.assertThrows(
+          AssertionError.class,
+          () ->
+              TestDeltaRangerDownloadedPolicies.assertResumeRoleIds(
+                  original, current, List.of("canonical")));
+    }
+    var expected = List.of(SecurableObjects.ofCatalog("a", List.of(Privileges.UseCatalog.allow())));
+    TestDeltaRangerDownloadedPolicies.assertExactGrants(expected, expected);
+    for (var changed :
+        List.of(
+            List.of(SecurableObjects.ofCatalog("b", List.of(Privileges.UseCatalog.allow()))),
+            List.of(SecurableObjects.ofCatalog("a", List.of(Privileges.UseCatalog.deny()))),
+            List.of(
+                SecurableObjects.parse(
+                    "a.s.t", MetadataObject.Type.TABLE, List.of(Privileges.SelectTable.allow()))),
+            List.of(expected.get(0), expected.get(0)))) {
+      Assertions.assertThrows(
+          AssertionError.class,
+          () -> TestDeltaRangerDownloadedPolicies.assertExactGrants(expected, changed));
+    }
+  }
 
   @Test
   void wrapperOrUnrelatedRoleCannotProveMembership() throws Exception {
