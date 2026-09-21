@@ -32,15 +32,25 @@ The four-pair column-policy matrices and fresh-driver lifecycle matrices now tot
 160 accepted query checks. Public user grant/revoke, group revocation and catalog
 visibility removal were verified against Ranger 2.8.0, with independent identity,
 download, model and result checks. Original memberships were restored; the known
-global-guard divergence remains intentionally preserved. The final observed policy/
-role generations are 48/73. See the tracked `task-4-live-matrix-report.md` and
+global-guard divergence remains intentionally preserved. That lifecycle checkpoint recorded policy/
+role generations 48/73. See the tracked `task-4-live-matrix-report.md` and
 `task-4-lifecycle-report.md` under
 `.superpowers/sdd/2026-09-08-delta-ranger-production-runtime/` for scope and retained
 failures. The test-only resume boundary in `c78df9948` was qualified at 44/63; future
 resume work must explicitly bind the final checkpoint and its verified transition
 chain, without replaying bootstrap. Recheck process and storage continuity before
-using retained services. Same-JVM refresh/cache and callback-failure continuation
-remain required; Task 4 remains open, as does the broader full-Delta objective.
+using retained services.
+
+A subsequent same-JVM fresh-query matrix passed 48 more checks across all four
+version pairs, for 208 accepted live checks in total. Each pair retained one driver
+through initial denial, public grant and public revoke. Final policy/role generations
+are 56/81, with original memberships and all protected models preserved. See
+`task-4-same-jvm-refresh-report.md` in the same ledger directory. This proves fresh
+SQL analysis after combined policy/role updates; role-only refresh, outage behavior,
+caches and reused-plan enforcement remain separate gates. A test-only unary
+collection-boundary prototype passes on both Spark patches but installs no production
+guard or complete security receipt. Task 4 remains open, as does the broader
+full-Delta objective.
 
 ## Global Constraints
 
