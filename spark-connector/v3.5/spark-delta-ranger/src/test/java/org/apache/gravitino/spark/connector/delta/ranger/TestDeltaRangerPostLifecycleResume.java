@@ -21,7 +21,9 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.gravitino.client.GravitinoAdminClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -460,6 +463,114 @@ class TestDeltaRangerPostLifecycleResume {
         .put("totalCount", 18)
         .put("resultSize", 18);
     assertThrows(IllegalArgumentException.class, this::validate);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"accepted", "changed-final-metalake", "extra-metalake", "unexpected-query"})
+  void routedResumeCannotPublishOrAcceptCommandsUntilEveryResponseMatches(String scenario)
+      throws Exception {
+    validate();
+    Map<String, String> requests = DeltaRangerPostLifecycleResume.paths(fixture);
+    AtomicInteger metalakeReads = new AtomicInteger();
+    AtomicInteger totalReads = new AtomicInteger();
+    HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    upstream.createContext(
+        "/",
+        exchange -> {
+          assertEquals("GET", exchange.getRequestMethod());
+          totalReads.incrementAndGet();
+          String requestTarget = exchange.getRequestURI().toString();
+          String key =
+              requests.entrySet().stream()
+                  .filter(entry -> entry.getValue().equals(requestTarget))
+                  .map(Map.Entry::getKey)
+                  .findFirst()
+                  .orElse("metalake");
+          JsonNode observation = baseline.path("observations").path(key);
+          ObjectNode body = observation.path("body").deepCopy();
+          if (key.equals("metalake")
+              && metalakeReads.incrementAndGet() == 2
+              && scenario.equals("changed-final-metalake")) {
+            ((ObjectNode) body.path("metalake"))
+                .put("comment", "changed after the first validated read");
+          }
+          byte[] response = JSON.writeValueAsBytes(body);
+          exchange.sendResponseHeaders(observation.path("status").asInt(), response.length);
+          exchange.getResponseBody().write(response);
+          exchange.close();
+        });
+    upstream.start();
+    URI endpoint = URI.create("http://127.0.0.1:" + upstream.getAddress().getPort());
+    Path validatedEvent = directory.resolve("post-role-lifecycle-resume-validated.json");
+    Path readyEvent = directory.resolve("matrix-control-ready.json");
+    AtomicInteger comparisons = new AtomicInteger();
+    try (DeltaRangerCallbackGateway publicGateway =
+            new DeltaRangerCallbackGateway(
+                endpoint, directory.resolve("routed-public.jsonl"), 0, true);
+        DeltaRangerCallbackGateway callbackGateway =
+            new DeltaRangerCallbackGateway(
+                endpoint, directory.resolve("routed-callback.jsonl"), 0, true);
+        GravitinoAdminClient client =
+            GravitinoAdminClient.builder(publicGateway.uri().toString())
+                .withSimpleAuth("admin")
+                .withVersionCheckDisabled()
+                .build()) {
+      DeltaRangerPostLifecycleResume.ReadOnlyGet reads =
+          (key, path) ->
+              DeltaRangerPostLifecycleResume.get(
+                  path.startsWith("/api/") ? publicGateway.uri() : callbackGateway.uri(),
+                  path,
+                  "Basic offline-test");
+      DeltaRangerPostLifecycleResume.LoadMetalake load =
+          () -> {
+            if (scenario.equals("unexpected-query")) {
+              DeltaRangerPostLifecycleResume.get(
+                  publicGateway.uri(),
+                  requests.get("metalake") + "?unexpected=true",
+                  "Basic offline-test");
+            } else {
+              client.loadMetalake(fixture.path("metalake").asText());
+              if (scenario.equals("extra-metalake"))
+                client.loadMetalake(fixture.path("metalake").asText());
+            }
+          };
+      DeltaRangerPostLifecycleResume.Validated accepted =
+          count -> {
+            comparisons.set(count);
+            Files.writeString(validatedEvent, "{\"validated\":true}");
+          };
+      if (scenario.equals("accepted")) {
+        DeltaRangerPostLifecycleResume.validateResumeBoundary(
+            fixture, baseline, reads, load, publicGateway, callbackGateway, accepted);
+        Files.writeString(readyEvent, "{\"ready\":true}");
+        assertEquals(34, comparisons.get());
+        assertEquals(34, totalReads.get());
+        assertTrue(Files.exists(validatedEvent));
+        assertTrue(Files.exists(readyEvent));
+      } else {
+        IllegalArgumentException failure =
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> {
+                  DeltaRangerPostLifecycleResume.validateResumeBoundary(
+                      fixture, baseline, reads, load, publicGateway, callbackGateway, accepted);
+                  Files.writeString(readyEvent, "{\"ready\":true}");
+                });
+        if (scenario.equals("changed-final-metalake")) {
+          assertEquals("Full response model changed: metalake", failure.getMessage());
+        }
+        if (scenario.equals("unexpected-query")) {
+          assertEquals("Unexpected completed request target", failure.getMessage());
+        }
+        assertEquals(0, comparisons.get());
+        assertFalse(Files.exists(validatedEvent));
+        assertFalse(Files.exists(readyEvent));
+        assertEquals(scenario.equals("extra-metalake") ? 35 : 34, totalReads.get());
+      }
+    } finally {
+      upstream.stop(0);
+    }
   }
 
   private void validate() {

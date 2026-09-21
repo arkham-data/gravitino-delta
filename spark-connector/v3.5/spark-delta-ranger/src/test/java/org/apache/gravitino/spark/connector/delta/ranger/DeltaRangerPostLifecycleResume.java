@@ -98,6 +98,45 @@ final class DeltaRangerPostLifecycleResume {
     JsonNode get(String key, String path) throws Exception;
   }
 
+  @FunctionalInterface
+  interface LoadMetalake {
+    void load() throws Exception;
+  }
+
+  @FunctionalInterface
+  interface Validated {
+    void accept(int comparisons) throws Exception;
+  }
+
+  static void validateResumeBoundary(
+      JsonNode fixture,
+      JsonNode baseline,
+      ReadOnlyGet transport,
+      LoadMetalake loadMetalake,
+      DeltaRangerCallbackGateway publicGateway,
+      DeltaRangerCallbackGateway callbackGateway,
+      Validated validated)
+      throws Exception {
+    validateCurrent(fixture, baseline, transport);
+    require(
+        publicGateway.awaitDrained() && callbackGateway.awaitDrained(),
+        "Initial resume reads remain active");
+    long publicBeforeLoad = publicGateway.completed();
+    long callbackBeforeLoad = callbackGateway.completed();
+    loadMetalake.load();
+    require(
+        publicGateway.awaitDrained() && callbackGateway.awaitDrained(),
+        "Resume reads remain active");
+    require(
+        publicGateway.completed() == publicBeforeLoad + 1
+            && callbackGateway.completed() == callbackBeforeLoad,
+        "Public metalake handle must complete exactly one additional GET");
+    int comparisons =
+        compareRecordedBoundary(
+            fixture, baseline, publicGateway.recordedEvents(), callbackGateway.recordedEvents());
+    validated.accept(comparisons);
+  }
+
   static JsonNode readBound(Path path, String digest) throws Exception {
     require(
         path.isAbsolute() && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS),
@@ -411,6 +450,42 @@ final class DeltaRangerPostLifecycleResume {
           Set.of("freshCallback", "columnReader", "visibilityOnly", "groupReader")
               .contains(text(command, "subject")),
           "Protected or unknown principal");
+  }
+
+  private static int compareRecordedBoundary(
+      JsonNode fixture, JsonNode baseline, List<String> publicEvents, List<String> callbackEvents)
+      throws Exception {
+    Map<String, String> expectedKeys = new LinkedHashMap<>();
+    Map<String, Integer> expectedCounts = new LinkedHashMap<>();
+    for (Map.Entry<String, String> request : paths(fixture).entrySet()) {
+      String target =
+          (request.getValue().startsWith("/api/") ? "public:" : "callback:") + request.getValue();
+      require(
+          expectedKeys.put(target, request.getKey()) == null, "Duplicate expected request target");
+      expectedCounts.put(target, request.getKey().equals("metalake") ? 2 : 1);
+    }
+    Map<String, Integer> actualCounts = new LinkedHashMap<>();
+    int comparisons = 0;
+    for (Map.Entry<String, List<String>> gateway :
+        Map.of("public:", publicEvents, "callback:", callbackEvents).entrySet()) {
+      requireCompletedReads(gateway.getValue());
+      for (String line : gateway.getValue()) {
+        JsonNode completed = JSON.readTree(line);
+        if (!completed.has("finished")) continue;
+        String target = gateway.getKey() + text(completed, "requestTarget");
+        require(expectedKeys.containsKey(target), "Unexpected completed request target");
+        String key = expectedKeys.get(target);
+        JsonNode actual =
+            response(
+                completed.path("upstreamStatus").asInt(),
+                JSON.readTree(Files.readAllBytes(Path.of(text(completed, "responseBodyFile")))));
+        compare(key, baseline.path("observations").path(key), actual);
+        actualCounts.merge(target, 1, Integer::sum);
+        comparisons++;
+      }
+    }
+    require(expectedCounts.equals(actualCounts), "Completed resume request multiset changed");
+    return comparisons;
   }
 
   private static void validateModels(JsonNode fixture, JsonNode observations) {

@@ -166,6 +166,9 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
     event.put("attempt", attempt);
     event.put("method", exchange.getRequestMethod());
     event.put("path", exchange.getRequestURI().getPath());
+    if (retainResponseBodies) {
+      event.put("requestTarget", exchange.getRequestURI().toString());
+    }
     event.put("started", Instant.now().toString());
     event.put("activeAtStart", active.get());
     try {

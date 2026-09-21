@@ -62,6 +62,7 @@ import org.apache.gravitino.authorization.SecurableObjects;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationCommand;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationReceipt;
 import org.apache.gravitino.client.GravitinoAdminClient;
+import org.apache.gravitino.client.GravitinoAdminClient.AdminClientBuilder;
 import org.apache.gravitino.client.GravitinoMetalake;
 import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.exceptions.NoSuchRoleException;
@@ -165,10 +166,13 @@ public class TestDeltaRangerDownloadedPolicies {
             evidence.resolve("public-attempts.jsonl"),
             0,
             postLifecycleResume);
-    client =
-        GravitinoAdminClient.builder(publicGateway.uri().toString())
-            .withSimpleAuth(required("gravitinoAdminPrincipal"))
-            .build();
+    AdminClientBuilder builder = GravitinoAdminClient.builder(publicGateway.uri().toString());
+    builder.withSimpleAuth(required("gravitinoAdminPrincipal"));
+    if (postLifecycleResume) {
+      // Root binds the exact executable inputs; the closed resume read set excludes /api/version.
+      builder.withVersionCheckDisabled();
+    }
+    client = builder.build();
   }
 
   @AfterAll
@@ -463,17 +467,6 @@ public class TestDeltaRangerDownloadedPolicies {
     String adminAuth =
         basic(adminCredentials.getProperty("username"), adminCredentials.getProperty("password"));
     String downloadAuth = basic(downloadUser, downloadPassword);
-    int reads =
-        DeltaRangerPostLifecycleResume.validateCurrent(
-            fixture,
-            baseline,
-            (key, path) ->
-                DeltaRangerPostLifecycleResume.get(
-                    path.startsWith("/api/") ? publicGateway.uri() : gateway.uri(),
-                    path,
-                    path.startsWith("/api/")
-                        ? publicAuth
-                        : (key.endsWith("Download") ? downloadAuth : adminAuth)));
     Map<String, Object> receipts = new LinkedHashMap<>();
     for (JsonNode catalog : fixture.path("catalogs")) {
       JsonNode nativeTable =
@@ -505,57 +498,71 @@ public class TestDeltaRangerDownloadedPolicies {
               "location",
               nativeTable.path("location").asText()));
     }
-    lake = client.loadMetalake(required("metalake"));
-    assertTrue(gateway.awaitDrained() && publicGateway.awaitDrained());
-    DeltaRangerPostLifecycleResume.requireCompletedReads(gateway.recordedEvents());
-    DeltaRangerPostLifecycleResume.requireCompletedReads(publicGateway.recordedEvents());
-    Map<String, Object> details = new LinkedHashMap<>();
-    details.put("checkpointSha256", checkpointDigest);
-    details.put("baselineSha256", baselineDigest);
-    details.put("preflightSha256", preflightDigest);
-    details.put("preflightMode", preflight.path("mode").asText());
-    details.put("coldH2Sha256", preflight.path("coldH2Sha256"));
-    details.put("s3ManifestSha256", preflight.path("s3ManifestSha256").asText());
-    details.put("s3ExactBytesVerified", true);
-    details.put("storageBaseline", preflight.path("storageBaseline").asText());
-    details.put("transitionSha256", preflight.path("transitionSha256").asText());
-    details.put("receipts", receipts);
-    details.put(
-        "serviceIds",
-        Map.of("definition", 217, "tag", 15, "resource", 16, "side", 17, "downloader", 9));
-    details.put(
-        "protectedRoleIds",
-        Map.of(
-            "orphanOwner",
-            7,
-            "protocol",
-            13,
-            "fixedProtocol",
-            14,
-            "globalGuard",
-            23,
-            "metadataSchema",
-            25));
-    details.put(
-        "policyIds",
-        baseline
-            .path("observations")
-            .path("policies")
-            .path("body")
-            .path("policies")
-            .findValues("id"));
-    details.put("policyVersion", 44);
-    details.put("roleVersion", 63);
-    details.put("semanticComparisonsPassed", reads);
-    details.put("publicCompletions", publicGateway.completed());
-    details.put("callbackCompletions", gateway.completed());
-    details.put("divergence", checkpoint.path("divergence"));
-    event("post-role-lifecycle-resume-validated", details);
-    Path validated = evidence.resolve("post-role-lifecycle-resume-validated.json");
-    Files.setPosixFilePermissions(validated, PosixFilePermissions.fromString("rw-------"));
-    try (FileChannel channel = FileChannel.open(validated, StandardOpenOption.WRITE)) {
-      channel.force(true);
-    }
+    DeltaRangerPostLifecycleResume.validateResumeBoundary(
+        fixture,
+        baseline,
+        (key, path) ->
+            DeltaRangerPostLifecycleResume.get(
+                path.startsWith("/api/") ? publicGateway.uri() : gateway.uri(),
+                path,
+                path.startsWith("/api/")
+                    ? publicAuth
+                    : (key.endsWith("Download") ? downloadAuth : adminAuth)),
+        () -> lake = client.loadMetalake(required("metalake")),
+        publicGateway,
+        gateway,
+        reads -> {
+          Map<String, Object> details = new LinkedHashMap<>();
+          details.put("checkpointSha256", checkpointDigest);
+          details.put("baselineSha256", baselineDigest);
+          details.put("preflightSha256", preflightDigest);
+          details.put("preflightMode", preflight.path("mode").asText());
+          details.put("coldH2Sha256", preflight.path("coldH2Sha256"));
+          details.put("s3ManifestSha256", preflight.path("s3ManifestSha256").asText());
+          details.put("s3ExactBytesVerified", true);
+          details.put("storageBaseline", preflight.path("storageBaseline").asText());
+          details.put("transitionSha256", preflight.path("transitionSha256").asText());
+          details.put("receipts", receipts);
+          details.put(
+              "serviceIds",
+              Map.of("definition", 217, "tag", 15, "resource", 16, "side", 17, "downloader", 9));
+          details.put(
+              "protectedRoleIds",
+              Map.of(
+                  "orphanOwner",
+                  7,
+                  "protocol",
+                  13,
+                  "fixedProtocol",
+                  14,
+                  "globalGuard",
+                  23,
+                  "metadataSchema",
+                  25));
+          details.put(
+              "policyIds",
+              baseline
+                  .path("observations")
+                  .path("policies")
+                  .path("body")
+                  .path("policies")
+                  .findValues("id"));
+          details.put("policyVersion", 44);
+          details.put("roleVersion", 63);
+          details.put("semanticComparisonsPassed", reads);
+          details.put("completedReadResponses", reads);
+          details.put(
+              "distinctObservationKeys", DeltaRangerPostLifecycleResume.paths(fixture).size());
+          details.put("publicCompletions", publicGateway.completed());
+          details.put("callbackCompletions", gateway.completed());
+          details.put("divergence", checkpoint.path("divergence"));
+          event("post-role-lifecycle-resume-validated", details);
+          Path validated = evidence.resolve("post-role-lifecycle-resume-validated.json");
+          Files.setPosixFilePermissions(validated, PosixFilePermissions.fromString("rw-------"));
+          try (FileChannel channel = FileChannel.open(validated, StandardOpenOption.WRITE)) {
+            channel.force(true);
+          }
+        });
   }
 
   private void postLifecycleControlLoop() throws Exception {
