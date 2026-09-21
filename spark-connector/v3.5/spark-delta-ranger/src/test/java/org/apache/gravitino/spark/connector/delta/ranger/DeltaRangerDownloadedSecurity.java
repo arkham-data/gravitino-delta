@@ -175,6 +175,7 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
     return properties(document(xml));
   }
 
+  /** Releases the recorder and rejects unresolved handlers or lost download evidence. */
   @Override
   public void close() throws Exception {
     gateway.close();

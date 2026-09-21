@@ -170,6 +170,14 @@ suites on Spark 3.5.4 with each Delta version passed 71 tests and Javadoc, with 
 failures or skips; independent review approved the change. Live reruns with the
 new companion remain pending.
 
+Offline September 21 verification also ran the two new native snapshot tests and
+the existing installed filtered-scan regression on Spark 3.5.6 with each Delta
+version: three tests per pair passed, no failures/errors/skips. Four new immutable
+runtime manifests bind the approved native source and test harness to fresh
+companion/application archives while reusing verified original Spark, native Delta,
+base-runtime and S3A archives. No live readiness, downloads or query qualification
+follows from these offline tests or artifact checks.
+
 Historical independent role-lifecycle checks also passed audit cleanup after an
 actual public role deletion. A separate deletion blocked by a foreign global role
 reference completed with public 500 / Ranger 400: the local role and its original

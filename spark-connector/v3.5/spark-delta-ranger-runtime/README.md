@@ -106,14 +106,17 @@ Application discovery requires local `CATALOG/USE_CATALOG/ALLOW` before catalog
 wrapper initialization. That privilege grants no Ranger SELECT. A Ranger-only
 column reader keeps only catalog visibility in Gravitino; the separate metadata
 reader resolves registration/schema/table metadata. Gravitino table reads require
-scoped catalog-use, schema-use, and table-select permissions; qualification of this
-metadata permission composition is still pending. A hidden catalog is absent
+scoped catalog-use, schema-use, and table-select permissions. Historical public
+checks passed all three metadata-reader table loads and rejected all nine direct
+query-user table loads. The complete four-pair live query matrix remains pending. A hidden catalog is absent
 from Spark registration even when metadata credentials could read it. Token query
 attestation and broader application authentication remain unqualified.
 
-Create ordinary roles with an admitted table SELECT object before assigning
-membership. Creating an empty role and adding membership does not dispatch the
-same Ranger initialization callbacks. `addUser` creates only the local Gravitino
+Create ordinary roles with an admitted catalog-use, schema-use, or table SELECT
+object before assigning membership. Visibility-role membership mirrors the Ranger
+principal and role while granting zero data access; table SELECT contributes the
+managed access policy. Creating an empty role and adding membership does not
+dispatch those Ranger initialization callbacks. `addUser` creates only the local Gravitino
 user; the first relevant `grantRolesToUser` dispatches Ranger user creation.
 Observed callback failure after local persistence requires independent Admin and
 downloaded-version readback. Identical ordinary grant/revoke retries may skip
@@ -125,9 +128,12 @@ work in the owning Gravitino server.
 
 The `TestDeltaRangerDownloadedPolicies` test application uses public Gravitino
 client calls, ordinary forwarding/recording gateways, and independent direct Admin
-readback. Its current executable checkpoints are `bootstrap` and `fresh-principal`.
-The separate `DeltaRangerDownloadedQuery` application receives fresh query commands
-on stdin; final four-pair callback/query orchestration is still pending. The gateway
+readback. Implemented checkpoints include `bootstrap`, `fresh-principal`, `matrix`,
+and `matrix-resume`. The existing resume validates the original identity checkpoint;
+it must not be reused after audit-role deletion and the retained guard divergence.
+A post-lifecycle resume contract is designed but not yet implemented. The separate
+`DeltaRangerDownloadedQuery` application receives fresh query commands on stdin;
+final four-pair callback/query qualification is still pending. The gateway
 and query driver are packaged only as an independent test application, never in
 either production plugin. Root-owned services and fixtures are provisioned and cleaned up separately.
 Normal forwarding preserves the actual upstream status/body, including HTTP 204.
