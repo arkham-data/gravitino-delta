@@ -21,6 +21,7 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -305,6 +306,8 @@ class TestDeltaRangerPolicyEngine {
       assertEquals(3, lease.versions().role());
       f.roles.setRoleVersion(4L);
       when(f.plugin.getRolesVersion()).thenReturn(4L);
+      f.plugin.getCurrentRangerAuthContext().setRoles(f.roles);
+      f.listener.contextChanged();
       assertEquals(8, lease.versions().policy());
       assertEquals(4, lease.versions().role());
       assertEquals(3, original.role());
@@ -329,6 +332,30 @@ class TestDeltaRangerPolicyEngine {
       assertFalse(lease.mask(f.subject, key).expression().isPresent());
       f.maskType = "UNSUPPORTED";
       assertThrows(SecurityException.class, () -> lease.mask(f.subject, key));
+    }
+  }
+
+  @Test
+  void maskDecisionsCompareKindAndExpressionByValue() throws Exception {
+    Fixture f = new Fixture(directory);
+    try (DeltaRangerPolicyEngine lease = f.owner.acquire(f.config)) {
+      DeltaRangerPolicyEngine.MaskDecision none = lease.mask(f.subject, f.key);
+      assertEquals(none, lease.mask(f.subject, f.key));
+      assertEquals(none.hashCode(), lease.mask(f.subject, f.key).hashCode());
+      f.maskType = "MASK_NULL";
+      DeltaRangerPolicyEngine.MaskDecision nil = lease.mask(f.subject, f.key);
+      assertEquals(nil, lease.mask(f.subject, f.key));
+      assertNotEquals(none, nil);
+      f.maskType = "CUSTOM";
+      f.maskValue = "upper({col})";
+      DeltaRangerPolicyEngine.MaskDecision expression = lease.mask(f.subject, f.key);
+      assertEquals(expression, lease.mask(f.subject, f.key));
+      assertEquals(expression.hashCode(), lease.mask(f.subject, f.key).hashCode());
+      assertNotEquals(nil, expression);
+      f.maskValue = "lower({col})";
+      assertNotEquals(expression, lease.mask(f.subject, f.key));
+      assertNotEquals(expression, null);
+      assertNotEquals(expression, "upper(`secret`)");
     }
   }
 
@@ -566,6 +593,7 @@ class TestDeltaRangerPolicyEngine {
       roles.setServiceName("service");
       roles.setRoleVersion(3L);
       when(plugin.getRangerRoles()).thenReturn(roles);
+      when(plugin.getRoles()).thenReturn(roles);
       bindMetalake();
       when(plugin.getRolesFromUserAndGroups(any(), any()))
           .thenReturn(Collections.singleton("downloaded-role"));
@@ -622,7 +650,7 @@ class TestDeltaRangerPolicyEngine {
     }
 
     void completePolicy() {
-      RangerAuthContext context = mock(RangerAuthContext.class);
+      RangerAuthContext context = new RangerAuthContext(Collections.emptyMap(), null, roles, null);
       when(plugin.getCurrentRangerAuthContext()).thenReturn(context);
       when(pluginContext.getAuthContext()).thenReturn(context);
       if (listener != null) {

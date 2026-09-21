@@ -54,6 +54,7 @@ import org.apache.ranger.plugin.policyengine.RangerPolicyEngineImpl;
 import org.apache.ranger.plugin.service.RangerAuthContext;
 import org.apache.ranger.plugin.service.RangerBasePlugin;
 import org.apache.ranger.plugin.util.RangerRoles;
+import org.apache.ranger.plugin.util.RangerRolesUtil;
 import org.apache.spark.sql.catalyst.parser.CatalystSqlParser$;
 
 /**
@@ -179,10 +180,59 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     synchronized (owner) {
       requireOpen();
       try {
-        return snapshot();
+        return snapshot().versions;
       } catch (RuntimeException e) {
         throw new SecurityException("Delta Ranger policy/role/service snapshot is not ready", e);
       }
+    }
+  }
+
+  SnapshotStamp snapshotStamp() {
+    synchronized (owner) {
+      requireOpen();
+      try {
+        return snapshot();
+      } catch (RuntimeException | LinkageError e) {
+        throw new SecurityException("Delta Ranger publication snapshot is not ready", e);
+      }
+    }
+  }
+
+  void requireSnapshot(@Nullable SnapshotStamp expected) {
+    synchronized (owner) {
+      requireOpen();
+      SnapshotStamp current = snapshotStamp();
+      if (expected == null
+          || expected.lease != this
+          || !expected.binding.equals(owner.config)
+          || expected.publication != current.publication) {
+        throw new SecurityException("Delta Ranger publication changed; reanalyze the query");
+      }
+    }
+  }
+
+  // Driver-local proof only: no getters, serialization, value equality, or diagnostic rendering.
+  static final class SnapshotStamp {
+    private final DeltaRangerPolicyEngine lease;
+    private final DeltaRangerConfig binding;
+    private final Publication publication;
+    private final Versions versions;
+
+    private SnapshotStamp(
+        DeltaRangerPolicyEngine lease,
+        DeltaRangerConfig binding,
+        Publication publication,
+        Versions versions) {
+      this.lease = lease;
+      this.binding = binding;
+      this.publication = publication;
+      this.versions = versions;
+    }
+
+    /** Returns a constant description without lease, binding, or publication identities. */
+    @Override
+    public String toString() {
+      return "Delta Ranger driver snapshot";
     }
   }
 
@@ -227,6 +277,24 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
      */
     public Optional<String> expression() {
       return Optional.ofNullable(expression);
+    }
+    /** Compares the typed outcome and optional SQL expression by value. */
+    @Override
+    public boolean equals(@Nullable Object other) {
+      if (this == other) {
+        return true;
+      }
+      if (!(other instanceof MaskDecision)) {
+        return false;
+      }
+      MaskDecision that = (MaskDecision) other;
+      return kind == that.kind && Objects.equals(expression, that.expression);
+    }
+
+    /** Returns a hash of the typed outcome and optional SQL expression. */
+    @Override
+    public int hashCode() {
+      return Objects.hash(kind, expression);
     }
   }
 
@@ -285,7 +353,7 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     private int users;
     private boolean terminal;
     private final Object refreshLock = new Object();
-    @Nullable private volatile CompletedPolicy completedPolicy;
+    @Nullable private volatile Publication publication;
 
     Owner(Supplier<Backend> factory) {
       this.factory = factory;
@@ -327,17 +395,32 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
 
     private void completedRefresh(RangerBasePlugin plugin) {
       synchronized (refreshLock) {
+        Publication previous = publication;
+        CompletedPolicy policy = previous == null ? null : previous.policy;
+        CompletedRoles roles = previous == null ? null : previous.roles;
         RangerAuthContext context = plugin.getCurrentRangerAuthContext();
-        // The constructor publishes plugin-context first; current-context follows engine
-        // assignment.
-        // Role-only notifications keep the same context and must never rebind a rejected policy.
-        if (context != null
-            && context == plugin.getPluginContext().getAuthContext()
-            && (completedPolicy == null || context != completedPolicy.context)) {
-          completedPolicy =
-              new CompletedPolicy(
-                  context, plugin.getPoliciesVersion(), plugin.getServiceConfigs().get(METALAKE));
+        // Policy construction exposes plugin-context before engine/current-context assignment.
+        // The untyped callback must never rebind the same rejected policy or role mapping.
+        if (context != null && context == plugin.getPluginContext().getAuthContext()) {
+          if (policy == null || context != policy.context) {
+            policy =
+                new CompletedPolicy(
+                    context, plugin.getPoliciesVersion(), plugin.getServiceConfigs().get(METALAKE));
+          }
+          RangerRoles input = plugin.getRoles();
+          RangerRolesUtil mapping = context.getRangerRolesUtil();
+          // Ranger 2.8 builds all five final maps before assigning a NEW util. Final-field
+          // initialization safety covers those maps even when Ranger's optional locks are off.
+          // This callback observes publication, not a role-event kind or setRoles return.
+          if (mapping != null
+              && input != null
+              && input == mapping.getRoles()
+              && (roles == null || roles.context != context || roles.mapping != mapping)) {
+            roles = new CompletedRoles(context, mapping, input);
+          }
         }
+        // Every observed notification invalidates retained stamps, including enricher events.
+        publication = new Publication(policy, roles);
       }
     }
 
@@ -388,6 +471,32 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     }
   }
 
+  private static final class CompletedRoles {
+    private final RangerAuthContext context;
+    private final RangerRolesUtil mapping;
+    private final RangerRoles input;
+    private final long version;
+    @Nullable private final String service;
+
+    private CompletedRoles(RangerAuthContext context, RangerRolesUtil mapping, RangerRoles input) {
+      this.context = context;
+      this.mapping = mapping;
+      this.input = input;
+      this.version = mapping.getRoleVersion();
+      this.service = input.getServiceName();
+    }
+  }
+
+  private static final class Publication {
+    @Nullable private final CompletedPolicy policy;
+    @Nullable private final CompletedRoles roles;
+
+    private Publication(@Nullable CompletedPolicy policy, @Nullable CompletedRoles roles) {
+      this.policy = policy;
+      this.roles = roles;
+    }
+  }
+
   private static final class KyuubiBackend implements Backend {
     private final SparkRangerAdminPlugin$ plugin;
 
@@ -425,10 +534,12 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     }
   }
 
-  private Versions snapshot() {
+  private SnapshotStamp snapshot() {
     RangerBasePlugin plugin = owner.backend.plugin();
     DeltaRangerConfig config = owner.config;
-    CompletedPolicy completed = owner.completedPolicy;
+    Publication publication = owner.publication;
+    CompletedPolicy completed = publication == null ? null : publication.policy;
+    CompletedRoles completedRoles = publication == null ? null : publication.roles;
     DeltaRangerConfig.require(
         completed != null
             && completed.context == plugin.getCurrentRangerAuthContext()
@@ -447,19 +558,38 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
         config.metalake.equals(plugin.getServiceConfigs().get(METALAKE)),
         "Downloaded metalake binding mismatch");
     validateDefinition(plugin.getServiceDef(), config.definition);
+    DeltaRangerConfig.require(
+        completedRoles != null
+            && completedRoles.context == completed.context
+            && completedRoles.mapping == completed.context.getRangerRolesUtil()
+            && completedRoles.version == role
+            && config.service.equals(completedRoles.service),
+        "Role mapping refresh has not completed publication");
     RangerRoles roles = plugin.getRangerRoles();
     DeltaRangerConfig.require(
         roles != null
+            && roles == completedRoles.input
+            && roles == plugin.getRoles()
+            && roles == completedRoles.mapping.getRoles()
             && config.service.equals(roles.getServiceName())
             && Objects.equals(roles.getRoleVersion(), role),
         "Downloaded roles missing or bound to another service/version");
     DeltaRangerConfig.require(
-        completed == owner.completedPolicy
+        roles == plugin.getRangerRoles()
+            && roles == plugin.getRoles()
+            && Objects.equals(roles.getRoleVersion(), role)
+            && config.service.equals(roles.getServiceName())
+            && config.service.equals(plugin.getServiceName())
+            && config.metalake.equals(plugin.getServiceConfigs().get(METALAKE))
             && completed.context == plugin.getCurrentRangerAuthContext()
             && completed.context == plugin.getPluginContext().getAuthContext()
-            && policy == plugin.getPoliciesVersion(),
-        "Policy context changed during readiness validation");
-    return new Versions(config.service, config.definition, policy, role);
+            && completedRoles.mapping == completed.context.getRangerRolesUtil()
+            && policy == plugin.getPoliciesVersion()
+            && role == plugin.getRolesVersion()
+            && publication == owner.publication,
+        "Policy or role publication changed during readiness validation");
+    return new SnapshotStamp(
+        this, config, publication, new Versions(config.service, config.definition, policy, role));
   }
 
   private RangerAccessResult evaluate(
@@ -468,8 +598,7 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     try {
       Objects.requireNonNull(subject, "Authenticated query subject required");
       Objects.requireNonNull(key, "Canonical resource required");
-      CompletedPolicy beforePolicy = owner.completedPolicy;
-      Versions before = snapshot();
+      SnapshotStamp before = snapshot();
       RangerBasePlugin plugin = owner.backend.plugin();
       AccessResource resource = key.resource();
       resource.setServiceDef(plugin.getServiceDef());
@@ -499,14 +628,9 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
       }
       DeltaRangerConfig.require(result != null, "Null Ranger evaluation result");
       DeltaRangerConfig.require(
-          before.service.equals(result.getServiceName()), "Evaluation service mismatch");
-      validateDefinition(result.getServiceDef(), before.definition);
-      Versions after = snapshot();
-      DeltaRangerConfig.require(
-          beforePolicy == owner.completedPolicy
-              && before.policy == after.policy
-              && before.role == after.role,
-          "Ranger snapshot refreshed during evaluation; reanalyze the query");
+          before.versions.service.equals(result.getServiceName()), "Evaluation service mismatch");
+      validateDefinition(result.getServiceDef(), before.versions.definition);
+      requireSnapshot(before);
       return result;
     } catch (RuntimeException | LinkageError e) {
       throw new SecurityException("Delta Ranger evaluation rejected", e);

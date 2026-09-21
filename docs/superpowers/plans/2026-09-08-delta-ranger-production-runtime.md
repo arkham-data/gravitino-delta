@@ -52,6 +52,18 @@ collection-boundary prototype passes on both Spark patches but installs no produ
 guard or complete security receipt. Task 4 remains open, as does the broader
 full-Delta objective.
 
+The next production foundation replaces numeric-only engine checks with opaque,
+lease-bound policy and role publication stamps, including same-version role-map
+replacement and observed refreshes during evaluation. A package-private metadata
+read scope now checks the same finite lease around complete caller operations.
+Both foundations passed independent review and 65 focused tests on Spark 3.5.4 /
+Delta 3.3.2 with Ranger 2.8.0, plus formatting and Javadoc. See
+`task-4-engine-stamp-report.md` and `task-4-metadata-scope-report.md` in the ledger.
+The metadata scope still needs the typed registration reader and catalog wiring;
+no production collection guard is installed. Exact native cache provenance,
+registration-to-scan binding and the complete original-decision receipt remain
+integration gates. The 208 live checks and checkpoint 56/81 are unchanged.
+
 ## Global Constraints
 
 - One Ranger resource service is provisioned for exactly one metalake. Server pushdown and Spark engine bind to the same service identity and metalake; canonical catalog is within that metalake. Policy labels are mutation ownership selectors, not an extra Ranger resource dimension. No global catalog-name uniqueness assumption.

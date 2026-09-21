@@ -226,6 +226,7 @@ public final class TestDeltaRangerNativeSelect {
       roles.setServiceName("service");
       roles.setRoleVersion(1L);
       when(plugin.getRangerRoles()).thenReturn(roles);
+      when(plugin.getRoles()).thenReturn(roles);
       when(plugin.getRolesFromUserAndGroups(any(), any())).thenReturn(Collections.emptySet());
       doAnswer(
               call -> {
@@ -288,7 +289,8 @@ public final class TestDeltaRangerNativeSelect {
     /** {@inheritDoc} */
     @Override
     public void start() {
-      RangerAuthContext published = mock(RangerAuthContext.class);
+      RangerAuthContext published =
+          new RangerAuthContext(Collections.emptyMap(), null, plugin.getRoles(), null);
       when(plugin.getCurrentRangerAuthContext()).thenReturn(published);
       when(context.getAuthContext()).thenReturn(published);
       listener.contextChanged();

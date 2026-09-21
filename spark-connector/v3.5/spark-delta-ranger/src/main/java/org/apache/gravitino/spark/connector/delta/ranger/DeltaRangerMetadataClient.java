@@ -28,6 +28,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
@@ -50,6 +51,7 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
           });
   private final LongSupplier nanoTime;
   private final ScheduledExecutorService scheduler;
+  private final Object leaseIdentity = new Object();
   @Nullable private Supplier<GravitinoClient> clients;
   @Nullable private GravitinoClient client;
   @Nullable private ScheduledFuture<?> expiration;
@@ -161,6 +163,38 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
     }
   }
 
+  <T> T read(Function<Catalog, T> operation) {
+    Function<Catalog, T> activeOperation =
+        Objects.requireNonNull(operation, "Metadata read operation required");
+    Catalog metadata = get();
+    MetadataLeaseStamp expected = leaseStamp();
+    requireLive(expected);
+    T result;
+    try {
+      result = activeOperation.apply(metadata);
+    } catch (RuntimeException | Error failure) {
+      requireLive(expected);
+      throw failure;
+    }
+    requireLive(expected);
+    return result;
+  }
+
+  synchronized MetadataLeaseStamp leaseStamp() {
+    requireUsable();
+    if (!started || client == null) {
+      throw new IllegalStateException("Metadata lease has no owned client");
+    }
+    return new MetadataLeaseStamp(leaseIdentity);
+  }
+
+  synchronized void requireLive(@Nullable MetadataLeaseStamp expected) {
+    requireUsable();
+    if (!started || client == null || expected == null || expected.leaseIdentity != leaseIdentity) {
+      throw new IllegalStateException("Metadata lease stamp is not live");
+    }
+  }
+
   /** Closes only this lease's owned client; repeated close is harmless. */
   @Override
   public void close() {
@@ -238,6 +272,20 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
             });
     executor.setRemoveOnCancelPolicy(true);
     return executor;
+  }
+
+  static final class MetadataLeaseStamp {
+    private final Object leaseIdentity;
+
+    private MetadataLeaseStamp(Object leaseIdentity) {
+      this.leaseIdentity = leaseIdentity;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public String toString() {
+      return "MetadataLeaseStamp";
+    }
   }
 
   private static final class MetadataBuilder extends GravitinoClient.ClientBuilder {

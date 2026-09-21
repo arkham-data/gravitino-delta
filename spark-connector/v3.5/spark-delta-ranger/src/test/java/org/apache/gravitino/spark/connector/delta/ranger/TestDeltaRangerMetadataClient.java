@@ -20,6 +20,7 @@
 package org.apache.gravitino.spark.connector.delta.ranger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,6 +32,7 @@ import static org.mockito.Mockito.when;
 
 import com.sun.net.httpserver.HttpServer;
 import java.io.OutputStream;
+import java.io.Serializable;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivilegedExceptionAction;
@@ -49,8 +51,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.gravitino.Catalog;
+import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.client.CustomTokenProvider;
 import org.apache.gravitino.client.GravitinoClient;
+import org.apache.gravitino.rel.Table;
+import org.apache.gravitino.rel.TableCatalog;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.junit.jupiter.api.Test;
 
@@ -233,6 +238,208 @@ class TestDeltaRangerMetadataClient {
   }
 
   @Test
+  void scopedReadUsesCatalogFromOwnedClientAndKeepsLiveStampValid() {
+    AtomicLong time = new AtomicLong();
+    GravitinoClient client = mock(GravitinoClient.class);
+    Catalog catalog = mock(Catalog.class);
+    Object first = new Object();
+    Object second = new Object();
+    when(client.loadCatalog("delta_a")).thenReturn(catalog);
+    try (DeltaRangerMetadataClient lease =
+        new DeltaRangerMetadataClient(time::get, mock(ScheduledExecutorService.class))) {
+      lease.configure("delta_a", Duration.ofMinutes(1), () -> client);
+
+      assertSame(first, lease.read(loaded -> assertCatalogAndReturn(catalog, loaded, first)));
+      DeltaRangerMetadataClient.MetadataLeaseStamp stamp = lease.leaseStamp();
+      assertEquals("MetadataLeaseStamp", stamp.toString());
+      assertFalse(Serializable.class.isAssignableFrom(stamp.getClass()));
+      assertSame(second, lease.read(loaded -> assertCatalogAndReturn(catalog, loaded, second)));
+      lease.requireLive(stamp);
+
+      verify(client, times(2)).loadCatalog("delta_a");
+    }
+  }
+
+  @Test
+  void leaseStampRequiresStartedOwnedClient() {
+    GravitinoClient client = mock(GravitinoClient.class);
+    when(client.loadCatalog("delta_a")).thenReturn(mock(Catalog.class));
+    try (DeltaRangerMetadataClient unconfigured = new DeltaRangerMetadataClient();
+        DeltaRangerMetadataClient configured = new DeltaRangerMetadataClient()) {
+      assertThrows(IllegalStateException.class, unconfigured::leaseStamp);
+      configured.configure("delta_a", Duration.ofMinutes(1), () -> client);
+      assertThrows(IllegalStateException.class, configured::leaseStamp);
+
+      configured.get();
+      configured.requireLive(configured.leaseStamp());
+    }
+  }
+
+  @Test
+  void leaseStampCannotValidateAnotherClientLease() {
+    GravitinoClient firstClient = mock(GravitinoClient.class);
+    GravitinoClient secondClient = mock(GravitinoClient.class);
+    when(firstClient.loadCatalog("delta_a")).thenReturn(mock(Catalog.class));
+    when(secondClient.loadCatalog("delta_b")).thenReturn(mock(Catalog.class));
+    try (DeltaRangerMetadataClient first = new DeltaRangerMetadataClient();
+        DeltaRangerMetadataClient second = new DeltaRangerMetadataClient()) {
+      first.configure("delta_a", Duration.ofMinutes(1), () -> firstClient);
+      second.configure("delta_b", Duration.ofMinutes(1), () -> secondClient);
+      first.get();
+      second.get();
+
+      assertThrows(IllegalStateException.class, () -> second.requireLive(first.leaseStamp()));
+    }
+  }
+
+  @Test
+  void closedAndMonotonicallyExpiredLeasesRejectPriorStamp() {
+    AtomicLong time = new AtomicLong();
+    ScheduledExecutorService delayedTimer = mock(ScheduledExecutorService.class);
+    GravitinoClient closedClient = mock(GravitinoClient.class);
+    GravitinoClient expiredClient = mock(GravitinoClient.class);
+    when(closedClient.loadCatalog("delta_a")).thenReturn(mock(Catalog.class));
+    when(expiredClient.loadCatalog("delta_b")).thenReturn(mock(Catalog.class));
+    DeltaRangerMetadataClient closed = new DeltaRangerMetadataClient(time::get, delayedTimer);
+    DeltaRangerMetadataClient expired = new DeltaRangerMetadataClient(time::get, delayedTimer);
+    try {
+      closed.configure("delta_a", Duration.ofMillis(1), () -> closedClient);
+      expired.configure("delta_b", Duration.ofMillis(1), () -> expiredClient);
+      closed.get();
+      expired.get();
+      DeltaRangerMetadataClient.MetadataLeaseStamp closedStamp = closed.leaseStamp();
+      DeltaRangerMetadataClient.MetadataLeaseStamp expiredStamp = expired.leaseStamp();
+
+      closed.close();
+      assertThrows(IllegalStateException.class, () -> closed.requireLive(closedStamp));
+      time.set(TimeUnit.MILLISECONDS.toNanos(1));
+      assertThrows(IllegalStateException.class, () -> expired.requireLive(expiredStamp));
+    } finally {
+      closed.close();
+      expired.close();
+    }
+  }
+
+  @Test
+  void scopedTableReadRejectsValueWhenDeadlinePassesDuringLoadTable() throws Exception {
+    AtomicLong time = new AtomicLong();
+    ScheduledExecutorService delayedTimer = mock(ScheduledExecutorService.class);
+    GravitinoClient client = mock(GravitinoClient.class);
+    Catalog catalog = mock(Catalog.class);
+    TableCatalog tables = mock(TableCatalog.class);
+    Table table = mock(Table.class);
+    NameIdentifier name = NameIdentifier.of("db", "table");
+    CountDownLatch entered = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    when(client.loadCatalog("delta_a")).thenReturn(catalog);
+    when(catalog.asTableCatalog()).thenReturn(tables);
+    when(tables.loadTable(name))
+        .thenAnswer(
+            call -> {
+              entered.countDown();
+              assertTrue(release.await(5, TimeUnit.SECONDS));
+              return table;
+            });
+    ExecutorService reads = Executors.newSingleThreadExecutor();
+    try (DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient(time::get, delayedTimer)) {
+      lease.configure("delta_a", Duration.ofMillis(1), () -> client);
+      Future<?> read =
+          reads.submit(
+              () ->
+                  assertThrows(
+                      IllegalStateException.class,
+                      () -> lease.read(loaded -> loaded.asTableCatalog().loadTable(name))));
+      assertTrue(entered.await(2, TimeUnit.SECONDS));
+      time.set(TimeUnit.MILLISECONDS.toNanos(1));
+      release.countDown();
+      read.get(2, TimeUnit.SECONDS);
+    } finally {
+      release.countDown();
+      reads.shutdownNow();
+    }
+  }
+
+  @Test
+  void closeDoesNotWaitForStalledScopedTableReadAndRejectsLateValue() throws Exception {
+    GravitinoClient client = mock(GravitinoClient.class);
+    Catalog catalog = mock(Catalog.class);
+    TableCatalog tables = mock(TableCatalog.class);
+    NameIdentifier name = NameIdentifier.of("db", "table");
+    CountDownLatch entered = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    when(client.loadCatalog("delta_a")).thenReturn(catalog);
+    when(catalog.asTableCatalog()).thenReturn(tables);
+    when(tables.loadTable(name))
+        .thenAnswer(
+            call -> {
+              entered.countDown();
+              assertTrue(release.await(5, TimeUnit.SECONDS));
+              return mock(Table.class);
+            });
+    ExecutorService threads = Executors.newFixedThreadPool(2);
+    DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient();
+    lease.configure("delta_a", Duration.ofMinutes(1), () -> client);
+    try {
+      Future<?> read =
+          threads.submit(
+              () ->
+                  assertThrows(
+                      IllegalStateException.class,
+                      () -> lease.read(loaded -> loaded.asTableCatalog().loadTable(name))));
+      assertTrue(entered.await(2, TimeUnit.SECONDS));
+      Future<?> close = threads.submit(lease::close);
+      close.get(1, TimeUnit.SECONDS);
+      release.countDown();
+      read.get(2, TimeUnit.SECONDS);
+    } finally {
+      release.countDown();
+      threads.shutdownNow();
+      lease.close();
+    }
+  }
+
+  @Test
+  void scopedReadPreservesCallbackFailureWhileLeaseRemainsLive() {
+    GravitinoClient client = mock(GravitinoClient.class);
+    when(client.loadCatalog("delta_a")).thenReturn(mock(Catalog.class));
+    IllegalArgumentException malformed = new IllegalArgumentException("malformed receipt");
+    try (DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient()) {
+      lease.configure("delta_a", Duration.ofMinutes(1), () -> client);
+
+      IllegalArgumentException failure =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  lease.read(
+                      catalog -> {
+                        throw malformed;
+                      }));
+
+      assertSame(malformed, failure);
+    }
+  }
+
+  @Test
+  void scopedReadRejectsCallbackFailureWhenLeaseExpiresDuringCallback() {
+    AtomicLong time = new AtomicLong();
+    GravitinoClient client = mock(GravitinoClient.class);
+    when(client.loadCatalog("delta_a")).thenReturn(mock(Catalog.class));
+    try (DeltaRangerMetadataClient lease =
+        new DeltaRangerMetadataClient(time::get, mock(ScheduledExecutorService.class))) {
+      lease.configure("delta_a", Duration.ofMillis(1), () -> client);
+
+      assertThrows(
+          IllegalStateException.class,
+          () ->
+              lease.read(
+                  catalog -> {
+                    time.set(TimeUnit.MILLISECONDS.toNanos(1));
+                    throw new IllegalArgumentException("malformed receipt");
+                  }));
+    }
+  }
+
+  @Test
   void initialConstructionTimeCountsAgainstDeadlineAndLateClientCloses() throws Exception {
     AtomicLong time = new AtomicLong();
     GravitinoClient client = mock(GravitinoClient.class);
@@ -375,7 +582,17 @@ class TestDeltaRangerMetadataClient {
       query.doAs(
           (PrivilegedExceptionAction<Void>)
               () -> {
-                assertEquals("delta_a", metadata.get().name());
+                assertEquals(
+                    "delta_a",
+                    metadata.read(
+                        catalog -> {
+                          assertEquals(
+                              "query-reader",
+                              DeltaRangerQuerySubject.current(
+                                      TestDeltaRangerQuerySubject.session(null, "simple"))
+                                  .user());
+                          return catalog.name();
+                        }));
                 assertEquals(
                     "query-reader",
                     DeltaRangerQuerySubject.current(
@@ -395,6 +612,11 @@ class TestDeltaRangerMetadataClient {
     } finally {
       server.stop(0);
     }
+  }
+
+  private static Object assertCatalogAndReturn(Catalog expected, Catalog actual, Object result) {
+    assertSame(expected, actual);
+    return result;
   }
 
   private static final class MetadataToken extends CustomTokenProvider {
