@@ -32,6 +32,12 @@ Scala 2.12, and Java 17. See the [production results](../../../../docs/delta-ran
 for executed evidence and outstanding gates. Building a JAR does not qualify a
 query route or complete the full Delta authorization goal.
 
+As of September 21, 2026, the qualification environment's Docker services are
+stopped and ongoing verification is offline only. Historical policy/role versions
+and readiness records are not current service attestations. Re-establish exact
+service and fixture continuity before resuming the live matrix; do not replay
+completed or failed public mutations to reconstruct it.
+
 Install exactly one `gravitino-spark-connector-delta-runtime-3.5_2.12` and one
 `gravitino-spark-connector-delta-ranger-runtime-3.5_2.12` in the trusted Spark
 launcher. Supply Spark/Scala/Hadoop from the selected actual Spark distribution,
@@ -73,7 +79,9 @@ The initial acceptance harness uses the production main's explicit configuration
 argument with `GRAVITINO_TEST` present. That environment switch also selects
 `catalogs/catalog-lakehouse-delta/build/libs` and
 `authorizations/authorization-ranger-delta/build/libs` below `GRAVITINO_HOME`.
-Point those paths only at immutable archived production package files; the switch
+It also loads provider configuration from
+`catalogs/catalog-lakehouse-delta/build/resources/main`; point that path to the
+immutable catalog package `conf` directory. Point the library paths only at immutable archived production package files; the switch
 does not justify installing MiniGravitino or test fixtures. A normal deployed
 server uses the ordinary package layout without that switch.
 
@@ -84,12 +92,22 @@ Basic-authenticated plugin downloader, Gravitino service administrator,
 Gravitino application/current actor, metadata reader, and query identities.
 See the [adapter startup contract](../spark-delta-ranger/README.md) for the exact
 Spark flags, SIMPLE metadata file, full-snapshot requirement, cache permissions,
-pre-initialization audit logging guard, and query restrictions.
+pre-initialization audit logging guard, and query restrictions. Set the initial
+Spark session configuration explicitly, before building the session:
+
+```properties
+spark.sql.extensions=org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerSparkExtension,io.delta.sql.DeltaSparkSessionExtension
+```
+
+A native-only value copied into session options can override the driver plugin's
+SparkContext setting and will fail the companion's extension-order validation.
 
 Application discovery requires local `CATALOG/USE_CATALOG/ALLOW` before catalog
 wrapper initialization. That privilege grants no Ranger SELECT. A Ranger-only
 column reader keeps only catalog visibility in Gravitino; the separate metadata
-reader resolves registration/schema/table metadata. A hidden catalog is absent
+reader resolves registration/schema/table metadata. Gravitino table reads require
+scoped catalog-use, schema-use, and table-select permissions; qualification of this
+metadata permission composition is still pending. A hidden catalog is absent
 from Spark registration even when metadata credentials could read it. Token query
 attestation and broader application authentication remain unqualified.
 

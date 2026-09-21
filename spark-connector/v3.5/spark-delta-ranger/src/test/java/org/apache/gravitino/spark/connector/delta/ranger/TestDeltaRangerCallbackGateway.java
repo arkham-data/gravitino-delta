@@ -175,6 +175,10 @@ class TestDeltaRangerCallbackGateway {
           () -> {
             assertTrue(gateway.awaitDrained(), "Evidence errors cannot leak active handlers");
             assertThrows(
+                IOException.class,
+                gateway::recordedEvents,
+                "Lost evidence must prevent download snapshot acceptance");
+            assertThrows(
                 IOException.class, gateway::close, "Lost evidence must prevent acceptance");
           });
       assertEquals(failFinal ? 1 : 0, requests.get());

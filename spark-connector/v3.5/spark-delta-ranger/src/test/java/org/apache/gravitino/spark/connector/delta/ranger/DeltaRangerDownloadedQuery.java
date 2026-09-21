@@ -28,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -62,130 +63,145 @@ public final class DeltaRangerDownloadedQuery {
   public static void main(String[] args) throws Exception {
     JsonNode input = JSON.readTree(Path.of(args[0]).toFile());
     Path output = Path.of(args[1]);
-    Files.createDirectory(output);
-    Properties properties = new Properties();
-    try (InputStream stream =
-        Files.newInputStream(Path.of(input.path("sparkConfigurationFile").asText()))) {
-      properties.load(stream);
-    }
-    SparkConf conf =
-        new SparkConf(false)
-            .setMaster("local[2]")
-            .setAppName("delta-ranger-production-qualification");
-    for (String key : properties.stringPropertyNames()) {
-      conf.set(key, properties.getProperty(key));
-    }
-    Configuration hadoop = new Configuration();
-    for (String key : properties.stringPropertyNames()) {
-      if (key.startsWith("spark.hadoop.")) {
-        hadoop.set(key.substring("spark.hadoop.".length()), properties.getProperty(key));
+    Files.createDirectory(
+        output, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+    try (DeltaRangerDownloadedSecurity security =
+        new DeltaRangerDownloadedSecurity(
+            Path.of(input.path("sourceSecurityDirectory").asText()),
+            Path.of(input.path("driverSecurityDirectory").asText()),
+            output,
+            input.path("resourceService").asText())) {
+      Properties properties = new Properties();
+      try (InputStream stream =
+          Files.newInputStream(Path.of(input.path("sparkConfigurationFile").asText()))) {
+        properties.load(stream);
       }
-    }
-    UserGroupInformation.setConfiguration(hadoop);
-    SparkSession spark = null;
-    try {
-      spark = SparkSession.builder().config(conf).getOrCreate();
-      DeltaRangerQuerySubject subject = DeltaRangerQuerySubject.current(spark);
-      check(
-          subject.user().equals(input.path("subject").asText()),
-          "Actual UGI differs from expected query subject");
-      check(
-          spark.sparkContext().sparkUser().equals(subject.user()),
-          "Application discovery identity differs from actual UGI");
-      check(
-          !subject.user().equals(input.path("metadataPrincipal").asText()),
-          "Metadata identity became the query identity");
-      Map<String, Object> startup = new LinkedHashMap<>();
-      startup.put("spark", spark.version());
-      startup.put("user", subject.user());
-      startup.put("groups", subject.groups());
-      startup.put("applicationUser", spark.sparkContext().sparkUser());
-      startup.put("origins", origins());
-      startup.put("helpers", helpers());
-      Map<String, Boolean> visible = new LinkedHashMap<>();
-      for (JsonNode catalog : input.path("catalogs")) {
-        visible.put(
-            catalog.asText(), spark.conf().contains("spark.sql.catalog." + catalog.asText()));
+      SparkConf conf =
+          new SparkConf(false)
+              .setMaster("local[2]")
+              .setAppName("delta-ranger-production-qualification");
+      for (String key : properties.stringPropertyNames()) {
+        conf.set(key, properties.getProperty(key));
       }
-      startup.put("visibleCatalogs", visible);
-      DeltaRangerConfig config =
-          DeltaRangerConfig.fromClasspath(
-              input.path("resourceService").asText(),
-              input.path("resourceDefinition").asText(),
-              input.path("metalake").asText());
-      try (DeltaRangerPolicyEngine engine = DeltaRangerPolicyEngine.acquire(config);
-          BufferedReader commands =
-              new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
-        await(engine, input.path("minPolicy").asLong(0), input.path("minRole").asLong(0));
-        startup.put("versions", versions(engine));
-        write(output.resolve("ready.json"), startup);
-        String line;
-        while ((line = commands.readLine()) != null) {
-          JsonNode command = JSON.readTree(line);
-          if (command.path("close").asBoolean()) {
-            break;
-          }
-          SparkRangerAdminPlugin.refreshPoliciesAndTags();
-          await(engine, command.path("minPolicy").asLong(0), command.path("minRole").asLong(0));
-          Map<String, Object> result = new LinkedHashMap<>();
-          result.put("versionsBefore", versions(engine));
-          result.put("subject", DeltaRangerQuerySubject.current(spark).user());
-          result.put("sql", command.path("sql").asText());
-          List<List<Object>> rows = new ArrayList<>();
-          Throwable queryFailure = null;
-          try {
-            for (Row row : spark.sql(command.path("sql").asText()).collectAsList()) {
-              List<Object> values = new ArrayList<>();
-              for (int i = 0; i < row.size(); i++) {
-                values.add(row.isNullAt(i) ? null : row.get(i));
-              }
-              rows.add(values);
-            }
-          } catch (Exception failure) {
-            queryFailure = failure;
-          }
-          result.put(
-              "failureClass", queryFailure == null ? null : queryFailure.getClass().getName());
-          result.put("authorizationDenied", isSecurityFailure(queryFailure));
-          result.put("rows", rows);
-          result.put("versionsAfter", versions(engine));
-          write(output.resolve(command.path("id").asText() + ".json"), result);
-          if (command.path("denied").asBoolean()) {
-            check(
-                isSecurityFailure(queryFailure),
-                "Expected an authorization denial, not a setup or execution failure");
-          } else if (command.path("hidden").asBoolean()) {
-            check(queryFailure != null, "Hidden catalog unexpectedly resolved");
-            check(
-                !spark.conf().contains("spark.sql.catalog." + command.path("catalog").asText()),
-                "Hidden catalog was registered by discovery");
-          } else {
-            if (queryFailure != null) {
-              throw new AssertionError(
-                  "Fresh native SELECT failed; private evidence retained", queryFailure);
-            }
-            check(
-                normalized(JSON.valueToTree(rows)).equals(normalized(command.path("expectedRows"))),
-                "Executed native rows differ from independent expected rows");
-          }
-          write(
-              output.resolve(command.path("id").asText() + "-passed.json"),
-              Collections.singletonMap("passed", true));
+      Configuration hadoop = new Configuration();
+      for (String key : properties.stringPropertyNames()) {
+        if (key.startsWith("spark.hadoop.")) {
+          hadoop.set(key.substring("spark.hadoop.".length()), properties.getProperty(key));
         }
       }
-      write(output.resolve("completed.json"), Collections.singletonMap("completed", true));
-    } catch (Throwable failure) {
-      Map<String, Object> error = new LinkedHashMap<>();
-      List<String> causes = new ArrayList<>();
-      for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-        causes.add(cause.getClass().getName());
-      }
-      error.put("failureClasses", causes);
-      write(output.resolve("failure.json"), error);
-      throw failure;
-    } finally {
-      if (spark != null) {
-        spark.stop();
+      UserGroupInformation.setConfiguration(hadoop);
+      SparkSession spark = null;
+      try {
+        spark = SparkSession.builder().config(conf).getOrCreate();
+        DeltaRangerQuerySubject subject = DeltaRangerQuerySubject.current(spark);
+        check(
+            subject.user().equals(input.path("subject").asText()),
+            "Actual UGI differs from expected query subject");
+        check(
+            spark.sparkContext().sparkUser().equals(subject.user()),
+            "Application discovery identity differs from actual UGI");
+        check(
+            !subject.user().equals(input.path("metadataPrincipal").asText()),
+            "Metadata identity became the query identity");
+        Map<String, Object> startup = new LinkedHashMap<>();
+        startup.put("spark", spark.version());
+        startup.put("user", subject.user());
+        startup.put("groups", subject.groups());
+        startup.put("applicationUser", spark.sparkContext().sparkUser());
+        startup.put("origins", origins());
+        startup.put("helpers", helpers());
+        Map<String, Boolean> visible = new LinkedHashMap<>();
+        for (JsonNode catalog : input.path("catalogs")) {
+          visible.put(
+              catalog.asText(), spark.conf().contains("spark.sql.catalog." + catalog.asText()));
+        }
+        startup.put("visibleCatalogs", visible);
+        DeltaRangerConfig config =
+            DeltaRangerConfig.fromClasspath(
+                input.path("resourceService").asText(),
+                input.path("resourceDefinition").asText(),
+                input.path("metalake").asText());
+        try (DeltaRangerPolicyEngine engine = DeltaRangerPolicyEngine.acquire(config);
+            BufferedReader commands =
+                new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
+          await(engine, input.path("minPolicy").asLong(0), input.path("minRole").asLong(0));
+          check(security.awaitDrained(), "Initial Ranger download completion is unresolved");
+          security.recordInitialDownloads(
+              engine.versions().policy(), engine.versions().role(),
+              input.path("minPolicy").asLong(0), input.path("minRole").asLong(0));
+          startup.put("versions", versions(engine));
+          write(output.resolve("ready.json"), startup);
+          String line;
+          while ((line = commands.readLine()) != null) {
+            JsonNode command = JSON.readTree(line);
+            if (command.path("close").asBoolean()) {
+              break;
+            }
+            SparkRangerAdminPlugin.refreshPoliciesAndTags();
+            await(engine, command.path("minPolicy").asLong(0), command.path("minRole").asLong(0));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("versionsBefore", versions(engine));
+            result.put("subject", DeltaRangerQuerySubject.current(spark).user());
+            result.put("sql", command.path("sql").asText());
+            List<List<Object>> rows = new ArrayList<>();
+            Throwable queryFailure = null;
+            try {
+              for (Row row : spark.sql(command.path("sql").asText()).collectAsList()) {
+                List<Object> values = new ArrayList<>();
+                for (int i = 0; i < row.size(); i++) {
+                  values.add(row.isNullAt(i) ? null : row.get(i));
+                }
+                rows.add(values);
+              }
+            } catch (Exception failure) {
+              queryFailure = failure;
+            }
+            result.put(
+                "failureClass", queryFailure == null ? null : queryFailure.getClass().getName());
+            result.put("authorizationDenied", isSecurityFailure(queryFailure));
+            result.put("failureDetails", failureDetails(queryFailure));
+            result.put("rows", rows);
+            result.put("versionsAfter", versions(engine));
+            write(output.resolve(command.path("id").asText() + ".json"), result);
+            if (command.path("denied").asBoolean()) {
+              check(
+                  isSecurityFailure(queryFailure),
+                  "Expected an authorization denial, not a setup or execution failure");
+            } else if (command.path("hidden").asBoolean()) {
+              check(queryFailure != null, "Hidden catalog unexpectedly resolved");
+              check(
+                  !spark.conf().contains("spark.sql.catalog." + command.path("catalog").asText()),
+                  "Hidden catalog was registered by discovery");
+            } else {
+              if (queryFailure != null) {
+                throw new AssertionError(
+                    "Fresh native SELECT failed; private evidence retained", queryFailure);
+              }
+              check(
+                  normalized(JSON.valueToTree(rows))
+                      .equals(normalized(command.path("expectedRows"))),
+                  "Executed native rows differ from independent expected rows");
+            }
+            write(
+                output.resolve(command.path("id").asText() + "-passed.json"),
+                Collections.singletonMap("passed", true));
+          }
+        }
+        write(output.resolve("completed.json"), Collections.singletonMap("completed", true));
+      } catch (Throwable failure) {
+        Map<String, Object> error = new LinkedHashMap<>();
+        List<String> causes = new ArrayList<>();
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+          causes.add(cause.getClass().getName());
+        }
+        error.put("failureClasses", causes);
+        error.put("failureDetails", failureDetails(failure));
+        write(output.resolve("failure.json"), error);
+        throw failure;
+      } finally {
+        if (spark != null) {
+          spark.stop();
+        }
       }
     }
   }
@@ -286,11 +302,32 @@ public final class DeltaRangerDownloadedQuery {
 
   private static boolean isSecurityFailure(Throwable failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
-      if (cause instanceof SecurityException) {
+      StackTraceElement[] stack = cause.getStackTrace();
+      if (cause.getClass() == SecurityException.class
+          && "Delta Ranger access denied".equals(cause.getMessage())
+          && stack.length != 0
+          && DeltaRangerPolicyEngine.class.getName().equals(stack[0].getClassName())
+          && "authorize".equals(stack[0].getMethodName())) {
         return true;
       }
     }
     return false;
+  }
+
+  private static List<Map<String, Object>> failureDetails(Throwable failure) {
+    List<Map<String, Object>> details = new ArrayList<>();
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      Map<String, Object> value = new LinkedHashMap<>();
+      value.put("class", cause.getClass().getName());
+      value.put("message", cause.getMessage());
+      List<String> stack = new ArrayList<>();
+      for (StackTraceElement frame : cause.getStackTrace()) {
+        stack.add(frame.toString());
+      }
+      value.put("stack", stack);
+      details.add(value);
+    }
+    return details;
   }
 
   private static List<String> normalized(JsonNode rows) {
@@ -303,7 +340,9 @@ public final class DeltaRangerDownloadedQuery {
   }
 
   private static void write(Path path, Object value) throws Exception {
-    Files.writeString(path, JSON.writeValueAsString(value), StandardOpenOption.CREATE_NEW);
+    Files.createFile(
+        path, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+    Files.writeString(path, JSON.writeValueAsString(value), StandardOpenOption.WRITE);
   }
 
   private static void check(boolean condition, String diagnostic) {

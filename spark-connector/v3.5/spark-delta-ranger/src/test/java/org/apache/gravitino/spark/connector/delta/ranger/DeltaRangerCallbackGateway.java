@@ -35,6 +35,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -120,6 +121,14 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
 
   long completed() {
     return completed.get();
+  }
+
+  synchronized List<String> recordedEvents() throws IOException {
+    if (evidenceFailure.get() != null) {
+      throw new IOException(
+          "Callback evidence was lost; acceptance is invalid", evidenceFailure.get());
+    }
+    return Files.readAllLines(evidence);
   }
 
   /**

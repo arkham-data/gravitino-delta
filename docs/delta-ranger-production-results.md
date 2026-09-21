@@ -19,12 +19,19 @@
 
 # Delta Ranger production-chain qualification
 
-Task 4 is in progress. The optional companion packaging and test-application
-checkpoint are implemented; no public Gravitino → Ranger → executed Spark query
-chain has been qualified by this checkpoint. The accepted preceding source is
-`9aafaa9cb433e2341a3d7c1384d504ba4d7bc772`.
+Task 4 is in progress. As of September 21, 2026, Docker has been stopped by the
+user and work has resumed offline only. No service readiness or current Ranger
+policy/role generation is asserted. The recorded policy 40 / role 63 floor is
+historical; live qualification requires independently re-established service and
+fixture continuity before any query or public mutation resumes.
 
-## Verified packaging checkpoint
+Public callbacks, authenticated downloads, and three masked/filtered native
+queries have historical passing evidence. The complete four-pair native SELECT
+matrix and remaining refresh/failure gates are still incomplete. The following
+initial packaging checkpoint is retained as history; later sections supersede its
+statements about unexecuted public callbacks and queries.
+
+## Initial verified packaging checkpoint
 
 | Actual archived runtime | Packaging | Pinned helper probe | Public callbacks / native SELECT |
 | --- | --- | --- | --- |
@@ -56,7 +63,7 @@ existing non-JNA Hostname implementation, and keeps distribution-provided APIs o
 of the companion. Three original Ranger `ugsync-util` helpers and their JAAS name
 strings move to a private package. This is not Kerberos qualification.
 
-## Public-chain checkpoint still pending
+## Initial public-chain checkpoint (historical)
 
 The production server bundle has 145 parent runtime JARs and separate archived
 provider/authorization packages, with no project fixtures or parent Ranger
@@ -102,3 +109,79 @@ expressions, DML/DDL, streaming, time travel, maintenance, cached/reused plans,
 metadata confidentiality, supported launcher restrictions, and isolated catalog-demo
 integration remain subsequent gates. No demo source, core/API/server/client source,
 or native storage objects were changed by this checkpoint.
+
+## Live callback serialization gate
+
+The first public catalog request stopped before Ranger because the explicit-config
+`GRAVITINO_TEST` layout also requires
+`catalogs/catalog-lakehouse-delta/build/resources/main` to point to archived catalog
+configuration. After correcting that private deployment path and independently
+confirming catalog absence, a catalog-only resume made 13 completed Ranger calls.
+Role creation succeeded, but the subsequent role update failed: Ranger 2.8's client
+serialized fetched timestamps as `yyyyMMdd-HH:mm:ss.SSS-Z`, which its Admin rejected.
+The public request completed with 500 and catalog creation rolled back; the empty
+Ranger role remains an explicitly retained failed-attempt artifact.
+
+The optional Delta client now sends detached role/policy request maps with the
+original numeric epoch-millisecond timestamps. Five write overloads preserve all
+model fields and typed responses without mutating shared serialization settings
+or caller models. Focused wire tests observed the original rejection, then passed
+with complete field/caller preservation; resource-empty policies are rejected
+before sending a request. After a controlled provider restart, all three public catalog/schema/adopt/publish
+sequences completed successfully. A genuine fresh-user membership then reproduced
+the next protocol issue: the one external-user POST completed with 204, while the
+public grant completed with 500 after local membership persisted. Independent
+readback found the user but no matching Ranger membership. That failed role remains
+untouched. The optional client now validates actual principal statuses, requires one
+exact user readback after 204, and closes acquired responses. A distinct fresh
+principal subsequently passed the public callback and exact Ranger membership checks.
+
+Focused wire tests also reproduced false success on 503 for nine callback write
+methods, including policy deletion and role membership. Those optional client paths
+now validate each pinned API's expected status before decoding; the four model read
+paths already fail in Ranger's GET transport and remain unchanged. Thirteen focused
+status, principal, and timestamp tests passed before the controlled deployment.
+These wire regressions do not replace the remaining live failure-after-persistence
+and downloaded native-query gates.
+
+The public matrix bootstrap created visibility-only roles and memberships for the
+three query subjects. Such membership callbacks may mirror Ranger identities and
+roles; independent policy inspection verified that the column reader's visibility
+role had zero data-policy references. The separate metadata reader received its own
+scoped table role. Ranger-owned column/mask/filter fixtures were then installed.
+
+The first actual Spark 3.5.6 / Delta 3.3.2 driver verified its archived origins,
+separate query identity, application-visible catalogs, and genuine Basic downloader
+policy/role versions. Its first SELECT failed before table analysis because the
+session extension configuration contained only the native Delta extension. The
+original run and a diagnostic run are retained as setup/execution failures, not
+authorization denials. Independent table-read checks also found that the metadata
+reader needs schema-use permission in addition to catalog-use and table-select.
+After admitting exact SCHEMA/USE_SCHEMA/ALLOW visibility with zero Ranger data
+access, a separate public metadata-schema role made all three metadata reads
+succeed while nine query-user metadata reads remained forbidden. Three actual
+Spark 3.5.6 / Delta 3.3.2 queries then passed: masked/filtered projection, predicate,
+and star on delta_a. The next unfiltered delta_b scan failed on an internal native
+SnapshotState Aggregate; this was an admission failure, not a policy denial.
+
+Commit `e1347911c` admits only the registered native SnapshotState lineage and its
+exact aggregate, optimizer, limit and encoder-binding shapes. Complete adapter
+suites on Spark 3.5.4 with each Delta version passed 71 tests and Javadoc, with no
+failures or skips; independent review approved the change. Live reruns with the
+new companion remain pending.
+
+Historical independent role-lifecycle checks also passed audit cleanup after an
+actual public role deletion. A separate deletion blocked by a foreign global role
+reference completed with public 500 / Ranger 400: the local role and its original
+grant remained, but its managed Ranger policy contribution had already been
+removed. The foreign reference and all nine original foreign policies were
+preserved. This divergence, the original failed-principal membership, and the
+orphan catalog-owner role remain explicit retained state, never replayed as repair.
+
+The offline query harness now requires a policy engine authorize-origin denial,
+not merely any SecurityException, and retains private cause messages and stack
+frames. Its per-driver recorder uses a new empty private cache and the pinned
+Ranger secure policy and role download paths, requiring completed GET HTTP 200
+before accepting the observed engine generations. Offline doubles qualify this
+harness logic; they do not establish live downloads or complete the four-pair
+matrix.
