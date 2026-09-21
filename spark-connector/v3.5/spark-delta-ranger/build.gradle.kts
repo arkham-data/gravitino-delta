@@ -56,6 +56,7 @@ dependencies {
   compileOnly(project(":spark-connector:spark-delta-3.5")) { isTransitive = false }
   compileOnly("io.delta:delta-spark_2.12:$deltaVersion")
   compileOnly(project(":api"))
+  compileOnly(project(":delta:delta-common"))
   compileOnly(project(":clients:client-java")) { isTransitive = false }
   compileOnly(project(":spark-connector:spark-common")) { isTransitive = false }
   compileOnly("org.apache.spark:spark-sql_2.12:$deltaSparkVersion")

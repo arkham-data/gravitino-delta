@@ -59,10 +59,16 @@ read scope now checks the same finite lease around complete caller operations.
 Both foundations passed independent review and 65 focused tests on Spark 3.5.4 /
 Delta 3.3.2 with Ranger 2.8.0, plus formatting and Javadoc. See
 `task-4-engine-stamp-report.md` and `task-4-metadata-scope-report.md` in the ledger.
-The metadata scope still needs the typed registration reader and catalog wiring;
-no production collection guard is installed. Exact native cache provenance,
-registration-to-scan binding and the complete original-decision receipt remain
-integration gates. The 208 live checks and checkpoint 56/81 are unchanged.
+The typed reader now detaches PUBLISHED registration receipts and logical schemas
+inside that metadata scope. Its 19 tests and the 19 metadata lease regressions pass
+on Spark 3.5.4 / Delta 3.3.2. Native public state/stats cache getters were also
+characterized on Spark 3.5.4 / Delta 3.3.0 and Spark 3.5.6 / Delta 3.3.2 (two tests
+each), including coexistence with the current production logical rules. Both
+changes passed independent review (one report-only callback count corrected). These tests establish capture order,
+not production native ticket enforcement. Exact ordinary named-load binding is the
+next integration step; no production collection guard is installed. Native physical
+provenance and the complete original-decision receipt remain integration gates.
+The 208 live checks and checkpoint 56/81 are unchanged by this offline work.
 
 ## Global Constraints
 
