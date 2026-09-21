@@ -20,15 +20,27 @@ configuration exists in this baseline: use the existing Google Java Spotless che
 strict Javadoc and an explicit review of imports, member ordering and public/protected
 documentation. The commands below reflect those available checks.
 
-**September 21 continuation:** Docker was intentionally stopped by the user. Continue
-local source work, unit tests, packaging and review without restarting it. The native
-SnapshotState admission fix `e1347911c` passed both Delta adapter suites (71 tests
-per version) and independent review. The test-only download recorder and precise
-policy-denial assertions remain in progress. All saved PIDs, endpoint readiness and
-policy/role generations are historical. Before later live qualification, verify the
-persisted Ranger database, Gravitino H2 registrations and original S3 objects, then
-validate the recorded post-lifecycle state without replaying bootstrap or repairing
-the intentionally retained local/remote grant divergence. Task 4 remains open.
+**September 21 continuation:** The user subsequently authorized starting the local
+stack and continuing tests. Ranger persistence and Gravitino registrations were
+verified. The original MinIO tmpfs had lost its data; all 12 archived Delta objects
+were restored byte-for-byte into persistent MinIO, with an explicit new modification
+time baseline. The native SnapshotState fix `e1347911c` passed both Delta adapter
+suites (71 tests each) and independent review. Download recording and precise denial
+assertions are implemented and qualified.
+
+The four-pair column-policy matrices and fresh-driver lifecycle matrices now total
+160 accepted query checks. Public user grant/revoke, group revocation and catalog
+visibility removal were verified against Ranger 2.8.0, with independent identity,
+download, model and result checks. Original memberships were restored; the known
+global-guard divergence remains intentionally preserved. The final observed policy/
+role generations are 48/73. See the tracked `task-4-live-matrix-report.md` and
+`task-4-lifecycle-report.md` under
+`.superpowers/sdd/2026-09-08-delta-ranger-production-runtime/` for scope and retained
+failures. The test-only resume boundary in `c78df9948` was qualified at 44/63; future
+resume work must explicitly bind the final checkpoint and its verified transition
+chain, without replaying bootstrap. Recheck process and storage continuity before
+using retained services. Same-JVM refresh/cache and callback-failure continuation
+remain required; Task 4 remains open, as does the broader full-Delta objective.
 
 ## Global Constraints
 
