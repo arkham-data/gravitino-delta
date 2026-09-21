@@ -72,6 +72,7 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
           .build();
   private final URI upstream;
   private final Path evidence;
+  private final boolean retainResponseBodies;
   private final String run = UUID.randomUUID().toString();
   private final AtomicInteger active = new AtomicInteger();
   private final AtomicLong attempts = new AtomicLong();
@@ -83,9 +84,11 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
     this(upstream, evidence, 0);
   }
 
-  DeltaRangerCallbackGateway(URI upstream, Path evidence, int port) throws IOException {
+  DeltaRangerCallbackGateway(URI upstream, Path evidence, int port, boolean retainResponseBodies)
+      throws IOException {
     this.upstream = upstream;
     this.evidence = evidence;
+    this.retainResponseBodies = retainResponseBodies;
     if (!Files.exists(evidence)) {
       Files.createFile(
           evidence,
@@ -95,6 +98,10 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
     server.createContext("/", this::forward);
     server.setExecutor(executor);
     server.start();
+  }
+
+  DeltaRangerCallbackGateway(URI upstream, Path evidence, int port) throws IOException {
+    this(upstream, evidence, port, false);
   }
 
   URI uri() {
@@ -193,6 +200,20 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
             client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
         event.put("upstreamStatus", response.statusCode());
         event.put("upstreamResponseCompleted", Instant.now().toString());
+        if (retainResponseBodies) {
+          Path body =
+              evidence.resolveSibling(evidence.getFileName() + "." + run + "." + attempt + ".body");
+          try {
+            Files.createFile(
+                body,
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+            Files.write(body, response.body(), StandardOpenOption.WRITE);
+            event.put("responseBodyFile", body.toAbsolutePath().toString());
+          } catch (IOException failure) {
+            evidenceFailure.compareAndSet(null, failure);
+            throw failure;
+          }
+        }
         response
             .headers()
             .map()

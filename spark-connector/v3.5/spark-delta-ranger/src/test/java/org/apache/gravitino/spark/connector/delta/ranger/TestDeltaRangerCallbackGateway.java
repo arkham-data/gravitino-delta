@@ -25,6 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -37,6 +39,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -44,6 +47,41 @@ import org.junit.jupiter.api.io.TempDir;
 
 class TestDeltaRangerCallbackGateway {
   @TempDir Path directory;
+
+  @Test
+  void privatelyRetainsExactCompletedResponseBytesWhenExplicitlyRequested() throws Exception {
+    byte[] actual = new byte[] {0, 1, 2, -1};
+    HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    upstream.createContext(
+        "/owned",
+        exchange -> {
+          exchange.sendResponseHeaders(200, actual.length);
+          exchange.getResponseBody().write(actual);
+          exchange.close();
+        });
+    upstream.start();
+    try (DeltaRangerCallbackGateway gateway =
+        new DeltaRangerCallbackGateway(
+            URI.create("http://127.0.0.1:" + upstream.getAddress().getPort()),
+            directory.resolve("events.jsonl"),
+            0,
+            true)) {
+      HttpClient.newHttpClient()
+          .send(
+              HttpRequest.newBuilder(gateway.uri().resolve("/owned")).GET().build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertTrue(gateway.awaitDrained());
+      JsonNode finished = new ObjectMapper().readTree(gateway.recordedEvents().get(1));
+      assertTrue(finished.path("responseBodyFile").isTextual());
+      Path body = Path.of(finished.path("responseBodyFile").asText());
+      assertArrayEquals(actual, Files.readAllBytes(body));
+      assertEquals(
+          PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(body));
+      assertTrue(finished.has("upstreamResponseCompleted"));
+    } finally {
+      upstream.stop(0);
+    }
+  }
 
   @Test
   void forwardsActualNoContentStatusAndResponseWithoutInventingJson() throws Exception {

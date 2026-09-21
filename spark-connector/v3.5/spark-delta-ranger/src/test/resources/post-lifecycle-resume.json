@@ -1,0 +1,5803 @@
+{
+  "fixture": {
+    "metalake": "delta_chain_lake_2ffb7db265b1",
+    "resourceService": "delta_chain_2ffb7db265b1",
+    "resourceDefinition": "delta_chain_def_2ffb7db265b1",
+    "tagService": "delta_chain_tag_2ffb7db265b1",
+    "metadataPrincipal": "delta_meta_2ffb7db265b1",
+    "subjects": {
+      "freshCallback": "delta_fresh_2ffb7db265b1",
+      "columnReader": "delta_column_2ffb7db265b1",
+      "visibilityOnly": "delta_visible_2ffb7db265b1",
+      "groupReader": "delta_group_reader_2ffb7db265b1"
+    },
+    "groups": {
+      "query": "delta_query_group_2ffb7db265b1"
+    },
+    "rolesPrefix": "delta_chain_role_2ffb7db265b1",
+    "catalogs": [
+      {
+        "name": "delta_a",
+        "database": "sales",
+        "table": "orders"
+      },
+      {
+        "name": "delta_b",
+        "database": "sales",
+        "table": "orders"
+      },
+      {
+        "name": "delta_quoted",
+        "database": "sales",
+        "table": "orders"
+      }
+    ],
+    "expectedMetalakeId": "986854579816189983"
+  },
+  "checkpoint": {
+    "schemaVersion": 1,
+    "stage": "post-role-lifecycle-local-readback",
+    "metalake": "delta_chain_lake_2ffb7db265b1",
+    "expectedMetalakeId": "986854579816189983",
+    "roles": {
+      "visibility_metadata": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1visibility_metadata",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:14.361841Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_b"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_quoted"
+              }
+            ]
+          }
+        }
+      },
+      "visibility_columnReader": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1visibility_columnReader",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:15.697853Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_b"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_quoted"
+              }
+            ]
+          }
+        }
+      },
+      "visibility_visibilityOnly": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1visibility_visibilityOnly",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:16.989719Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_b"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_quoted"
+              }
+            ]
+          }
+        }
+      },
+      "visibility_groupReader": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1visibility_groupReader",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:17.995321Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_b"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_quoted"
+              }
+            ]
+          }
+        }
+      },
+      "visibility_freshCallback": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1visibility_freshCallback",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:19.238916Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_b"
+              },
+              {
+                "type": "catalog",
+                "privileges": [
+                  {
+                    "name": "use_catalog",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_quoted"
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1metadata",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:21.095755Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "table",
+                "privileges": [
+                  {
+                    "name": "select_table",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a.sales.orders"
+              },
+              {
+                "type": "table",
+                "privileges": [
+                  {
+                    "name": "select_table",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_b.sales.orders"
+              },
+              {
+                "type": "table",
+                "privileges": [
+                  {
+                    "name": "select_table",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_quoted.sales.orders"
+              }
+            ]
+          }
+        }
+      },
+      "metadata_schema": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1metadata_schema",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-15T00:21:40.473085Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "schema",
+                "privileges": [
+                  {
+                    "name": "use_schema",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a.sales"
+              },
+              {
+                "type": "schema",
+                "privileges": [
+                  {
+                    "name": "use_schema",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_b.sales"
+              },
+              {
+                "type": "schema",
+                "privileges": [
+                  {
+                    "name": "use_schema",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_quoted.sales"
+              }
+            ]
+          }
+        }
+      },
+      "ordinary": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1ordinary",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:22.147749Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "table",
+                "privileges": [
+                  {
+                    "name": "select_table",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a.sales.orders"
+              }
+            ]
+          }
+        }
+      },
+      "group": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1group",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:22.331998Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "table",
+                "privileges": [
+                  {
+                    "name": "select_table",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a.sales.orders"
+              }
+            ]
+          }
+        }
+      },
+      "global_guard": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1global_guard",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T23:50:22.571035Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "table",
+                "privileges": [
+                  {
+                    "name": "select_table",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a.sales.orders"
+              }
+            ]
+          }
+        }
+      },
+      "audit_cleanup": {
+        "status": 404,
+        "body": {
+          "code": 1003,
+          "type": "NoSuchRoleException"
+        }
+      },
+      "protocol": {
+        "status": 200,
+        "body": {
+          "code": 0,
+          "role": {
+            "name": "delta_chain_role_2ffb7db265b1protocol",
+            "audit": {
+              "creator": "admin",
+              "createTime": "2026-09-14T22:41:31.180476Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "table",
+                "privileges": [
+                  {
+                    "name": "select_table",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "delta_a.sales.orders"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "users": {
+      "metadata": {
+        "code": 0,
+        "user": {
+          "id": 2676847118185728004,
+          "name": "delta_meta_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:13.211778Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-15T00:21:40.779076Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1metadata_schema",
+            "delta_chain_role_2ffb7db265b1metadata",
+            "delta_chain_role_2ffb7db265b1visibility_metadata"
+          ]
+        }
+      },
+      "freshCallback": {
+        "code": 0,
+        "user": {
+          "id": 2946674331281240588,
+          "name": "delta_fresh_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T22:41:31.082925Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:19.671435Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1protocol",
+            "delta_chain_role_2ffb7db265b1visibility_freshCallback"
+          ]
+        }
+      },
+      "columnReader": {
+        "code": 0,
+        "user": {
+          "id": 264081854371668212,
+          "name": "delta_column_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:15.689739Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:16.255581Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1visibility_columnReader"
+          ]
+        }
+      },
+      "visibilityOnly": {
+        "code": 0,
+        "user": {
+          "id": 3804712695569364828,
+          "name": "delta_visible_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:16.979946Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:17.427614Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1visibility_visibilityOnly"
+          ]
+        }
+      },
+      "groupReader": {
+        "code": 0,
+        "user": {
+          "id": 4105430743438819582,
+          "name": "delta_group_reader_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:17.989754Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:18.536483Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1visibility_groupReader"
+          ]
+        }
+      }
+    },
+    "groups": {
+      "query": {
+        "code": 0,
+        "group": {
+          "id": 890600096177827330,
+          "name": "delta_query_group_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:22.096070Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:22.972354Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1group"
+          ]
+        }
+      }
+    },
+    "divergence": {
+      "globalGuardRoleRetainedLocally": true,
+      "globalGuardPrimaryRangerContributionAbsent": true,
+      "externalGuardPolicyId": 53,
+      "doNotRepairOrReplay": true
+    },
+    "lastObservedDownloads": {
+      "policyVersion": 40,
+      "roleVersion": 63
+    }
+  },
+  "observations": {
+    "metalake": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "metalake": {
+          "name": "delta_chain_lake_2ffb7db265b1",
+          "comment": "Isolated production Ranger acceptance",
+          "properties": {
+            "in-use": "true"
+          },
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T22:19:10.649357Z"
+          }
+        }
+      }
+    },
+    "catalogs": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "identifiers": [
+          {
+            "namespace": [
+              "delta_chain_lake_2ffb7db265b1"
+            ],
+            "name": "delta_a"
+          },
+          {
+            "namespace": [
+              "delta_chain_lake_2ffb7db265b1"
+            ],
+            "name": "delta_b"
+          },
+          {
+            "namespace": [
+              "delta_chain_lake_2ffb7db265b1"
+            ],
+            "name": "delta_quoted"
+          }
+        ]
+      }
+    },
+    "table:delta_a": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "table": {
+          "name": "orders",
+          "columns": [
+            {
+              "name": "id",
+              "type": "long",
+              "nullable": true,
+              "autoIncrement": false
+            },
+            {
+              "name": "secret",
+              "type": "string",
+              "nullable": true,
+              "autoIncrement": false
+            },
+            {
+              "name": "region",
+              "type": "string",
+              "nullable": true,
+              "autoIncrement": false
+            }
+          ],
+          "properties": {
+            "delta.registration.receipt.nativeVersion": "0",
+            "delta.registration.receipt.reason": "NONE",
+            "delta.registration.receipt.token": "production-delta_a",
+            "delta.registration.receipt.nativeId": "81bc43d6-f382-44ce-8184-a323058fc8d3",
+            "delta.registration.receipt.runId": "root-native-writer-completed",
+            "delta.registration.receipt.state": "PUBLISHED",
+            "delta.registration.receipt.operation": "ADOPT",
+            "delta.registration.receipt.location": "s3a://delta-fixtures/ranger-select-15c7b2db218b6d26/catalog-a/native",
+            "delta.registration.receipt.evidence": "EXISTING_NATIVE_SNAPSHOT",
+            "delta.registration.receipt.id": "3557176987003121615",
+            "delta.registration.receipt.generation": "0"
+          },
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T22:40:59.961145Z"
+          },
+          "distribution": {
+            "strategy": "none",
+            "number": 0,
+            "funcArgs": []
+          },
+          "sortOrders": [],
+          "partitioning": [],
+          "indexes": []
+        }
+      }
+    },
+    "table:delta_b": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "table": {
+          "name": "orders",
+          "columns": [
+            {
+              "name": "id",
+              "type": "long",
+              "nullable": true,
+              "autoIncrement": false
+            },
+            {
+              "name": "secret",
+              "type": "string",
+              "nullable": true,
+              "autoIncrement": false
+            },
+            {
+              "name": "region",
+              "type": "string",
+              "nullable": true,
+              "autoIncrement": false
+            }
+          ],
+          "properties": {
+            "delta.registration.receipt.nativeVersion": "0",
+            "delta.registration.receipt.reason": "NONE",
+            "delta.registration.receipt.token": "production-delta_b",
+            "delta.registration.receipt.nativeId": "8f4fb8cb-49c1-48f6-b567-e3ffbf12b705",
+            "delta.registration.receipt.runId": "root-native-writer-completed",
+            "delta.registration.receipt.state": "PUBLISHED",
+            "delta.registration.receipt.operation": "ADOPT",
+            "delta.registration.receipt.location": "s3a://delta-fixtures/ranger-select-15c7b2db218b6d26/catalog-b/native",
+            "delta.registration.receipt.evidence": "EXISTING_NATIVE_SNAPSHOT",
+            "delta.registration.receipt.id": "870893013468781467",
+            "delta.registration.receipt.generation": "0"
+          },
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T22:41:01.319245Z"
+          },
+          "distribution": {
+            "strategy": "none",
+            "number": 0,
+            "funcArgs": []
+          },
+          "sortOrders": [],
+          "partitioning": [],
+          "indexes": []
+        }
+      }
+    },
+    "table:delta_quoted": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "table": {
+          "name": "orders",
+          "columns": [
+            {
+              "name": "id",
+              "type": "long",
+              "nullable": true,
+              "autoIncrement": false
+            },
+            {
+              "name": "secret",
+              "type": "string",
+              "nullable": true,
+              "autoIncrement": false
+            },
+            {
+              "name": "region",
+              "type": "string",
+              "nullable": true,
+              "autoIncrement": false
+            },
+            {
+              "name": "odd name",
+              "type": "string",
+              "nullable": true,
+              "autoIncrement": false
+            }
+          ],
+          "properties": {
+            "delta.registration.receipt.reason": "NONE",
+            "delta.registration.receipt.runId": "root-native-writer-completed",
+            "delta.registration.receipt.operation": "ADOPT",
+            "delta.columnMapping.mode": "name",
+            "delta.registration.receipt.generation": "0",
+            "delta.registration.receipt.nativeVersion": "0",
+            "delta.registration.receipt.token": "production-delta_quoted",
+            "delta.registration.receipt.nativeId": "53c14137-3e02-4d04-828e-d35c729f92ab",
+            "delta.columnMapping.maxColumnId": "4",
+            "delta.registration.receipt.state": "PUBLISHED",
+            "delta.registration.receipt.location": "s3a://delta-fixtures/ranger-select-15c7b2db218b6d26/quoted/native",
+            "delta.registration.receipt.evidence": "EXISTING_NATIVE_SNAPSHOT",
+            "delta.registration.receipt.id": "1868729078355313853"
+          },
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T22:41:02.323189Z"
+          },
+          "distribution": {
+            "strategy": "none",
+            "number": 0,
+            "funcArgs": []
+          },
+          "sortOrders": [],
+          "partitioning": [],
+          "indexes": []
+        }
+      }
+    },
+    "role:visibility_metadata": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1visibility_metadata",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:14.361841Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_b"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_quoted"
+            }
+          ]
+        }
+      }
+    },
+    "role:visibility_columnReader": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1visibility_columnReader",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:15.697853Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_b"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_quoted"
+            }
+          ]
+        }
+      }
+    },
+    "role:visibility_visibilityOnly": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1visibility_visibilityOnly",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:16.989719Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_b"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_quoted"
+            }
+          ]
+        }
+      }
+    },
+    "role:visibility_groupReader": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1visibility_groupReader",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:17.995321Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_b"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_quoted"
+            }
+          ]
+        }
+      }
+    },
+    "role:visibility_freshCallback": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1visibility_freshCallback",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:19.238916Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_b"
+            },
+            {
+              "type": "catalog",
+              "privileges": [
+                {
+                  "name": "use_catalog",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_quoted"
+            }
+          ]
+        }
+      }
+    },
+    "role:metadata": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1metadata",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:21.095755Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "table",
+              "privileges": [
+                {
+                  "name": "select_table",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a.sales.orders"
+            },
+            {
+              "type": "table",
+              "privileges": [
+                {
+                  "name": "select_table",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_b.sales.orders"
+            },
+            {
+              "type": "table",
+              "privileges": [
+                {
+                  "name": "select_table",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_quoted.sales.orders"
+            }
+          ]
+        }
+      }
+    },
+    "role:metadata_schema": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1metadata_schema",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-15T00:21:40.473085Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "schema",
+              "privileges": [
+                {
+                  "name": "use_schema",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a.sales"
+            },
+            {
+              "type": "schema",
+              "privileges": [
+                {
+                  "name": "use_schema",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_b.sales"
+            },
+            {
+              "type": "schema",
+              "privileges": [
+                {
+                  "name": "use_schema",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_quoted.sales"
+            }
+          ]
+        }
+      }
+    },
+    "role:ordinary": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1ordinary",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:22.147749Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "table",
+              "privileges": [
+                {
+                  "name": "select_table",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a.sales.orders"
+            }
+          ]
+        }
+      }
+    },
+    "role:group": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1group",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:22.331998Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "table",
+              "privileges": [
+                {
+                  "name": "select_table",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a.sales.orders"
+            }
+          ]
+        }
+      }
+    },
+    "role:global_guard": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1global_guard",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:22.571035Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "table",
+              "privileges": [
+                {
+                  "name": "select_table",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a.sales.orders"
+            }
+          ]
+        }
+      }
+    },
+    "role:audit_cleanup": {
+      "status": 404,
+      "body": {
+        "code": 1003,
+        "type": "NoSuchRoleException"
+      }
+    },
+    "role:protocol": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "role": {
+          "name": "delta_chain_role_2ffb7db265b1protocol",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T22:41:31.180476Z"
+          },
+          "properties": {},
+          "securableObjects": [
+            {
+              "type": "table",
+              "privileges": [
+                {
+                  "name": "select_table",
+                  "condition": "allow"
+                }
+              ],
+              "fullName": "delta_a.sales.orders"
+            }
+          ]
+        }
+      }
+    },
+    "user:metadata": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "user": {
+          "id": 2676847118185728004,
+          "name": "delta_meta_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:13.211778Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-15T00:21:40.779076Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1metadata_schema",
+            "delta_chain_role_2ffb7db265b1metadata",
+            "delta_chain_role_2ffb7db265b1visibility_metadata"
+          ]
+        }
+      }
+    },
+    "user:freshCallback": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "user": {
+          "id": 2946674331281240588,
+          "name": "delta_fresh_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T22:41:31.082925Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:19.671435Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1protocol",
+            "delta_chain_role_2ffb7db265b1visibility_freshCallback"
+          ]
+        }
+      }
+    },
+    "user:columnReader": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "user": {
+          "id": 264081854371668212,
+          "name": "delta_column_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:15.689739Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:16.255581Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1visibility_columnReader"
+          ]
+        }
+      }
+    },
+    "user:visibilityOnly": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "user": {
+          "id": 3804712695569364828,
+          "name": "delta_visible_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:16.979946Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:17.427614Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1visibility_visibilityOnly"
+          ]
+        }
+      }
+    },
+    "user:groupReader": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "user": {
+          "id": 4105430743438819582,
+          "name": "delta_group_reader_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:17.989754Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:18.536483Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1visibility_groupReader"
+          ]
+        }
+      }
+    },
+    "group:query": {
+      "status": 200,
+      "body": {
+        "code": 0,
+        "group": {
+          "id": 890600096177827330,
+          "name": "delta_query_group_2ffb7db265b1",
+          "audit": {
+            "creator": "admin",
+            "createTime": "2026-09-14T23:50:22.096070Z",
+            "lastModifier": "admin",
+            "lastModifiedTime": "2026-09-14T23:50:22.972354Z"
+          },
+          "roles": [
+            "delta_chain_role_2ffb7db265b1group"
+          ]
+        }
+      }
+    },
+    "definition": {
+      "status": 200,
+      "body": {
+        "id": 217,
+        "guid": "834260e8-9e4b-4a2a-b9d9-57247451f644",
+        "isEnabled": true,
+        "createdBy": "Admin",
+        "updatedBy": "Admin",
+        "createTime": 1789415300008,
+        "updateTime": 1789415300008,
+        "version": 1,
+        "name": "delta_chain_def_2ffb7db265b1",
+        "displayName": "delta_chain_def_2ffb7db265b1",
+        "description": "Apache Gravitino Delta four-level resource service. Provision for exactly one metalake.",
+        "options": {
+          "lookupSupported": "false",
+          "enableDenyAndExceptionsInPolicies": "true",
+          "enableTagBasedPolicies": "true"
+        },
+        "configs": [
+          {
+            "itemId": 1,
+            "name": "ranger.plugin.spark.gravitino.metalake",
+            "type": "string",
+            "mandatory": true,
+            "label": "Canonical Gravitino metalake"
+          }
+        ],
+        "resources": [
+          {
+            "itemId": 1,
+            "name": "catalog",
+            "type": "string",
+            "level": 10,
+            "mandatory": true,
+            "lookupSupported": false,
+            "recursiveSupported": false,
+            "excludesSupported": false,
+            "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+            "matcherOptions": {
+              "replaceTokens": "false",
+              "replaceReqExpressions": "false",
+              "wildCard": "true",
+              "ignoreCase": "false"
+            },
+            "isValidLeaf": false
+          },
+          {
+            "itemId": 2,
+            "name": "database",
+            "type": "string",
+            "level": 20,
+            "parent": "catalog",
+            "mandatory": true,
+            "lookupSupported": false,
+            "recursiveSupported": false,
+            "excludesSupported": false,
+            "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+            "matcherOptions": {
+              "replaceTokens": "false",
+              "replaceReqExpressions": "false",
+              "wildCard": "true",
+              "ignoreCase": "false"
+            },
+            "isValidLeaf": false
+          },
+          {
+            "itemId": 3,
+            "name": "table",
+            "type": "string",
+            "level": 30,
+            "parent": "database",
+            "mandatory": true,
+            "lookupSupported": false,
+            "recursiveSupported": false,
+            "excludesSupported": false,
+            "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+            "matcherOptions": {
+              "replaceTokens": "false",
+              "replaceReqExpressions": "false",
+              "wildCard": "true",
+              "ignoreCase": "false"
+            },
+            "isValidLeaf": false
+          },
+          {
+            "itemId": 4,
+            "name": "column",
+            "type": "string",
+            "level": 40,
+            "parent": "table",
+            "mandatory": true,
+            "lookupSupported": false,
+            "recursiveSupported": false,
+            "excludesSupported": false,
+            "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+            "matcherOptions": {
+              "replaceTokens": "false",
+              "replaceReqExpressions": "false",
+              "wildCard": "true",
+              "ignoreCase": "false"
+            },
+            "isValidLeaf": true
+          }
+        ],
+        "accessTypes": [
+          {
+            "itemId": 1,
+            "name": "select"
+          },
+          {
+            "itemId": 2,
+            "name": "read"
+          },
+          {
+            "itemId": 3,
+            "name": "write"
+          },
+          {
+            "itemId": 4,
+            "name": "create"
+          },
+          {
+            "itemId": 5,
+            "name": "drop"
+          },
+          {
+            "itemId": 6,
+            "name": "alter"
+          },
+          {
+            "itemId": 7,
+            "name": "update"
+          },
+          {
+            "itemId": 8,
+            "name": "all",
+            "impliedGrants": [
+              "select",
+              "read",
+              "write",
+              "create",
+              "drop",
+              "alter",
+              "update"
+            ]
+          }
+        ],
+        "policyConditions": [
+          {
+            "itemId": 1,
+            "name": "_expression",
+            "evaluator": "org.apache.ranger.plugin.conditionevaluator.RangerScriptConditionEvaluator",
+            "evaluatorOptions": {
+              "ui.isMultiline": "true",
+              "engineName": "JavaScript"
+            },
+            "uiHint": "{ \"isMultiline\":true }",
+            "label": "Enter boolean expression",
+            "description": "Boolean expression"
+          }
+        ],
+        "dataMaskDef": {
+          "maskTypes": [
+            {
+              "itemId": 1,
+              "name": "CUSTOM",
+              "label": "Custom",
+              "description": "Custom expression"
+            },
+            {
+              "itemId": 2,
+              "name": "MASK_NULL",
+              "label": "Null",
+              "description": "Replace with NULL",
+              "transformer": "NULL"
+            }
+          ],
+          "accessTypes": [
+            {
+              "itemId": 1,
+              "name": "select"
+            }
+          ],
+          "resources": [
+            {
+              "itemId": 1,
+              "name": "catalog",
+              "type": "string",
+              "level": 10,
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": false
+            },
+            {
+              "itemId": 2,
+              "name": "database",
+              "type": "string",
+              "level": 20,
+              "parent": "catalog",
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": false
+            },
+            {
+              "itemId": 3,
+              "name": "table",
+              "type": "string",
+              "level": 30,
+              "parent": "database",
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": false
+            },
+            {
+              "itemId": 4,
+              "name": "column",
+              "type": "string",
+              "level": 40,
+              "parent": "table",
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": true
+            }
+          ]
+        },
+        "rowFilterDef": {
+          "accessTypes": [
+            {
+              "itemId": 1,
+              "name": "select"
+            }
+          ],
+          "resources": [
+            {
+              "itemId": 1,
+              "name": "catalog",
+              "type": "string",
+              "level": 10,
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": false
+            },
+            {
+              "itemId": 2,
+              "name": "database",
+              "type": "string",
+              "level": 20,
+              "parent": "catalog",
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": false
+            },
+            {
+              "itemId": 3,
+              "name": "table",
+              "type": "string",
+              "level": 30,
+              "parent": "database",
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": true
+            }
+          ]
+        },
+        "markerAccessTypes": [
+          {
+            "itemId": 9,
+            "name": "_CREATE",
+            "label": "_CREATE"
+          },
+          {
+            "itemId": 10,
+            "name": "_READ",
+            "label": "_READ"
+          },
+          {
+            "itemId": 11,
+            "name": "_UPDATE",
+            "label": "_UPDATE"
+          },
+          {
+            "itemId": 12,
+            "name": "_DELETE",
+            "label": "_DELETE"
+          },
+          {
+            "itemId": 13,
+            "name": "_MANAGE",
+            "label": "_MANAGE"
+          },
+          {
+            "itemId": 14,
+            "name": "_ALL",
+            "label": "_ALL",
+            "impliedGrants": [
+              "drop",
+              "all",
+              "select",
+              "read",
+              "create",
+              "update",
+              "write",
+              "alter"
+            ]
+          }
+        ]
+      }
+    },
+    "tagService": {
+      "status": 200,
+      "body": {
+        "id": 15,
+        "guid": "f661d472-91a3-492a-af5c-20e54d2bdac4",
+        "isEnabled": true,
+        "createdBy": "Admin",
+        "updatedBy": "Admin",
+        "createTime": 1789415300426,
+        "updateTime": 1789415300427,
+        "version": 1,
+        "type": "tag",
+        "name": "delta_chain_tag_2ffb7db265b1",
+        "displayName": "delta_chain_tag_2ffb7db265b1",
+        "configs": {
+          "policy.download.auth.users": "delta_chain_download_2ffb7db265b1",
+          "create.default.policy.per.hierarchy": "false",
+          "ranger.plugin.audit.filters": "[ {'accessResult': 'DENIED', 'isAudited': true} ]"
+        },
+        "policyVersion": 2,
+        "policyUpdateTime": 1790007009006,
+        "tagVersion": 2,
+        "tagUpdateTime": 1790007009046
+      }
+    },
+    "resourceService": {
+      "status": 200,
+      "body": {
+        "id": 16,
+        "guid": "ba6b072a-fd93-40e9-9998-e42a1ed80b95",
+        "isEnabled": true,
+        "createdBy": "Admin",
+        "updatedBy": "Admin",
+        "createTime": 1789415300456,
+        "updateTime": 1789415300456,
+        "version": 1,
+        "type": "delta_chain_def_2ffb7db265b1",
+        "name": "delta_chain_2ffb7db265b1",
+        "displayName": "delta_chain_2ffb7db265b1",
+        "tagService": "delta_chain_tag_2ffb7db265b1",
+        "configs": {
+          "policy.download.auth.users": "delta_chain_download_2ffb7db265b1",
+          "create.default.policy.per.hierarchy": "false",
+          "ranger.plugin.spark.gravitino.metalake": "delta_chain_lake_2ffb7db265b1"
+        },
+        "policyVersion": 44,
+        "policyUpdateTime": 1790009383374,
+        "tagVersion": 2,
+        "tagUpdateTime": 1790007009049
+      }
+    },
+    "sideService": {
+      "status": 200,
+      "body": {
+        "id": 17,
+        "guid": "55d8fa82-097d-4d73-a299-de7b4931ac02",
+        "isEnabled": true,
+        "createdBy": "Admin",
+        "updatedBy": "Admin",
+        "createTime": 1789432053352,
+        "updateTime": 1789432151316,
+        "version": 2,
+        "type": "delta_chain_def_2ffb7db265b1",
+        "name": "delta_chain_guard_2ffb7db265b1",
+        "displayName": "delta_chain_guard_2ffb7db265b1",
+        "tagService": "delta_chain_tag_2ffb7db265b1",
+        "configs": {
+          "create.default.policy.per.hierarchy": "false",
+          "ranger.plugin.spark.gravitino.metalake": "delta_chain_lake_2ffb7db265b1",
+          "ranger.plugin.audit.filters": "[{'accessResult':'DENIED','users':['admin'],'isAudited':true},{'accessResult':'ALLOWED','users':['delta_column_2ffb7db265b1'],'isAudited':true}]"
+        },
+        "policyVersion": 4,
+        "policyUpdateTime": 1790007009016,
+        "tagVersion": 2,
+        "tagUpdateTime": 1790007009053
+      }
+    },
+    "downloader": {
+      "status": 200,
+      "body": {
+        "id": 9,
+        "createDate": "2026-09-14T19:48:19Z",
+        "updateDate": "2026-09-14T19:48:19Z",
+        "owner": "Admin",
+        "updatedBy": "Admin",
+        "name": "delta_chain_download_2ffb7db265b1",
+        "firstName": "Delta",
+        "lastName": "Chain Downloader",
+        "emailAddress": "delta_chain_download_2ffb7db265b1@fixture.invalid",
+        "password": "offline-test-value",
+        "description": "delta_chain_download_2ffb7db265b1",
+        "groupIdList": [],
+        "groupNameList": [],
+        "status": 1,
+        "isVisible": 1,
+        "userSource": 0,
+        "userRoleList": [
+          "ROLE_USER"
+        ]
+      }
+    },
+    "roles": {
+      "status": 200,
+      "body": {
+        "startIndex": 0,
+        "pageSize": 200,
+        "totalCount": 19,
+        "resultSize": 19,
+        "queryTimeMS": 1790010906914,
+        "roles": [
+          {
+            "id": 14,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789426238786,
+            "updateTime": 1789426239229,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1_fixed_protocol",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_fresh_2ffb7db265b1_ok1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789403284570,
+            "updateTime": 1789404993471,
+            "name": "delta_role_6960fcbba49b",
+            "description": "Owned Delta engine fixture 6960fcbba49b",
+            "users": [
+              {
+                "name": "delta_reader_6960fcbba49b",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789424560243,
+            "updateTime": 1789424560244,
+            "name": "GRAVITINO_CATALOG_OWNER_ROLE_3654023421300958302",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 8,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425657685,
+            "updateTime": 1789425657730,
+            "name": "GRAVITINO_CATALOG_OWNER_ROLE_2652123250186341995",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "admin",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 10,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425658750,
+            "updateTime": 1789425658751,
+            "name": "GRAVITINO_OWNER_ROLE",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 11,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425660703,
+            "updateTime": 1789425660735,
+            "name": "GRAVITINO_CATALOG_OWNER_ROLE_4502567413048644567",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "admin",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 16,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429815767,
+            "updateTime": 1789429816955,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_columnReader",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_column_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 12,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425661842,
+            "updateTime": 1789425661866,
+            "name": "GRAVITINO_CATALOG_OWNER_ROLE_1884340118483991752",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "admin",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425658191,
+            "updateTime": 1789425662044,
+            "name": "GRAVITINO_METALAKE_OWNER_ROLE_986854579816189983",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "admin",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425691265,
+            "updateTime": 1789425691265,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1protocol",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 15,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429814501,
+            "updateTime": 1789429815668,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_metadata",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_meta_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 17,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429817069,
+            "updateTime": 1789429817972,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_visibilityOnly",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_visible_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 20,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429821154,
+            "updateTime": 1789429822066,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_meta_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 18,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429818063,
+            "updateTime": 1789429819221,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_groupReader",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_group_reader_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 19,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429819310,
+            "updateTime": 1789429820161,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_freshCallback",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_fresh_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 21,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429822182,
+            "updateTime": 1789429822183,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1ordinary",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 23,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429822614,
+            "updateTime": 1789429822614,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1global_guard",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 22,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429822380,
+            "updateTime": 1789429823086,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1group",
+            "description": "MANAGED_BY_GRAVITINO",
+            "groups": [
+              {
+                "name": "delta_query_group_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 25,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789431700548,
+            "updateTime": 1789431701108,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata_schema",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_meta_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "policies": {
+      "status": 200,
+      "body": {
+        "startIndex": 0,
+        "pageSize": 200,
+        "totalCount": 19,
+        "resultSize": 19,
+        "queryTimeMS": 1790010906950,
+        "policies": [
+          {
+            "id": 35,
+            "guid": "8064910d-ff20-4f12-9444-e5be98b3603a",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:2652123250186341995-delta_a.*.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_CATALOG_OWNER_ROLE_2652123250186341995"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_OWNER_ROLE_986854579816189983"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:2652123250186341995",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 36,
+            "guid": "91ece417-5720-488d-9287-0b3224b660f3",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:2652123250186341995-delta_a.sales.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:2652123250186341995",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 37,
+            "guid": "bc5c1bb2-201a-45f0-b0dc-1a77ee191f76",
+            "isEnabled": true,
+            "version": 10,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:2652123250186341995-delta_a.sales.orders.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1protocol",
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1_fixed_protocol",
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata",
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1ordinary",
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1group"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:2652123250186341995",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 38,
+            "guid": "1f232f47-e377-4b0c-89b5-c60fd1082f70",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:4502567413048644567-delta_b.*.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_CATALOG_OWNER_ROLE_4502567413048644567"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_OWNER_ROLE_986854579816189983"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:4502567413048644567",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 39,
+            "guid": "29818562-eb7d-4f0f-a914-56102df8b2b0",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:4502567413048644567-delta_b.sales.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:4502567413048644567",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 40,
+            "guid": "c04a5052-4df7-483a-8978-730af7173507",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:4502567413048644567-delta_b.sales.orders.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:4502567413048644567",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 41,
+            "guid": "e3e78177-9cb4-4285-89bd-e16a6ebb2c7f",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:1884340118483991752-delta_quoted.*.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_CATALOG_OWNER_ROLE_1884340118483991752"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_OWNER_ROLE_986854579816189983"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:1884340118483991752",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 42,
+            "guid": "7f7289bf-8ea7-4a7d-ab7b-fb02961168e9",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:1884340118483991752-delta_quoted.sales.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:1884340118483991752",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 43,
+            "guid": "ea5dce43-0191-4d06-875a-3c0888db1dd4",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:1884340118483991752-delta_quoted.sales.orders.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:1884340118483991752",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 44,
+            "guid": "2f14fe2b-19ab-42cc-9ab2-8e163ccdea45",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_allow_a",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "id",
+                  "secret",
+                  "region"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 45,
+            "guid": "2289a688-1744-4aa8-a622-b268458a5cfb",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_custom_a",
+            "policyType": 1,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "dataMaskPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "dataMaskInfo": {
+                  "dataMaskType": "CUSTOM",
+                  "valueExpr": "upper({col})"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 46,
+            "guid": "43aab45d-a89d-4ce1-bfd0-e26ffec1a1d1",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_filter_a",
+            "policyType": 2,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "rowFilterPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "rowFilterInfo": {
+                  "filterExpr": "region = 'allowed'"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 47,
+            "guid": "33b43647-d8af-4a72-9435-5748039bf429",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_allow_b",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "id",
+                  "region",
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 48,
+            "guid": "26a2716f-77ef-433c-9e27-c5d665549c2c",
+            "isEnabled": false,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_deny_b_secret",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "denyPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 49,
+            "guid": "d2ebe6aa-6d70-4ff9-9e57-d264390f6aab",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_allow_quoted",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "id",
+                  "secret",
+                  "region",
+                  "odd name"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 50,
+            "guid": "d6d4dc50-2e0e-42b8-94ff-6a21c23e87bd",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_custom_quoted",
+            "policyType": 1,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "odd name"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "dataMaskPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "dataMaskInfo": {
+                  "dataMaskType": "CUSTOM",
+                  "valueExpr": "upper({col})"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 51,
+            "guid": "5eb5907f-2d4a-4e1c-97d1-d4eae34b72b5",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_null_quoted",
+            "policyType": 1,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "dataMaskPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "dataMaskInfo": {
+                  "dataMaskType": "MASK_NULL"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 52,
+            "guid": "ce432e13-3806-46d3-bcd6-50e91ab54528",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_filter_quoted",
+            "policyType": 2,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "rowFilterPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "rowFilterInfo": {
+                  "filterExpr": "region = 'allowed'"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 54,
+            "guid": "c1637066-a7b0-4928-9551-4b0b77afb0b6",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_null_b",
+            "policyType": 1,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "dataMaskPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "dataMaskInfo": {
+                  "dataMaskType": "MASK_NULL"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          }
+        ]
+      }
+    },
+    "sidePolicy": {
+      "status": 200,
+      "body": {
+        "id": 53,
+        "guid": "07baa868-e3ee-47eb-b152-1838c98305e6",
+        "isEnabled": true,
+        "createdBy": "Admin",
+        "updatedBy": "Admin",
+        "createTime": 1789432053376,
+        "updateTime": 1789432053376,
+        "version": 1,
+        "service": "delta_chain_guard_2ffb7db265b1",
+        "name": "delta_chain_guard_2ffb7db265b1_reference",
+        "policyType": 0,
+        "policyPriority": 0,
+        "resourceSignature": "25717a7a3c43b96abc0731ed720feb3e66e2db9fa7e467d54baa0c95ebb026dc",
+        "isAuditEnabled": true,
+        "resources": {
+          "database": {
+            "values": [
+              "sales"
+            ],
+            "isExcludes": false,
+            "isRecursive": false
+          },
+          "catalog": {
+            "values": [
+              "__guard_fixture__"
+            ],
+            "isExcludes": false,
+            "isRecursive": false
+          },
+          "column": {
+            "values": [
+              "id"
+            ],
+            "isExcludes": false,
+            "isRecursive": false
+          },
+          "table": {
+            "values": [
+              "orders"
+            ],
+            "isExcludes": false,
+            "isRecursive": false
+          }
+        },
+        "policyItems": [
+          {
+            "accesses": [
+              {
+                "type": "select",
+                "isAllowed": true
+              }
+            ],
+            "roles": [
+              "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1global_guard"
+            ],
+            "delegateAdmin": false
+          }
+        ],
+        "serviceType": "delta_chain_def_2ffb7db265b1",
+        "policyLabels": [
+          "delta-chain-side-fixture:2ffb7db265b1"
+        ],
+        "isDenyAllElse": false
+      }
+    },
+    "policyDownload": {
+      "status": 200,
+      "body": {
+        "serviceName": "delta_chain_2ffb7db265b1",
+        "serviceId": 16,
+        "policyVersion": 44,
+        "policyUpdateTime": 1790009383374,
+        "policies": [
+          {
+            "id": 35,
+            "guid": "8064910d-ff20-4f12-9444-e5be98b3603a",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:2652123250186341995-delta_a.*.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_CATALOG_OWNER_ROLE_2652123250186341995"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_OWNER_ROLE_986854579816189983"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:2652123250186341995",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 36,
+            "guid": "91ece417-5720-488d-9287-0b3224b660f3",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:2652123250186341995-delta_a.sales.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:2652123250186341995",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 37,
+            "guid": "bc5c1bb2-201a-45f0-b0dc-1a77ee191f76",
+            "isEnabled": true,
+            "version": 10,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:2652123250186341995-delta_a.sales.orders.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1protocol",
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1_fixed_protocol",
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata",
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1ordinary",
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1group"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:2652123250186341995",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 38,
+            "guid": "1f232f47-e377-4b0c-89b5-c60fd1082f70",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:4502567413048644567-delta_b.*.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_CATALOG_OWNER_ROLE_4502567413048644567"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_OWNER_ROLE_986854579816189983"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:4502567413048644567",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 39,
+            "guid": "29818562-eb7d-4f0f-a914-56102df8b2b0",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:4502567413048644567-delta_b.sales.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:4502567413048644567",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 40,
+            "guid": "c04a5052-4df7-483a-8978-730af7173507",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:4502567413048644567-delta_b.sales.orders.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:4502567413048644567",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 41,
+            "guid": "e3e78177-9cb4-4285-89bd-e16a6ebb2c7f",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:1884340118483991752-delta_quoted.*.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_CATALOG_OWNER_ROLE_1884340118483991752"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_OWNER_ROLE_986854579816189983"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:1884340118483991752",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 42,
+            "guid": "7f7289bf-8ea7-4a7d-ab7b-fb02961168e9",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:1884340118483991752-delta_quoted.sales.*.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:1884340118483991752",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 43,
+            "guid": "ea5dce43-0191-4d06-875a-3c0888db1dd4",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "gravitino-gravitino-metalake-id:986854579816189983-gravitino-catalog-id:1884340118483991752-delta_quoted.sales.orders.*",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "admin"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "gravitino-catalog-id:1884340118483991752",
+              "gravitino-managed",
+              "gravitino-metalake-id:986854579816189983"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 44,
+            "guid": "2f14fe2b-19ab-42cc-9ab2-8e163ccdea45",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_allow_a",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "id",
+                  "secret",
+                  "region"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 45,
+            "guid": "2289a688-1744-4aa8-a622-b268458a5cfb",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_custom_a",
+            "policyType": 1,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "dataMaskPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "dataMaskInfo": {
+                  "dataMaskType": "CUSTOM",
+                  "valueExpr": "upper({col})"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 46,
+            "guid": "43aab45d-a89d-4ce1-bfd0-e26ffec1a1d1",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_filter_a",
+            "policyType": 2,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "rowFilterPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "rowFilterInfo": {
+                  "filterExpr": "region = 'allowed'"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 47,
+            "guid": "33b43647-d8af-4a72-9435-5748039bf429",
+            "isEnabled": true,
+            "version": 2,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_allow_b",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "id",
+                  "region",
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 49,
+            "guid": "d2ebe6aa-6d70-4ff9-9e57-d264390f6aab",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_allow_quoted",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "id",
+                  "secret",
+                  "region",
+                  "odd name"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 50,
+            "guid": "d6d4dc50-2e0e-42b8-94ff-6a21c23e87bd",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_custom_quoted",
+            "policyType": 1,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "odd name"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "dataMaskPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "dataMaskInfo": {
+                  "dataMaskType": "CUSTOM",
+                  "valueExpr": "upper({col})"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 51,
+            "guid": "5eb5907f-2d4a-4e1c-97d1-d4eae34b72b5",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_null_quoted",
+            "policyType": 1,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "dataMaskPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "dataMaskInfo": {
+                  "dataMaskType": "MASK_NULL"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 52,
+            "guid": "ce432e13-3806-46d3-bcd6-50e91ab54528",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_filter_quoted",
+            "policyType": 2,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_quoted"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "rowFilterPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "rowFilterInfo": {
+                  "filterExpr": "region = 'allowed'"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 54,
+            "guid": "c1637066-a7b0-4928-9551-4b0b77afb0b6",
+            "isEnabled": true,
+            "version": 1,
+            "service": "delta_chain_2ffb7db265b1",
+            "name": "delta_chain_foreign_2ffb7db265b1_null_b",
+            "policyType": 1,
+            "policyPriority": 0,
+            "isAuditEnabled": false,
+            "resources": {
+              "column": {
+                "values": [
+                  "secret"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "delta_b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "dataMaskPolicyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "delta_column_2ffb7db265b1"
+                ],
+                "delegateAdmin": false,
+                "dataMaskInfo": {
+                  "dataMaskType": "MASK_NULL"
+                }
+              }
+            ],
+            "serviceType": "delta_chain_def_2ffb7db265b1",
+            "policyLabels": [
+              "delta-chain-foreign:2ffb7db265b1"
+            ],
+            "isDenyAllElse": false
+          }
+        ],
+        "serviceDef": {
+          "id": 217,
+          "guid": "834260e8-9e4b-4a2a-b9d9-57247451f644",
+          "isEnabled": true,
+          "createdBy": "Admin",
+          "updatedBy": "Admin",
+          "createTime": 1789415300008,
+          "updateTime": 1789415300008,
+          "version": 1,
+          "name": "delta_chain_def_2ffb7db265b1",
+          "displayName": "delta_chain_def_2ffb7db265b1",
+          "description": "Apache Gravitino Delta four-level resource service. Provision for exactly one metalake.",
+          "options": {
+            "lookupSupported": "false",
+            "enableDenyAndExceptionsInPolicies": "true",
+            "enableTagBasedPolicies": "true"
+          },
+          "configs": [
+            {
+              "itemId": 1,
+              "name": "ranger.plugin.spark.gravitino.metalake",
+              "type": "string",
+              "mandatory": true,
+              "label": "Canonical Gravitino metalake"
+            }
+          ],
+          "resources": [
+            {
+              "itemId": 1,
+              "name": "catalog",
+              "type": "string",
+              "level": 10,
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": false
+            },
+            {
+              "itemId": 2,
+              "name": "database",
+              "type": "string",
+              "level": 20,
+              "parent": "catalog",
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": false
+            },
+            {
+              "itemId": 3,
+              "name": "table",
+              "type": "string",
+              "level": 30,
+              "parent": "database",
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": false
+            },
+            {
+              "itemId": 4,
+              "name": "column",
+              "type": "string",
+              "level": 40,
+              "parent": "table",
+              "mandatory": true,
+              "lookupSupported": false,
+              "recursiveSupported": false,
+              "excludesSupported": false,
+              "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+              "matcherOptions": {
+                "replaceTokens": "false",
+                "replaceReqExpressions": "false",
+                "wildCard": "true",
+                "ignoreCase": "false"
+              },
+              "isValidLeaf": true
+            }
+          ],
+          "accessTypes": [
+            {
+              "itemId": 1,
+              "name": "select"
+            },
+            {
+              "itemId": 2,
+              "name": "read"
+            },
+            {
+              "itemId": 3,
+              "name": "write"
+            },
+            {
+              "itemId": 4,
+              "name": "create"
+            },
+            {
+              "itemId": 5,
+              "name": "drop"
+            },
+            {
+              "itemId": 6,
+              "name": "alter"
+            },
+            {
+              "itemId": 7,
+              "name": "update"
+            },
+            {
+              "itemId": 8,
+              "name": "all",
+              "impliedGrants": [
+                "select",
+                "read",
+                "write",
+                "create",
+                "drop",
+                "alter",
+                "update"
+              ]
+            }
+          ],
+          "policyConditions": [
+            {
+              "itemId": 1,
+              "name": "_expression",
+              "evaluator": "org.apache.ranger.plugin.conditionevaluator.RangerScriptConditionEvaluator",
+              "evaluatorOptions": {
+                "engineName": "JavaScript",
+                "ui.isMultiline": "true"
+              },
+              "uiHint": "{ \"isMultiline\":true }",
+              "label": "Enter boolean expression",
+              "description": "Boolean expression"
+            }
+          ],
+          "dataMaskDef": {
+            "maskTypes": [
+              {
+                "itemId": 1,
+                "name": "CUSTOM",
+                "label": "Custom",
+                "description": "Custom expression"
+              },
+              {
+                "itemId": 2,
+                "name": "MASK_NULL",
+                "label": "Null",
+                "description": "Replace with NULL",
+                "transformer": "NULL"
+              }
+            ],
+            "accessTypes": [
+              {
+                "itemId": 1,
+                "name": "select"
+              }
+            ],
+            "resources": [
+              {
+                "itemId": 1,
+                "name": "catalog",
+                "type": "string",
+                "level": 10,
+                "mandatory": true,
+                "lookupSupported": false,
+                "recursiveSupported": false,
+                "excludesSupported": false,
+                "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                "matcherOptions": {
+                  "replaceTokens": "false",
+                  "replaceReqExpressions": "false",
+                  "wildCard": "true",
+                  "ignoreCase": "false"
+                },
+                "isValidLeaf": false
+              },
+              {
+                "itemId": 2,
+                "name": "database",
+                "type": "string",
+                "level": 20,
+                "parent": "catalog",
+                "mandatory": true,
+                "lookupSupported": false,
+                "recursiveSupported": false,
+                "excludesSupported": false,
+                "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                "matcherOptions": {
+                  "replaceTokens": "false",
+                  "replaceReqExpressions": "false",
+                  "wildCard": "true",
+                  "ignoreCase": "false"
+                },
+                "isValidLeaf": false
+              },
+              {
+                "itemId": 3,
+                "name": "table",
+                "type": "string",
+                "level": 30,
+                "parent": "database",
+                "mandatory": true,
+                "lookupSupported": false,
+                "recursiveSupported": false,
+                "excludesSupported": false,
+                "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                "matcherOptions": {
+                  "replaceTokens": "false",
+                  "replaceReqExpressions": "false",
+                  "wildCard": "true",
+                  "ignoreCase": "false"
+                },
+                "isValidLeaf": false
+              },
+              {
+                "itemId": 4,
+                "name": "column",
+                "type": "string",
+                "level": 40,
+                "parent": "table",
+                "mandatory": true,
+                "lookupSupported": false,
+                "recursiveSupported": false,
+                "excludesSupported": false,
+                "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                "matcherOptions": {
+                  "replaceTokens": "false",
+                  "replaceReqExpressions": "false",
+                  "wildCard": "true",
+                  "ignoreCase": "false"
+                },
+                "isValidLeaf": true
+              }
+            ]
+          },
+          "rowFilterDef": {
+            "accessTypes": [
+              {
+                "itemId": 1,
+                "name": "select"
+              }
+            ],
+            "resources": [
+              {
+                "itemId": 1,
+                "name": "catalog",
+                "type": "string",
+                "level": 10,
+                "mandatory": true,
+                "lookupSupported": false,
+                "recursiveSupported": false,
+                "excludesSupported": false,
+                "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                "matcherOptions": {
+                  "replaceTokens": "false",
+                  "replaceReqExpressions": "false",
+                  "wildCard": "true",
+                  "ignoreCase": "false"
+                },
+                "isValidLeaf": false
+              },
+              {
+                "itemId": 2,
+                "name": "database",
+                "type": "string",
+                "level": 20,
+                "parent": "catalog",
+                "mandatory": true,
+                "lookupSupported": false,
+                "recursiveSupported": false,
+                "excludesSupported": false,
+                "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                "matcherOptions": {
+                  "replaceTokens": "false",
+                  "replaceReqExpressions": "false",
+                  "wildCard": "true",
+                  "ignoreCase": "false"
+                },
+                "isValidLeaf": false
+              },
+              {
+                "itemId": 3,
+                "name": "table",
+                "type": "string",
+                "level": 30,
+                "parent": "database",
+                "mandatory": true,
+                "lookupSupported": false,
+                "recursiveSupported": false,
+                "excludesSupported": false,
+                "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                "matcherOptions": {
+                  "replaceTokens": "false",
+                  "replaceReqExpressions": "false",
+                  "wildCard": "true",
+                  "ignoreCase": "false"
+                },
+                "isValidLeaf": true
+              }
+            ]
+          },
+          "markerAccessTypes": [
+            {
+              "itemId": 9,
+              "name": "_CREATE",
+              "label": "_CREATE"
+            },
+            {
+              "itemId": 10,
+              "name": "_READ",
+              "label": "_READ"
+            },
+            {
+              "itemId": 11,
+              "name": "_UPDATE",
+              "label": "_UPDATE"
+            },
+            {
+              "itemId": 12,
+              "name": "_DELETE",
+              "label": "_DELETE"
+            },
+            {
+              "itemId": 13,
+              "name": "_MANAGE",
+              "label": "_MANAGE"
+            },
+            {
+              "itemId": 14,
+              "name": "_ALL",
+              "label": "_ALL",
+              "impliedGrants": [
+                "drop",
+                "all",
+                "select",
+                "read",
+                "create",
+                "update",
+                "write",
+                "alter"
+              ]
+            }
+          ]
+        },
+        "auditMode": "audit-default",
+        "tagPolicies": {
+          "serviceName": "delta_chain_tag_2ffb7db265b1",
+          "serviceId": 15,
+          "policyVersion": 2,
+          "policyUpdateTime": 1790007009006,
+          "serviceDef": {
+            "id": 100,
+            "guid": "0d047248-baff-4cf9-8e9e-d5d377284b2e",
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1788825421086,
+            "updateTime": 1789415300041,
+            "version": 42,
+            "name": "tag",
+            "displayName": "tag",
+            "implClass": "org.apache.ranger.services.tag.RangerServiceTag",
+            "label": "TAG",
+            "description": "TAG Service Definition",
+            "options": {
+              "ui.pages": "tag-based-policies",
+              "enableDenyAndExceptionsInPolicies": "true",
+              "enableTagBasedPolicies": "true"
+            },
+            "configs": [
+              {
+                "itemId": 1,
+                "name": "ranger.plugin.audit.filters",
+                "type": "string",
+                "mandatory": false,
+                "defaultValue": "[ {'accessResult': 'DENIED', 'isAudited': true} ]",
+                "label": "Ranger Default Audit Filters"
+              }
+            ],
+            "resources": [
+              {
+                "itemId": 1,
+                "name": "tag",
+                "type": "string",
+                "level": 1,
+                "mandatory": true,
+                "lookupSupported": true,
+                "recursiveSupported": false,
+                "excludesSupported": false,
+                "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                "matcherOptions": {
+                  "wildCard": "false",
+                  "ignoreCase": "false"
+                },
+                "uiHint": "{ \"singleValue\":true }",
+                "label": "TAG",
+                "description": "TAG",
+                "isValidLeaf": true
+              }
+            ],
+            "accessTypes": [
+              {
+                "itemId": 217218,
+                "name": "select"
+              },
+              {
+                "itemId": 217219,
+                "name": "read"
+              },
+              {
+                "itemId": 217220,
+                "name": "write"
+              },
+              {
+                "itemId": 217221,
+                "name": "create"
+              },
+              {
+                "itemId": 217222,
+                "name": "drop"
+              },
+              {
+                "itemId": 217223,
+                "name": "alter"
+              },
+              {
+                "itemId": 217224,
+                "name": "update"
+              },
+              {
+                "itemId": 217225,
+                "name": "all",
+                "impliedGrants": [
+                  "drop",
+                  "read",
+                  "select",
+                  "create",
+                  "update",
+                  "write",
+                  "alter"
+                ]
+              }
+            ],
+            "policyConditions": [
+              {
+                "itemId": 1,
+                "name": "accessed-after-expiry",
+                "evaluator": "org.apache.ranger.plugin.conditionevaluator.RangerScriptTemplateConditionEvaluator",
+                "evaluatorOptions": {
+                  "scriptTemplate": "ctx.isAccessedAfter('expiry_date');"
+                },
+                "uiHint": "{ \"singleValue\":true }",
+                "label": "Accessed after expiry_date (yes/no)?",
+                "description": "Accessed after expiry_date? (yes/no)"
+              },
+              {
+                "itemId": 2,
+                "name": "expression",
+                "evaluator": "org.apache.ranger.plugin.conditionevaluator.RangerScriptConditionEvaluator",
+                "evaluatorOptions": {
+                  "engineName": "JavaScript",
+                  "ui.isMultiline": "true"
+                },
+                "uiHint": "{ \"isMultiline\":true }",
+                "label": "Enter boolean expression",
+                "description": "Boolean expression"
+              }
+            ],
+            "contextEnrichers": [
+              {
+                "itemId": 1,
+                "name": "TagEnricher",
+                "enricher": "org.apache.ranger.plugin.contextenricher.RangerTagEnricher",
+                "enricherOptions": {
+                  "tagRetrieverClassName": "org.apache.ranger.plugin.contextenricher.RangerAdminTagRetriever",
+                  "tagRefresherPollingInterval": "60000"
+                }
+              }
+            ],
+            "dataMaskDef": {
+              "maskTypes": [
+                {
+                  "itemId": 3004,
+                  "name": "hive:MASK",
+                  "label": "Redact",
+                  "description": "Replace lowercase with 'x', uppercase with 'X', digits with '0'",
+                  "transformer": "mask({col})"
+                },
+                {
+                  "itemId": 3005,
+                  "name": "hive:MASK_SHOW_LAST_4",
+                  "label": "Partial mask: show last 4",
+                  "description": "Show last 4 characters; replace rest with 'x'",
+                  "transformer": "mask_show_last_n({col}, 4, 'x', 'x', 'x', -1, '1')"
+                },
+                {
+                  "itemId": 3006,
+                  "name": "hive:MASK_SHOW_FIRST_4",
+                  "label": "Partial mask: show first 4",
+                  "description": "Show first 4 characters; replace rest with 'x'",
+                  "transformer": "mask_show_first_n({col}, 4, 'x', 'x', 'x', -1, '1')"
+                },
+                {
+                  "itemId": 3007,
+                  "name": "hive:MASK_HASH",
+                  "label": "Hash",
+                  "description": "Hash the value",
+                  "transformer": "mask_hash({col})"
+                },
+                {
+                  "itemId": 3008,
+                  "name": "hive:MASK_NULL",
+                  "label": "Nullify",
+                  "description": "Replace with NULL"
+                },
+                {
+                  "itemId": 3009,
+                  "name": "hive:MASK_NONE",
+                  "label": "Unmasked (retain original value)",
+                  "description": "No masking"
+                },
+                {
+                  "itemId": 3015,
+                  "name": "hive:MASK_DATE_SHOW_YEAR",
+                  "label": "Date: show only year",
+                  "description": "Date: show only year",
+                  "transformer": "mask({col}, 'x', 'x', 'x', -1, '1', 1, 0, -1)"
+                },
+                {
+                  "itemId": 3016,
+                  "name": "hive:CUSTOM",
+                  "label": "Custom",
+                  "description": "Custom"
+                },
+                {
+                  "itemId": 203204,
+                  "name": "trino:MASK",
+                  "label": "Redact",
+                  "description": "Replace lowercase with 'x', uppercase with 'X', digits with '0'",
+                  "transformer": "cast(regexp_replace(regexp_replace(regexp_replace({col},'([A-Z])', 'X'),'([a-z])','x'),'([0-9])','0') as {type})"
+                },
+                {
+                  "itemId": 203205,
+                  "name": "trino:MASK_SHOW_LAST_4",
+                  "label": "Partial mask: show last 4",
+                  "description": "Show last 4 characters; replace rest with 'X'",
+                  "transformer": "cast(regexp_replace({col}, '(.*)(.{4}$)', x -> regexp_replace(x[1], '.', 'X') || x[2]) as {type})"
+                },
+                {
+                  "itemId": 203206,
+                  "name": "trino:MASK_SHOW_FIRST_4",
+                  "label": "Partial mask: show first 4",
+                  "description": "Show first 4 characters; replace rest with 'x'",
+                  "transformer": "cast(regexp_replace({col}, '(^.{4})(.*)', x -> x[1] || regexp_replace(x[2], '.', 'X')) as {type})"
+                },
+                {
+                  "itemId": 203207,
+                  "name": "trino:MASK_HASH",
+                  "label": "Hash",
+                  "description": "Hash the value of a varchar with sha256",
+                  "transformer": "cast(to_hex(sha256(to_utf8({col}))) as {type})"
+                },
+                {
+                  "itemId": 203208,
+                  "name": "trino:MASK_NULL",
+                  "label": "Nullify",
+                  "description": "Replace with NULL"
+                },
+                {
+                  "itemId": 203209,
+                  "name": "trino:MASK_NONE",
+                  "label": "Unmasked (retain original value)",
+                  "description": "No masking"
+                },
+                {
+                  "itemId": 203215,
+                  "name": "trino:MASK_DATE_SHOW_YEAR",
+                  "label": "Date: show only year",
+                  "description": "Date: show only year",
+                  "transformer": "date_trunc('year', {col})"
+                },
+                {
+                  "itemId": 203216,
+                  "name": "trino:CUSTOM",
+                  "label": "Custom",
+                  "description": "Custom"
+                },
+                {
+                  "itemId": 17018,
+                  "name": "presto:MASK",
+                  "label": "Redact",
+                  "description": "Replace lowercase with 'x', uppercase with 'X', digits with '0'",
+                  "transformer": "cast(regexp_replace(regexp_replace(regexp_replace({col},'([A-Z])', 'X'),'([a-z])','x'),'([0-9])','0') as {type})"
+                },
+                {
+                  "itemId": 17019,
+                  "name": "presto:MASK_SHOW_LAST_4",
+                  "label": "Partial mask: show last 4",
+                  "description": "Show last 4 characters; replace rest with 'X'",
+                  "transformer": "cast(regexp_replace({col}, '(.*)(.{4}$)', x -> regexp_replace(x[1], '.', 'X') || x[2]) as {type})"
+                },
+                {
+                  "itemId": 17020,
+                  "name": "presto:MASK_SHOW_FIRST_4",
+                  "label": "Partial mask: show first 4",
+                  "description": "Show first 4 characters; replace rest with 'x'",
+                  "transformer": "cast(regexp_replace({col}, '(^.{4})(.*)', x -> x[1] || regexp_replace(x[2], '.', 'X')) as {type})"
+                },
+                {
+                  "itemId": 17021,
+                  "name": "presto:MASK_HASH",
+                  "label": "Hash",
+                  "description": "Hash the value of a varchar with sha256",
+                  "transformer": "cast(to_hex(sha256(to_utf8({col}))) as {type})"
+                },
+                {
+                  "itemId": 17022,
+                  "name": "presto:MASK_NULL",
+                  "label": "Nullify",
+                  "description": "Replace with NULL"
+                },
+                {
+                  "itemId": 17023,
+                  "name": "presto:MASK_NONE",
+                  "label": "Unmasked (retain original value)",
+                  "description": "No masking"
+                },
+                {
+                  "itemId": 17029,
+                  "name": "presto:MASK_DATE_SHOW_YEAR",
+                  "label": "Date: show only year",
+                  "description": "Date: show only year",
+                  "transformer": "date_trunc('year', {col})"
+                },
+                {
+                  "itemId": 17030,
+                  "name": "presto:CUSTOM",
+                  "label": "Custom",
+                  "description": "Custom"
+                },
+                {
+                  "itemId": 205206,
+                  "name": "nestedstructure:MASK",
+                  "label": "Redact",
+                  "description": "Replace lowercase with 'x', uppercase with 'X', digits with '0'",
+                  "transformer": "mask({field})"
+                },
+                {
+                  "itemId": 205207,
+                  "name": "nestedstructure:MASK_SHOW_LAST_4",
+                  "label": "Partial mask: show last 4",
+                  "description": "Show last 4 characters; replace rest with 'x'",
+                  "transformer": "mask_show_last_n({field}, 4, 'x', 'x', 'x', -1, '1')"
+                },
+                {
+                  "itemId": 205208,
+                  "name": "nestedstructure:MASK_SHOW_FIRST_4",
+                  "label": "Partial mask: show first 4",
+                  "description": "Show first 4 characters; replace rest with 'x'",
+                  "transformer": "mask_show_first_n({field}, 4, 'x', 'x', 'x', -1, '1')"
+                },
+                {
+                  "itemId": 205209,
+                  "name": "nestedstructure:MASK_HASH",
+                  "label": "Hash",
+                  "description": "Hash the value",
+                  "transformer": "mask_hash({field})"
+                },
+                {
+                  "itemId": 205210,
+                  "name": "nestedstructure:MASK_NULL",
+                  "label": "Nullify",
+                  "description": "Replace with NULL"
+                },
+                {
+                  "itemId": 205211,
+                  "name": "nestedstructure:MASK_NONE",
+                  "label": "Unmasked (retain original value)",
+                  "description": "No masking"
+                },
+                {
+                  "itemId": 205217,
+                  "name": "nestedstructure:MASK_DATE_SHOW_YEAR",
+                  "label": "Date: show only year",
+                  "description": "Date: show only year",
+                  "transformer": "mask({field}, 'x', 'x', 'x', -1, '1', 1, 0, -1)"
+                },
+                {
+                  "itemId": 205218,
+                  "name": "nestedstructure:CUSTOM",
+                  "label": "Custom",
+                  "description": "Custom"
+                },
+                {
+                  "itemId": 207208,
+                  "name": "delta_probe_d3542daa:CUSTOM",
+                  "label": "Custom",
+                  "description": "Custom expression"
+                },
+                {
+                  "itemId": 216217,
+                  "name": "delta_definition_6960fcbba49b:CUSTOM",
+                  "label": "Custom",
+                  "description": "Custom expression"
+                },
+                {
+                  "itemId": 216218,
+                  "name": "delta_definition_6960fcbba49b:MASK_NULL",
+                  "label": "Null",
+                  "description": "Replace with NULL",
+                  "transformer": "NULL"
+                },
+                {
+                  "itemId": 217218,
+                  "name": "delta_chain_def_2ffb7db265b1:CUSTOM",
+                  "label": "Custom",
+                  "description": "Custom expression"
+                },
+                {
+                  "itemId": 217219,
+                  "name": "delta_chain_def_2ffb7db265b1:MASK_NULL",
+                  "label": "Null",
+                  "description": "Replace with NULL",
+                  "transformer": "NULL"
+                }
+              ],
+              "accessTypes": [
+                {
+                  "itemId": 217218,
+                  "name": "select"
+                }
+              ],
+              "resources": [
+                {
+                  "itemId": 1,
+                  "name": "tag",
+                  "type": "string",
+                  "level": 1,
+                  "mandatory": true,
+                  "lookupSupported": true,
+                  "recursiveSupported": false,
+                  "excludesSupported": false,
+                  "matcher": "org.apache.ranger.plugin.resourcematcher.RangerDefaultResourceMatcher",
+                  "matcherOptions": {
+                    "__isValidLeaf": "true",
+                    "wildCard": "false",
+                    "__accessTypeRestrictions": "[]",
+                    "ignoreCase": "false"
+                  },
+                  "uiHint": "{ \"singleValue\":true }",
+                  "label": "TAG",
+                  "description": "TAG",
+                  "isValidLeaf": true
+                }
+              ]
+            },
+            "rowFilterDef": {},
+            "markerAccessTypes": [
+              {
+                "itemId": 217226,
+                "name": "_CREATE",
+                "label": "_CREATE"
+              },
+              {
+                "itemId": 217227,
+                "name": "_READ",
+                "label": "_READ"
+              },
+              {
+                "itemId": 217228,
+                "name": "_UPDATE",
+                "label": "_UPDATE"
+              },
+              {
+                "itemId": 217229,
+                "name": "_DELETE",
+                "label": "_DELETE"
+              },
+              {
+                "itemId": 217230,
+                "name": "_MANAGE",
+                "label": "_MANAGE"
+              },
+              {
+                "itemId": 217231,
+                "name": "_ALL",
+                "label": "_ALL",
+                "impliedGrants": [
+                  "drop",
+                  "all",
+                  "select",
+                  "read",
+                  "update",
+                  "create",
+                  "write",
+                  "alter"
+                ]
+              }
+            ]
+          },
+          "auditMode": "audit-default",
+          "serviceConfig": {
+            "ranger.plugins.conf.ldap.username.caseconversion": "none",
+            "ranger.plugins.conf.mapping.username.handler": "org.apache.ranger.ugsyncutil.transform.RegEx",
+            "ranger.plugins.conf.mapping.regex.separator": "/",
+            "ranger.plugin.audit.filters": "[ {'accessResult': 'DENIED', 'isAudited': true} ]",
+            "ranger.plugins.conf.mapping.groupname.handler": "org.apache.ranger.ugsyncutil.transform.RegEx",
+            "ranger.plugins.conf.ldap.groupname.caseconversion": "none"
+          }
+        },
+        "serviceConfig": {
+          "ranger.plugins.conf.ldap.username.caseconversion": "none",
+          "ranger.plugins.conf.mapping.username.handler": "org.apache.ranger.ugsyncutil.transform.RegEx",
+          "ranger.plugins.conf.mapping.regex.separator": "/",
+          "ranger.plugin.spark.gravitino.metalake": "delta_chain_lake_2ffb7db265b1",
+          "ranger.plugins.conf.mapping.groupname.handler": "org.apache.ranger.ugsyncutil.transform.RegEx",
+          "ranger.plugins.conf.ldap.groupname.caseconversion": "none"
+        }
+      }
+    },
+    "roleDownload": {
+      "status": 200,
+      "body": {
+        "serviceName": "delta_chain_2ffb7db265b1",
+        "roleVersion": 63,
+        "roleUpdateTime": 1790007104932,
+        "rangerRoles": [
+          {
+            "id": 8,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425657685,
+            "updateTime": 1789425657730,
+            "name": "GRAVITINO_CATALOG_OWNER_ROLE_2652123250186341995",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "admin",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 21,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429822182,
+            "updateTime": 1789429822183,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1ordinary",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 7,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789424560243,
+            "updateTime": 1789424560244,
+            "name": "GRAVITINO_CATALOG_OWNER_ROLE_3654023421300958302",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 14,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789426238786,
+            "updateTime": 1789426239229,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1_fixed_protocol",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_fresh_2ffb7db265b1_ok1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 12,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425661842,
+            "updateTime": 1789425661866,
+            "name": "GRAVITINO_CATALOG_OWNER_ROLE_1884340118483991752",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "admin",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 23,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429822614,
+            "updateTime": 1789429822614,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1global_guard",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 13,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425691265,
+            "updateTime": 1789425691265,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1protocol",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 19,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429819310,
+            "updateTime": 1789429820161,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_freshCallback",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_fresh_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 25,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789431700548,
+            "updateTime": 1789431701108,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata_schema",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_meta_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789403284570,
+            "updateTime": 1789404993471,
+            "name": "delta_role_6960fcbba49b",
+            "description": "Owned Delta engine fixture 6960fcbba49b",
+            "users": [
+              {
+                "name": "delta_reader_6960fcbba49b",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 11,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425660703,
+            "updateTime": 1789425660735,
+            "name": "GRAVITINO_CATALOG_OWNER_ROLE_4502567413048644567",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "admin",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 20,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429821154,
+            "updateTime": 1789429822066,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1metadata",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_meta_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 16,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429815767,
+            "updateTime": 1789429816955,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_columnReader",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_column_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 17,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429817069,
+            "updateTime": 1789429817972,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_visibilityOnly",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_visible_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 18,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429818063,
+            "updateTime": 1789429819221,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_groupReader",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_group_reader_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 10,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425658750,
+            "updateTime": 1789425658751,
+            "name": "GRAVITINO_OWNER_ROLE",
+            "description": "MANAGED_BY_GRAVITINO"
+          },
+          {
+            "id": 15,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429814501,
+            "updateTime": 1789429815668,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1visibility_metadata",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "delta_meta_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789425658191,
+            "updateTime": 1789425662044,
+            "name": "GRAVITINO_METALAKE_OWNER_ROLE_986854579816189983",
+            "description": "MANAGED_BY_GRAVITINO",
+            "users": [
+              {
+                "name": "admin",
+                "isAdmin": false
+              }
+            ]
+          },
+          {
+            "id": 22,
+            "isEnabled": true,
+            "createdBy": "Admin",
+            "updatedBy": "Admin",
+            "createTime": 1789429822380,
+            "updateTime": 1789429823086,
+            "name": "GRAVITINO_METALAKE_986854579816189983_ROLE_delta_chain_role_2ffb7db265b1group",
+            "description": "MANAGED_BY_GRAVITINO",
+            "groups": [
+              {
+                "name": "delta_query_group_2ffb7db265b1",
+                "isAdmin": false
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

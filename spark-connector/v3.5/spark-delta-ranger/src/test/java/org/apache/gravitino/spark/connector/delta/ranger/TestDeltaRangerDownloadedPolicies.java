@@ -33,11 +33,13 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -92,17 +94,20 @@ public class TestDeltaRangerDownloadedPolicies {
   private GravitinoMetalake lake;
   private DeltaRangerCallbackGateway gateway;
   private DeltaRangerCallbackGateway publicGateway;
+  private boolean postLifecycleResume;
 
   /**
    * Executes one explicit public-chain checkpoint from immutable test-application inputs.
    *
    * @param args one checkpoint: bootstrap, resume-catalog-bootstrap, fresh-principal, matrix, or
-   *     matrix-resume
+   *     matrix-resume, or post-role-lifecycle-resume
    * @throws Exception if setup or an acceptance assertion fails
    */
   public static void main(String[] args) throws Exception {
     TestDeltaRangerDownloadedPolicies harness = new TestDeltaRangerDownloadedPolicies();
     try {
+      harness.postLifecycleResume =
+          args.length == 1 && "post-role-lifecycle-resume".equals(args[0]);
       harness.start();
       if (args.length != 1) {
         throw new IllegalArgumentException("One checkpoint is required");
@@ -124,6 +129,9 @@ public class TestDeltaRangerDownloadedPolicies {
       } else if ("matrix-resume".equals(args[0])) {
         harness.resumeMatrixIdentities();
         harness.matrixControlLoop();
+      } else if ("post-role-lifecycle-resume".equals(args[0])) {
+        harness.resumePostRoleLifecycle();
+        harness.postLifecycleControlLoop();
       } else {
         throw new IllegalArgumentException("Unknown public-chain checkpoint");
       }
@@ -148,12 +156,15 @@ public class TestDeltaRangerDownloadedPolicies {
     int port =
         Files.exists(gatewayAddress) ? URI.create(Files.readString(gatewayAddress)).getPort() : 0;
     gateway =
-        new DeltaRangerCallbackGateway(adminUrl, evidence.resolve("callback-attempts.jsonl"), port);
+        new DeltaRangerCallbackGateway(
+            adminUrl, evidence.resolve("callback-attempts.jsonl"), port, postLifecycleResume);
     Files.writeString(gatewayAddress, gateway.uri().toString());
     publicGateway =
         new DeltaRangerCallbackGateway(
             URI.create(requiredProperty("gravitinoUrl")),
-            evidence.resolve("public-attempts.jsonl"));
+            evidence.resolve("public-attempts.jsonl"),
+            0,
+            postLifecycleResume);
     client =
         GravitinoAdminClient.builder(publicGateway.uri().toString())
             .withSimpleAuth(required("gravitinoAdminPrincipal"))
@@ -421,6 +432,206 @@ public class TestDeltaRangerDownloadedPolicies {
                             List.of(Privileges.UseSchema.allow()))
                         : tableObject(catalog)));
     return result;
+  }
+
+  private void resumePostRoleLifecycle() throws Exception {
+    String checkpointDigest = requiredProperty("resumeCheckpointSha256");
+    String preflightDigest = requiredProperty("resumePreflightSha256");
+    String baselineDigest = requiredProperty("resumeBaselineSha256");
+    JsonNode checkpoint =
+        DeltaRangerPostLifecycleResume.readBound(
+            Path.of(requiredProperty("resumeCheckpointFile")), checkpointDigest);
+    JsonNode preflight =
+        DeltaRangerPostLifecycleResume.readBound(
+            Path.of(requiredProperty("resumePreflightFile")), preflightDigest);
+    JsonNode baseline =
+        DeltaRangerPostLifecycleResume.readBound(
+            Path.of(requiredProperty("resumeBaselineFile")), baselineDigest);
+    DeltaRangerPostLifecycleResume.validateInputs(
+        fixture, checkpoint, baseline, preflight, checkpointDigest, preflightDigest);
+    JsonNode downloader =
+        JSON.readTree(privateFile(required("resumeDownloaderCredentialsFile")).toFile());
+    String downloadUser = downloader.path("username").asText();
+    String downloadPassword = downloader.path("password").asText();
+    if (downloadUser.isBlank()
+        || downloadPassword.isBlank()
+        || !downloadUser.equals(
+            baseline.path("observations").path("downloader").path("body").path("name").asText())) {
+      throw new IllegalArgumentException("Owned downloader credentials required");
+    }
+    String publicAuth = basic(required("gravitinoAdminPrincipal"), "dummy");
+    String adminAuth =
+        basic(adminCredentials.getProperty("username"), adminCredentials.getProperty("password"));
+    String downloadAuth = basic(downloadUser, downloadPassword);
+    int reads =
+        DeltaRangerPostLifecycleResume.validateCurrent(
+            fixture,
+            baseline,
+            (key, path) ->
+                DeltaRangerPostLifecycleResume.get(
+                    path.startsWith("/api/") ? publicGateway.uri() : gateway.uri(),
+                    path,
+                    path.startsWith("/api/")
+                        ? publicAuth
+                        : (key.endsWith("Download") ? downloadAuth : adminAuth)));
+    Map<String, Object> receipts = new LinkedHashMap<>();
+    for (JsonNode catalog : fixture.path("catalogs")) {
+      JsonNode nativeTable =
+          JSON.readTree(privateFile(catalog.path("nativeFixtureFile").asText()).toFile())
+              .path("table");
+      JsonNode properties =
+          baseline
+              .path("observations")
+              .path("table:" + catalog.path("name").asText())
+              .path("body")
+              .path("table")
+              .path("properties");
+      assertEquals(
+          nativeTable.path("native").path("id").asText(),
+          properties.path("delta.registration.receipt.nativeId").asText());
+      assertEquals(
+          nativeTable.path("version").asText(),
+          properties.path("delta.registration.receipt.nativeVersion").asText());
+      assertEquals(
+          nativeTable.path("location").asText(),
+          properties.path("delta.registration.receipt.location").asText());
+      receipts.put(
+          catalog.path("name").asText(),
+          Map.of(
+              "nativeId",
+              nativeTable.path("native").path("id").asText(),
+              "version",
+              nativeTable.path("version").asLong(),
+              "location",
+              nativeTable.path("location").asText()));
+    }
+    lake = client.loadMetalake(required("metalake"));
+    assertTrue(gateway.awaitDrained() && publicGateway.awaitDrained());
+    DeltaRangerPostLifecycleResume.requireCompletedReads(gateway.recordedEvents());
+    DeltaRangerPostLifecycleResume.requireCompletedReads(publicGateway.recordedEvents());
+    Map<String, Object> details = new LinkedHashMap<>();
+    details.put("checkpointSha256", checkpointDigest);
+    details.put("baselineSha256", baselineDigest);
+    details.put("preflightSha256", preflightDigest);
+    details.put("preflightMode", preflight.path("mode").asText());
+    details.put("coldH2Sha256", preflight.path("coldH2Sha256"));
+    details.put("s3ManifestSha256", preflight.path("s3ManifestSha256").asText());
+    details.put("s3ExactBytesVerified", true);
+    details.put("storageBaseline", preflight.path("storageBaseline").asText());
+    details.put("transitionSha256", preflight.path("transitionSha256").asText());
+    details.put("receipts", receipts);
+    details.put(
+        "serviceIds",
+        Map.of("definition", 217, "tag", 15, "resource", 16, "side", 17, "downloader", 9));
+    details.put(
+        "protectedRoleIds",
+        Map.of(
+            "orphanOwner",
+            7,
+            "protocol",
+            13,
+            "fixedProtocol",
+            14,
+            "globalGuard",
+            23,
+            "metadataSchema",
+            25));
+    details.put(
+        "policyIds",
+        baseline
+            .path("observations")
+            .path("policies")
+            .path("body")
+            .path("policies")
+            .findValues("id"));
+    details.put("policyVersion", 44);
+    details.put("roleVersion", 63);
+    details.put("semanticComparisonsPassed", reads);
+    details.put("publicCompletions", publicGateway.completed());
+    details.put("callbackCompletions", gateway.completed());
+    details.put("divergence", checkpoint.path("divergence"));
+    event("post-role-lifecycle-resume-validated", details);
+    Path validated = evidence.resolve("post-role-lifecycle-resume-validated.json");
+    Files.setPosixFilePermissions(validated, PosixFilePermissions.fromString("rw-------"));
+    try (FileChannel channel = FileChannel.open(validated, StandardOpenOption.WRITE)) {
+      channel.force(true);
+    }
+  }
+
+  private void postLifecycleControlLoop() throws Exception {
+    Path commands = evidence.resolve("matrix-commands");
+    Files.createDirectory(commands);
+    event(
+        "matrix-control-ready",
+        Map.of(
+            "commands",
+            commands.toString(),
+            "mode",
+            "post-role-lifecycle-resume",
+            "protectedState",
+            true));
+    boolean quarantined = false;
+    for (int sequence = 1; ; sequence++) {
+      String id = String.format("%06d", sequence);
+      Path commandFile = commands.resolve(id + ".json");
+      long deadline = System.nanoTime() + Duration.ofMinutes(30).toNanos();
+      while (!Files.exists(commandFile)) {
+        if (System.nanoTime() > deadline)
+          throw new IllegalStateException("Post-lifecycle barrier expired");
+        Thread.sleep(100);
+      }
+      JsonNode command;
+      try {
+        command = DeltaRangerPostLifecycleResume.readCommand(commandFile);
+        DeltaRangerPostLifecycleResume.validateCommand(command, quarantined);
+      } catch (Exception failure) {
+        event(
+            "matrix-command-" + id,
+            Map.of(
+                "rejectedBeforeDispatch",
+                true,
+                "failureClass",
+                failure.getClass().getName(),
+                "quarantined",
+                quarantined));
+        continue;
+      }
+      String operation = command.path("operation").asText();
+      if ("close".equals(operation)) {
+        event("matrix-closed", Map.of("quarantined", quarantined));
+        return;
+      }
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("operation", operation);
+      result.put("started", Instant.now().toString());
+      long publicBefore = publicGateway.completed();
+      long callbackBefore = gateway.completed();
+      try {
+        matrixOperation(operation, command);
+        result.put("completed", true);
+      } catch (Exception | AssertionError failure) {
+        quarantined = true;
+        result.put("completed", false);
+        result.put("failureClass", failure.getClass().getName());
+      }
+      boolean drained = gateway.awaitDrained() && publicGateway.awaitDrained();
+      if (!drained) quarantined = true;
+      // Surface recorder loss before another command can dispatch.
+      gateway.recordedEvents();
+      publicGateway.recordedEvents();
+      result.put("gatewayDrained", drained);
+      result.put("quarantined", quarantined);
+      result.put("publicCompletions", publicGateway.completed() - publicBefore);
+      result.put("callbackCompletions", gateway.completed() - callbackBefore);
+      result.put("finished", Instant.now().toString());
+      event("matrix-command-" + id, result);
+    }
+  }
+
+  private static String basic(String username, String password) {
+    return "Basic "
+        + Base64.getEncoder()
+            .encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
   }
 
   private void resumeMatrixIdentities() throws Exception {
@@ -809,6 +1020,18 @@ public class TestDeltaRangerDownloadedPolicies {
     record.put("stage", stage);
     record.put("time", Instant.now().toString());
     record.put("details", details);
+    if (postLifecycleResume) {
+      record.put("mode", "post-role-lifecycle-resume");
+      record.put("preservedDivergence", true);
+      record.put(
+          "protectedObjects",
+          List.of(
+              "global_guard",
+              "audit_cleanup",
+              "metadata_schema",
+              "protocol",
+              "originalCatalogOwner"));
+    }
     Path output = evidence.resolve(stage + ".json");
     Files.writeString(output, JSON.writeValueAsString(record), StandardOpenOption.CREATE_NEW);
   }
