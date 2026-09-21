@@ -20,6 +20,16 @@ configuration exists in this baseline: use the existing Google Java Spotless che
 strict Javadoc and an explicit review of imports, member ordering and public/protected
 documentation. The commands below reflect those available checks.
 
+**September 21 continuation:** Docker was intentionally stopped by the user. Continue
+local source work, unit tests, packaging and review without restarting it. The native
+SnapshotState admission fix `e1347911c` passed both Delta adapter suites (71 tests
+per version) and independent review. The test-only download recorder and precise
+policy-denial assertions remain in progress. All saved PIDs, endpoint readiness and
+policy/role generations are historical. Before later live qualification, verify the
+persisted Ranger database, Gravitino H2 registrations and original S3 objects, then
+validate the recorded post-lifecycle state without replaying bootstrap or repairing
+the intentionally retained local/remote grant divergence. Task 4 remains open.
+
 ## Global Constraints
 
 - One Ranger resource service is provisioned for exactly one metalake. Server pushdown and Spark engine bind to the same service identity and metalake; canonical catalog is within that metalake. Policy labels are mutation ownership selectors, not an extra Ranger resource dimension. No global catalog-name uniqueness assumption.
@@ -323,3 +333,29 @@ from the user. The audit preserves no-core source constraints and separate metad
 identity. Plan details and tests will be developed from each concrete execution
 path; full Delta support cannot be claimed until the missing paths are implemented
 and qualified. Isolated demo integration remains a subsequent deployment gate.
+
+### Feature-bearing Delta tables remain separate conformance requirements
+
+The independent audit at `8c383c940` found that protocol/configuration recognition
+does not establish feature execution. The tested native lifecycle covers column
+mapping none/name and ordinary add-column refresh; registered create/replace
+currently rejects id mapping. Metadata-reader V2-checkpoint fixtures are not
+evidence of a Spark-produced V2-checkpoint lifecycle. The following remain:
+
+- Deletion-vector data lifecycle and correctness: enable, append, DELETE/UPDATE/
+  MERGE, restart/checkpoint/refresh, historical read and Ranger filter/mask reads.
+- Native V2-checkpoint production and reload, including sidecars and history after
+  earlier JSON pruning.
+- Column-mapping identity and preview/stable type-widening behavior: verify what
+  the pinned native engines support, add corresponding registration paths, and
+  retain physical field identity and mask types across schema changes.
+- Change-data-feed production and reads, including before/after images, version
+  ranges, schema changes, replacement boundaries and explicit authorization.
+- Row tracking and clustering enablement/dependencies, hidden metadata, writes,
+  maintenance, restart/refresh and combinations with mapping/deletion vectors.
+
+Run native controls and relevant Ranger enforcement for each supported feature in
+all four pinned Spark/Delta cells. Synthetic feature descriptors, preserved raw
+properties and reader compatibility must remain labeled separately from qualified
+feature behavior. This is required for the full Delta objective; Task4 fresh
+SELECT composition does not close these gaps.
