@@ -107,10 +107,24 @@ pins and matching test-case inventories. The original full row retains its origi
 test-source scope; it is not relabeled as a full rerun after the test additions.
 See the native-operation report, review and fix-1 review in the task ledger.
 
-The next increment implements retained-registration and complete action decision
-validation for the later collection guard. Physical provenance and installed
-retained-action enforcement remain open, along with the broader full-Delta goal.
-No new artifact was deployed to the live Ranger fixture by this offline work.
+Retained-registration and complete action decision validation are now implemented
+and independently reviewed (SPEC PASS / QUALITY READY). The original receipt
+retains all access/decision obligations, uses one fresh time for each action, and
+compares current native/registration observations across the whole action. It
+permits compatible data-only advancement between actions while rejecting observed
+within-action drift. No replacement receipt or user physical child is executed.
+
+The unchanged 82-file freeze passed 297 full-module invocations on Spark 3.5.4 /
+Delta 3.3.0 and 149 affected invocations on each other pair: 744 executions with
+zero failures/errors/skips, Ranger 2.8.0 and JDK17. Root verified exact testcase
+multisets, original XML, source/compiled hashes and dependency pins. Native-head
+regression is source-guarded but not forced through the normally monotonic actual
+DeltaLog. See the action-validation report and review in the task ledger.
+
+The next increment installs physical provenance verification and the visible
+collection guard. Retained-action enforcement and the broader full-Delta goal
+remain open. No new artifact was deployed to the live Ranger fixture by this
+offline work.
 
 ## Global Constraints
 

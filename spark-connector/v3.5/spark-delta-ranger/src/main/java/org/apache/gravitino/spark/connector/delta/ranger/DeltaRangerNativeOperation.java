@@ -56,6 +56,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   enum Callback {
     LOAD,
     PREPARE,
+    VALIDATE_RETAINED_BINDING,
     MATCHING_FILES,
     GET_SNAPSHOT,
     INPUT_FILES,
@@ -75,6 +76,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   @Nullable private final DeltaRangerRegistrationReader reader;
   @Nullable private final PublishedObservation before;
   @Nullable private final ScanOwner scanOwner;
+  @Nullable private final BoundRegistrationScan retainedOwner;
   private final List<Lineage> lineages = new ArrayList<>();
   private final List<Seq<Attribute>> aggregateOutputs = new ArrayList<>();
   @Nullable private BoundRegistrationScan completedLoad;
@@ -93,13 +95,18 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       @Nullable DeltaRangerRegistrationBindings loadOwner,
       @Nullable DeltaRangerRegistrationReader reader,
       @Nullable PublishedObservation before,
-      @Nullable ScanOwner scanOwner) {
+      @Nullable ScanOwner scanOwner,
+      @Nullable BoundRegistrationScan retainedOwner) {
     this.session = Objects.requireNonNull(session);
     this.loadOwner = loadOwner;
     this.reader = reader;
     this.before = before;
     this.scanOwner = scanOwner;
-    this.callback = scanOwner == null ? Callback.LOAD : Callback.PREPARE;
+    this.retainedOwner = retainedOwner;
+    this.callback =
+        retainedOwner != null
+            ? Callback.VALIDATE_RETAINED_BINDING
+            : scanOwner == null ? Callback.LOAD : Callback.PREPARE;
     if (CURRENT.get() != null) throw denied();
     requireOwner();
     CURRENT.set(this);
@@ -109,12 +116,18 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       DeltaRangerRegistrationBindings owner,
       DeltaRangerRegistrationReader reader,
       PublishedObservation before) {
-    return new DeltaRangerNativeOperation(SparkSession.active(), owner, reader, before, null);
+    return new DeltaRangerNativeOperation(SparkSession.active(), owner, reader, before, null, null);
   }
 
   static DeltaRangerNativeOperation prepare(ScanOwner owner) {
     if (owner.bindings().isEmpty()) throw denied();
-    return new DeltaRangerNativeOperation(owner.session(), null, null, null, owner);
+    return new DeltaRangerNativeOperation(owner.session(), null, null, null, owner, null);
+  }
+
+  static DeltaRangerNativeOperation validateRetained(
+      SparkSession session, BoundRegistrationScan binding) {
+    binding.requireRetained();
+    return new DeltaRangerNativeOperation(session, null, null, null, null, binding);
   }
 
   static DeltaRangerNativeOperation scan(
@@ -128,7 +141,8 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
         || data == null
         || callback == null
         || callback == Callback.LOAD
-        || callback == Callback.PREPARE) throw denied();
+        || callback == Callback.PREPARE
+        || callback == Callback.VALIDATE_RETAINED_BINDING) throw denied();
     DeltaRangerNativeOperation operation = prepare(owner);
     operation.callback = callback;
     operation.invokedIndex = Objects.requireNonNull(index);
@@ -189,6 +203,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
 
   boolean ownsLogRoot(Path root) {
     requireEvidence(session);
+    if (retainedOwner != null) return retainedOwner.log().logPath().equals(root);
     if (scanOwner != null) {
       return scanOwner.bindings().stream().anyMatch(b -> b.log().logPath().equals(root));
     }
@@ -208,14 +223,17 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
 
   void succeed() {
     requireActive();
-    if (scanOwner == null) throw denied();
+    if (scanOwner == null && retainedOwner == null) throw denied();
     successful = true;
   }
 
   void capture(TahoeLogFileIndex index, Snapshot snapshot) {
     requireActive();
     if (capturing != null || snapshot.deltaLog() != index.deltaLog()) throw denied();
-    if (scanOwner != null) {
+    if (retainedOwner != null) {
+      if (retainedOwner.index() != index || retainedOwner.log() != snapshot.deltaLog())
+        throw denied();
+    } else if (scanOwner != null) {
       if (scanOwner.bindings().stream().noneMatch(b -> b.index() == index)) throw denied();
     } else if (!ownsLogRoot(index.deltaLog().logPath())) {
       throw denied();
@@ -294,7 +312,9 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   }
 
   private void requireOwner() {
-    if (scanOwner != null) {
+    if (retainedOwner != null) {
+      retainedOwner.requireRetained();
+    } else if (scanOwner != null) {
       scanOwner.requireLive();
       scanOwner.bindings().forEach(BoundRegistrationScan::requireLive);
     } else {

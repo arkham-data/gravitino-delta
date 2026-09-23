@@ -143,6 +143,20 @@ masks. The complete batch uses one policy evaluation time. Registration publicat
 subject and SQL configuration changes observed during analysis reject the plan. Decisions are
 captured once and used for rewriting; analyzer reentry validates the receipt without remasking.
 
+The receipt also exposes a separate driver-only action validator for the later collection gate.
+It reauthorizes every original occurrence before reevaluating any mask/filter, using one fresh
+policy time for the complete action. Changed decisions, including NONE/absent decisions, reject
+without rewriting the retained plan. Binding-owned native operations inspect each retained exact
+log between fresh metadata reads. Compatible data-only advancement between actions is accepted;
+the retained plan may still use its previously selected snapshot. Observed publication/native
+version drift within the action, registration replacement, raw schema/protocol/partition/mapping
+changes, expiry, and changed subject/configuration/engine publications reject. Final metadata
+work precedes the final subject and engine checks. These are optimistic observations, not a write
+fence or a latest-rows promise.
+
+Component tests call this validator on actual captured named-table receipts. No physical guard
+invokes it yet, so this does not establish retained `collect`/`collectAsList` enforcement.
+
 Before native preparation, the receipt compares the incoming plan with a replay of the approved
 plan through the qualified Spark optimizer prefix. Actual source identities, expressions,
 attributes and child structure must agree; a copied tag cannot authorize a changed plan. Unknown

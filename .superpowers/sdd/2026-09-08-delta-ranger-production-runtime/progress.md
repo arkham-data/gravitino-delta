@@ -924,3 +924,101 @@ Native owner/callback increment accepted; physical/retained action/fullDelta/liv
 new-artifact qualification remains pending. Root preparing exact27-file local
 checkpoint; no push/PR/deployment/services operation. Next authorized source task:
 real retained-registration and complete action decision validator brief.
+
+Native-operation local checkpoint a1f2ce4b5e9d22d36f5e712312576e0837a3d999:
+27 reviewed safe files,3510insertions/278deletions. Exact staged/current file hashes
+matched private safe manifest; known-credential scan clean; no runtime artifacts
+staged; committed tree clean before this ledger entry. No push/PR/services.
+Next source/Gradle owner: fresh implement_action_validation, basea1f2ce4b5;
+component-only retained registration and complete action decision validator.
+Physical guard remains uninstalled. Native-operation author released ownership.
+
+Ruling: action validator must compare first/final observed registration/native
+state across the whole action batch, not only inside separate per-binding read
+brackets — otherwise the permitted between-actions data-version advance could
+silently admit a version change observed across policy evaluation within one
+action. A finite per-action observation stamp is allowed; original receipt remains
+authority. Cost if wrong is bounded stamp/test complexity, with no server epoch
+or distributed-transaction claim. Clarification sent to sole implementer and
+appended to action brief before implementation proceeds.
+
+
+Action validation initial behavioral characterization: root parsed
+ action-validation-contract-red-2 originalXML3tests/3failures/0errors/0skips,exit1.
+Existing analysis-only revalidate performs no repeated filter calls and does not
+implement new action access/semantic-decision reevaluation. This is a missing
+new action contract, not a regression claim about analysis revalidate's accepted
+contract. Initial earlier attempt was formatting setup failure, not behavioralRED.
+Author has introduced action-specific method and focused GREEN is running;
+owned native current-head/batch observation semantics remain next substep.
+
+Ruling: action version baselines remain distinct: original published receipt
+nativeVersion is a lower bound and original admitted Snapshot can be newer.
+Compare fresh publication/head to their corresponding retained baselines; require
+head>=fresh publication and reject first/final observed batch drift. Do not impose
+publication>=admitted snapshot or add a mutable cross-action high-water registry.
+This preserves accepted load lower-bound semantics while rejecting observed
+regressions; cost if wrong is explicit version-comparison/test correction. Sent
+to implementer before native validation implementation.
+
+Action decision-focused GREEN root parsed3/0/0/0,exit0. Native missing-contract
+RED root parsed7tests/4failures/0errors/0skips,exit1: compatible publication/head
+advance rejected by analysis exact-publication semantics; native schema change,
+inside-bracket advancement and whole-action advancement were not rejected by
+that old boundary. Author implemented separate binding-owned retained native
+operation/current-head validation and same-scan/session finite action observations;
+focused GREEN running. Exact ordinary load/analysis publication checks preserved.
+Remaining checklist controls and final qualification/review still required.
+
+Action native-focused GREEN root verified7/0/0/0,exit0. Expanded controls
+originalXML16tests/1failure/0errors/0skips: closing catalog also closes engine,
+so before-entry validation hits existing IllegalStateException at engine lease
+check before metadata-native boundary. Author correcting fixture to assert exact
+early lifecycle boundary; during-metadata closure retains registration rejection.
+This is fixture boundary expectation, not a confirmed production defect. Existing
+engine exception contract need not change; distinguish unavailable runtime from
+Ranger policy access-denied result in evidence. Final coverage/matrix/review pending.
+
+Action source frozen82filesSHA256
+917843641f3ea7ab95906c681614ca8361c0f1d7d069596130c23e871c2f9bf0.
+First full matrix attempt action-validation-matrix-s354-d330 exit1/0XML:
+Gradle scheduler Unable to make progress before tests. Author traced CLI task
+ordering (Javadoc before cleanTest/test) and retries baseline accepted ordering
+spotlessCheck,cleanTest,test,javadoc under unique s354-d330-2 label. No source
+mutation/workaround; this is setup failure, not behavioralRED or failed tests.
+Root prepared component-scoped original-row verifier; review/report pending.
+
+Action full final retry s354-d330-2 independently verified297/0/0/0,exit0,
+82frozen current/pre-run/archived files,11compiledarchives and entries, exact
+Spark3.5.4/Delta3.3.0/Ranger2.8 dependency pins. Root derived149 expected affected
+cases from original full XML across14 suites;21new action/native cases included.
+Independent review_action_validation dispatched on6-file76817-byte diffSHA256
+fa90540729811a92b5d70b8653f75990e4110f417572865fefe5f52282dba87d.
+Remaining3profiles run149cases each on same freeze; source unchanged. No action
+increment acceptance until review and all remaining evidence resolve.
+
+Action independent review SPEC PASS / QUALITY READY, no Critical/Important or
+new actionable Minor findings. Unchanged decision equality, registration full
+publication and subject/stamp semantics checked. Acceptance conditional on
+remaining matrix evidence. Root independently verified s354-d332149/0/0/0,
+82sourcefiles/11compiledarchives and exact149case multiset. JDK17 executable,
+version artifact and live executable-only probe hashed; no PID worker-role claim.
+Root first JDK-audit script asserted the wrong textual JAVA_HOME assignment form;
+corrected to actual dict-constructor assignment, no source/harness change.
+Physical guard draft checked against existing nine integration gates; dispatch
+waits for final matrix and action checkpoint, with one source/Gradle owner.
+
+Action s356-d330 root verified149/0/0/0,exit0,82frozenfiles/11compiledarchives,exactpins and identical149-case multiset. Last s356-d332 running; acceptance still pending. Prepared exact14-safe-path checkpoint allowlist, no private evidence or runtime path and nothing staged yet.
+
+Task 4 action-validator component: complete; broader Task4 remains open.
+Root independently closed all four final rows:297+149+149+149=744invocations,
+zero failures/errors/skips. All82current/pre-run/archivedsourcehashes and
+11compiledarchives/entryhashes per row verified, exactSpark/Delta/Ranger2.8pins,
+JDK17provenance and matching affected149-case multisets/subset of full row.
+Root aggregate action-validation-root-matrix-summary.json preserves row hashes.
+Independent SPEC PASS / QUALITY READY condition closed; no findings to fix.
+Original scheduler0XML and behavioralRED attempts preserved. Native head
+regression remains source-guarded, not forced through actual monotonic DeltaLog.
+Implementer released source/Gradle ownership; no builds/services remain owned.
+Physical guard still uninstalled; actual retained collection remains next gate.
+Safe local checkpoint follows14-path allowlist; no evidence/runtime/privatefiles.

@@ -30,6 +30,7 @@ import java.util.TreeMap;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRegistrationReader.PublishedObservation;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.expressions.AttributeReference;
@@ -50,11 +51,12 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.MapType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import scala.Option;
 import scala.Tuple2;
 import scala.collection.Iterator;
 import scala.collection.Seq;
 
-/** Driver-local provenance of completed ordinary named loads; no retained-action admission. */
+/** Driver-local provenance and current native compatibility of completed ordinary named loads. */
 final class DeltaRangerRegistrationBindings {
   private final DeltaRangerRegistrationReader reader;
   private final DeltaRangerPolicyEngine engine;
@@ -398,6 +400,40 @@ final class DeltaRangerRegistrationBindings {
     }
   }
 
+  /** One driver-local action observation, never a replacement registration or decision receipt. */
+  static final class CurrentObservation {
+    private final BoundRegistrationScan binding;
+    private final SparkSession session;
+    private final PublishedObservation publication;
+    private final long nativeVersion;
+
+    private CurrentObservation(
+        BoundRegistrationScan binding,
+        SparkSession session,
+        PublishedObservation publication,
+        long nativeVersion) {
+      this.binding = binding;
+      this.session = session;
+      this.publication = publication;
+      this.nativeVersion = nativeVersion;
+    }
+
+    void requireSame(@Nullable CurrentObservation other) {
+      if (other == null
+          || binding != other.binding
+          || session != other.session
+          || nativeVersion != other.nativeVersion
+          || !publication.samePublication(other.publication))
+        throw new SecurityException("Delta action observation changed");
+    }
+
+    /** Omits all driver authority and native metadata. */
+    @Override
+    public String toString() {
+      return "Current Delta action observation";
+    }
+  }
+
   static final class BoundRegistrationScan {
     private final DeltaRangerRegistrationBindings owner;
     private final CatalogTable descriptor;
@@ -466,6 +502,61 @@ final class DeltaRangerRegistrationBindings {
       return owner.engine;
     }
 
+    CurrentObservation validateCurrent(SparkSession session) {
+      try {
+        requireRetained();
+        PublishedObservation before = readCurrent();
+        requireCompatiblePublication(before);
+        try (DeltaRangerNativeOperation operation =
+            DeltaRangerNativeOperation.validateRetained(session, this)) {
+          Snapshot head = log.update(false, Option.empty(), Option.apply(descriptor));
+          requireCompatibleHead(head, before);
+          operation.capture(index, head);
+          PublishedObservation after = readCurrent();
+          if (!before.samePublication(after)) throw denied();
+          // Observe native version again after metadata I/O: a stable publication is not a fence.
+          Snapshot finalHead = log.update(false, Option.empty(), Option.apply(descriptor));
+          requireCompatibleHead(finalHead, after);
+          if (head.version() != finalHead.version()) throw denied();
+          requireRetained();
+          owner.reader.requireLive(before);
+          owner.reader.requireLive(after);
+          operation.succeed();
+          return new CurrentObservation(this, session, after, finalHead.version());
+        }
+      } catch (Exception | LinkageError failure) {
+        throw new SecurityException("Delta retained registration validation rejected");
+      }
+    }
+
+    @SuppressWarnings(
+        "ReferenceEquality") // Authority requires the original retained native objects.
+    void requireRetained() {
+      requireLive();
+      synchronized (owner) {
+        drain(owner.collected, owner.entries);
+        if (owner.entries.get(new IdentityKey<>(descriptor, null)) != binding
+            || binding.relation.get() != relation
+            || binding.index.get() != index
+            || binding.log.get() != log
+            || relation.location() != index
+            || index.deltaLog() != log) throw denied();
+      }
+      SnapshotDescriptor analysis = index.snapshotAtAnalysis();
+      validateDescriptor(descriptor, binding.observation, analysis);
+      validateIndex(index, binding.observation, analysis);
+      if (analysis.version() != binding.nativeVersion
+          || !binding.nativeSchemaJson.equals(analysis.metadata().schemaString())
+          || !binding.protocolJson.equals(analysis.protocol().json())
+          || !binding.partitions.equals(sequenceStamp(analysis.metadata().partitionColumns()))
+          || !binding.mapping.equals(mappingStamp(analysis.metadata()))
+          || !binding.descriptorSchemaJson.equals(descriptor.schema().json())
+          || !binding.dataSchemaJson.equals(relation.dataSchema().json())
+          || !binding.partitionSchemaJson.equals(relation.partitionSchema().json())
+          || !locationMatches(binding.observation.location(), log.dataPath().toUri()))
+        throw denied();
+    }
+
     void recheckPublication() {
       requireLive();
       PublishedObservation current =
@@ -485,6 +576,38 @@ final class DeltaRangerRegistrationBindings {
     @Override
     public String toString() {
       return "Bound native registration scan";
+    }
+
+    private PublishedObservation readCurrent() {
+      return owner.reader.read(
+          Identifier.of(
+              new String[] {binding.observation.database()}, binding.observation.table()));
+    }
+
+    private void requireCompatiblePublication(PublishedObservation current) {
+      PublishedObservation original = binding.observation;
+      if (!original.identity().equals(current.identity())
+          || !original.metalake().equals(current.metalake())
+          || !original.catalog().equals(current.catalog())
+          || !original.database().equals(current.database())
+          || !original.table().equals(current.table())
+          || !original.location().equals(current.location())
+          || !original.nativeId().equals(current.nativeId())
+          || !original.schemaJson().equals(current.schemaJson())
+          || current.nativeVersion() < original.nativeVersion()) throw denied();
+      owner.reader.requireLive(current);
+    }
+
+    private void requireCompatibleHead(Snapshot head, PublishedObservation current) {
+      if (head.deltaLog() != log
+          || head.version() < binding.nativeVersion
+          || head.version() < current.nativeVersion()
+          || !current.nativeId().equals(head.metadata().id())
+          || !binding.nativeSchemaJson.equals(head.metadata().schemaString())
+          || !binding.protocolJson.equals(head.protocol().json())
+          || !binding.partitions.equals(sequenceStamp(head.metadata().partitionColumns()))
+          || !binding.mapping.equals(mappingStamp(head.metadata()))
+          || !current.schemaJson().equals(logicalSchema(head.schema()))) throw denied();
     }
   }
 }

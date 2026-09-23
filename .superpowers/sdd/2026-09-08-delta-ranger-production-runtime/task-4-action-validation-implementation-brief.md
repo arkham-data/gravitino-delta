@@ -75,3 +75,60 @@ as explicit remaining work.
 
 Report in task-4-action-validation-report.md: exact implementation, original
 RED/GREEN evidence, final source/compiled manifests, boundaries and concerns.
+
+## Dispatch checkpoint and workflow
+
+Base checkpoint is a1f2ce4b5e9d22d36f5e712312576e0837a3d999. Native-operation
+review and its fix-1 review are accepted; root independently closed their matrix
+condition (59 affected invocations on each of four pairs, Ranger2.8.0), with the
+original271 full regression and exact two-test-file-only later difference.
+Start this implementation now; the previous native source owner has finished.
+
+Own only optional spark-delta-ranger module main/test source and its README, your
+implementation report, and unique private action-validation evidence labels.
+Root owns shared plan/ledger, review, git/publication and all services. Do not
+spawn agents or create commits. Preserve Java-before-Scala compilation order;
+reuse package-private engine Instant APIs and accepted complete opaque stamps.
+Do not change those foundations without explaining a concrete consumer need.
+
+Write meaningful focused failing tests before new production logic. New coverage
+that already passes is a control, not a claimed RED. Preserve every attempt with
+its original exit/XML/compiled/source capture via task-4-evidence/run-gradle.py
+and existing Test.doFirst init script; use explicit Spark/Delta version properties,
+Ranger2.8.0, JDK17 and sequential Gradle. Use require_escalated directly for the
+established local Gradle cache/Spark-port needs, login:false. No Docker is needed.
+No Checkstyle task exists in this baseline; use module Spotless, strict Javadoc,
+Java compile-Werror and explicit Java import/member/Javadoc review.
+
+After focused correctness, format before freezing source. Run one full optional
+module regression on Spark3.5.4/Delta3.3.0 and all affected native suites on the
+other three pairs, including registration/decision/native regressions implicated
+by changed contracts. Do not mutate source during final matrix. Notify root after
+the first full row passes for independent review to overlap remaining rows.
+Use unique action-validation-* evidence labels and source freeze manifest; no
+private raw artifacts in tracked documentation. Escalate concrete design gaps to
+root promptly, keep independent work moving, and report exact unsupported limits.
+
+## Whole-action drift clarification
+
+Data-only advancement is compatible between separate admitted actions. Within a
+single action batch, compare initial and final observed registration/native state
+across policy evaluation as well as within each individual native-read bracket.
+Two independent validations must not both accept observed version0 then version1
+and thereby miss drift during the same action. A finite per-action validation
+observation/stamp may carry the first current state to the final comparison; it
+is not a new persistent decision receipt or an authorization issuer. Preserve all
+original occurrences. Add a deterministic advancement-between-passes negative
+paired with the advancement-between-actions positive. No distributed atomicity or
+unobservable change-and-revert detection is promised.
+
+Before final freeze, reconcile the report against
+`task-4-action-validation-verification-checklist.md`; this is a map of existing
+requirements, not an additional physical/action integration task.
+
+Keep original published nativeVersion and admitted native Snapshot version as
+separate lower-bound baselines. A valid load can bind a head newer than the
+publication. Compare fresh publication/head to their corresponding original
+baselines and head against the fresh publication; do not require publication to
+catch up to the admitted snapshot. No mutable cross-action high-water registry
+is part of this increment; within-action first/final comparison remains required.

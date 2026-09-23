@@ -21,6 +21,8 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.time.Instant
 
+import scala.collection.JavaConverters._
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -69,16 +71,64 @@ private[ranger] final class DeltaRangerDecisionReceipt private (
     })
   }
 
+  /** Reevaluate the complete original decision batch without rewriting or running a user plan. */
+  def validateAction(session: SparkSession): Unit = {
+    if (!(session eq spark)) denied("session changed")
+    requireConfiguration()
+    requireSubjectAndEngines()
+    if (binding(original) != analyzed) denied("retained logical binding changed")
+    val observations = obligations.map(_.binding.validateCurrent(session))
+    val actionTime = Instant.now()
+    // Occurrences deliberately remain distinct, including self joins and optimized-away scans.
+    obligations.foreach { obligation =>
+      val scan = obligation.scan
+      DeltaRangerResourceKey
+        .select(
+          scan.catalog,
+          scan.database,
+          scan.table,
+          obligation.columns.asJava,
+          scan.owner.orNull
+        )
+        .asScala
+        .foreach(key => obligation.binding.engine().authorize(subject, key, actionTime))
+    }
+    obligations.foreach { obligation =>
+      val current = DeltaRangerMaskRules.capture(
+        obligation.scan,
+        obligation.columns,
+        obligation.binding.engine(),
+        subject,
+        actionTime
+      )
+      if (
+        current.filter != obligation.decisions.filter || current.masks != obligation.decisions.masks
+      )
+        denied("action decision changed")
+    }
+    obligations.zip(observations).foreach { case (obligation, before) =>
+      before.requireSame(obligation.binding.validateCurrent(session))
+    }
+    if (binding(original) != analyzed) denied("retained logical binding changed")
+    requireSubjectAndEngines()
+    requireConfiguration()
+    obligations.foreach(_.binding.requireLive())
+  }
+
   def revalidate(checkCandidate: () => Unit = () => ()): Unit = {
     obligations.foreach(_.binding.recheckPublication())
     // Reader callbacks and shared mutable literal payloads cannot change already-compared trees.
     if (binding(original) != analyzed) denied("retained logical binding changed")
     checkCandidate()
+    requireSubjectAndEngines()
+    requireConfiguration()
+  }
+
+  private def requireSubjectAndEngines(): Unit = {
     stamps.foreach { case (engine, stamp) => engine.requireSnapshot(stamp) }
     val current = DeltaRangerQuerySubject.current(spark)
     if (current.user() != subject.user() || current.groups() != subject.groups())
       denied("subject changed")
-    requireConfiguration()
   }
 
   private def requireConfiguration(): Unit =
