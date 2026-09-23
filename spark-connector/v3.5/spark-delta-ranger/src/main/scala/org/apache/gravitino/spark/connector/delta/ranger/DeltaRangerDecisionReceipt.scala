@@ -139,6 +139,18 @@ private[ranger] object DeltaRangerDecisionReceipt {
       .receipt
       .consume(plan, spark, optimized)
 
+  def qualifyNative(plan: LogicalPlan, spark: SparkSession): Unit = new Prefix(spark).qualify(plan)
+
+  def consumeOwned(
+      plan: LogicalPlan,
+      spark: SparkSession,
+      optimized: Boolean
+  ): DeltaRangerDecisionReceipt = {
+    val receipt = plan.getTagValue(tag).getOrElse(denied("missing receipt")).receipt
+    receipt.consume(plan, spark, optimized)
+    receipt
+  }
+
   private def detached(plan: LogicalPlan): LogicalPlan = {
     val copy = plan.clone()
     copy.foreach(_.unsetTagValue(tag))

@@ -88,77 +88,15 @@ class TestDeltaRangerReadRule {
         schema.fields.map(f => AttributeReference(f.name, f.dataType, f.nullable)()).toSeq
       val rdd = LogicalRDD(attributes, spark.sparkContext.emptyRDD[InternalRow])(spark)
       assertFalse(DeltaRangerPlanAdmission.internalMetadata(rdd))
-      DeltaRangerPlanAdmission.withNativeMetadata {
-        assertTrue(DeltaRangerPlanAdmission.internalMetadata(rdd))
-        val otherThread = new java.util.concurrent.atomic.AtomicBoolean(true)
-        val thread =
-          new Thread(() => otherThread.set(DeltaRangerPlanAdmission.internalMetadata(rdd)))
-        thread.start(); thread.join()
-        assertFalse(otherThread.get())
-        val foreign = LogicalRDD(
-          Seq(AttributeReference("id", StringType)()),
-          spark.sparkContext.emptyRDD[InternalRow]
-        )(spark)
-        assertFalse(DeltaRangerPlanAdmission.internalMetadata(foreign))
-      }
-      assertFalse(DeltaRangerPlanAdmission.internalMetadata(rdd))
-      assertThrows(
-        classOf[IllegalArgumentException],
-        () =>
-          DeltaRangerPlanAdmission.withNativeMetadata {
-            throw new IllegalArgumentException("failure")
-          }
-      )
-      assertFalse(DeltaRangerPlanAdmission.internalMetadata(rdd))
-      val index = spark
-        .sql("SELECT secret FROM a.db.t")
-        .queryExecution
-        .analyzed
-        .collectFirst { case relation: LogicalRelation =>
-          relation.relation
-            .asInstanceOf[org.apache.spark.sql.execution.datasources.HadoopFsRelation]
-            .location
-            .asInstanceOf[org.apache.spark.sql.delta.files.TahoeLogFileIndex]
-        }
-        .get
-      val snapshot = index.getSnapshot
-      val stats = StructType(
-        org.apache.spark.sql.Encoders
-          .product[AddFile]
-          .schema
-          .fields
-          .map(f =>
-            if (f.name == "stats") f.copy(dataType = snapshot.statsSchema, nullable = true) else f
-          )
-      )
-      val statsAttrs =
-        stats.fields.map(f => AttributeReference(f.name, f.dataType, f.nullable)()).toSeq
-      val statsRdd = LogicalRDD(statsAttrs, spark.sparkContext.emptyRDD[InternalRow])(spark)
-      assertFalse(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
       assertThrows(
         classOf[SecurityException],
-        () => DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
+        () => DeltaRangerPlanAdmission.withNativeMetadata { () }
       )
-      DeltaRangerPlanAdmission.withNativeMetadata {
-        assertThrows(
-          classOf[SecurityException],
-          () => DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
-        )
-      }
-      DeltaRangerPlanAdmission.withNativeScans(Seq(index)) {
-        assertFalse(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
-        DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
-        assertTrue(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
-        assertFalse(
-          DeltaRangerPlanAdmission.internalMetadata(
-            LogicalRDD(statsAttrs.dropRight(1), spark.sparkContext.emptyRDD[InternalRow])(spark)
-          )
-        )
-      }
-      DeltaRangerPlanAdmission.withNativeMetadata {
-        assertFalse(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
-      }
-      assertFalse(DeltaRangerPlanAdmission.internalMetadata(statsRdd))
+      assertThrows(
+        classOf[SecurityException],
+        () => DeltaRangerPlanAdmission.withNativeScans(Seq.empty) { () }
+      )
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(rdd))
       val objectType = ObjectType(classOf[SingleAction])
       val binding = DeserializeToObject(
         Literal.create(null, objectType),
@@ -178,16 +116,8 @@ class TestDeltaRangerReadRule {
         outputObjAttr = AttributeReference("obj", addType)()
       )
       assertFalse(DeltaRangerPlanAdmission.internalMetadata(addBinding))
-      DeltaRangerPlanAdmission.withNativeMetadata {
-        assertTrue(DeltaRangerPlanAdmission.internalMetadata(addBinding))
-        assertFalse(DeltaRangerPlanAdmission.internalMetadata(addBinding.copy(child = rdd)))
-        assertFalse(
-          DeltaRangerPlanAdmission.internalMetadata(
-            addBinding.copy(child = LocalRelation(attributes, Seq(InternalRow.empty)))
-          )
-        )
-      }
-      val rowType = ObjectType(classOf[Row])
+      assertFalse(DeltaRangerPlanAdmission.internalMetadata(addBinding))
+      val rowType = ObjectType(classOf[org.apache.spark.sql.Row])
       val rowBinding = binding.copy(
         deserializer = Literal.create(null, rowType),
         outputObjAttr = AttributeReference("obj", rowType)()
@@ -338,6 +268,14 @@ private[ranger] object NativeSelectFixture {
     scala.collection.mutable.Map[String, NativeBoundCatalogFixture]
   ]()
 
+  def withNativeOperation[T](spark: SparkSession, catalog: String = "b")(
+      body: org.apache.spark.sql.delta.files.TahoeLogFileIndex => T
+  ): T = {
+    val plan = spark.sql(s"SELECT id, region FROM $catalog.db.t").queryExecution.analyzed
+    val owner = DeltaRangerNativeScans.consume(plan, spark, optimized = false)
+    owner.run { _ => body(owner.obligations.head.binding.index()) }
+  }
+
   def bindingFixture(spark: SparkSession, catalog: String): NativeBoundCatalogFixture = {
     wrapper(spark, catalog)
     bound.get(spark)(catalog)
@@ -433,7 +371,8 @@ private[ranger] object NativeSelectFixture {
   def withSpark(
       test: SparkSession => Unit,
       extension: Option[SparkSessionExtensions => Unit] = None,
-      startupOptions: Map[String, String] = Map.empty
+      startupOptions: Map[String, String] = Map.empty,
+      beforeExtension: SparkSession => Unit = _ => ()
   ): Unit = {
     val directory = Files.createTempDirectory("delta-ranger-native")
     locations = Seq("a", "b", "q").map(c => c -> directory.resolve(c).toString).toMap
@@ -492,6 +431,7 @@ private[ranger] object NativeSelectFixture {
             )
             .save(location)
       }
+      beforeExtension(spark)
       extension.foreach { install =>
         org.apache.spark.sql.delta.DeltaLog.clearCache()
         val conf = spark.sparkContext.getConf

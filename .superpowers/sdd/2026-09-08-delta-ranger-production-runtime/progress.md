@@ -550,3 +550,377 @@ for local checkpoint; Task4/native/physical/fullDelta remain open. Next source w
 will consume the typed native-operation brief after checkpoint, with a fresh agent
 and the same one-owner Gradle/publication rule. No push or deployment is authorized
 by this checkpoint.
+
+
+Task 4 analysis-receipt substep: complete (commits513e13ba1..993f5a9c93674bb3f477c9c4646202da9a0ad589, independent review clean).
+Local checkpoint contains exactly21allowlisted source/safe-doc files; reviewed
+hashes, fresh source/evidence verification, known-credential scan0, diffcheck and
+empty-index/exact-stage checks passed. Worktree was clean after commit. No push,
+deployment or live fixture action. The main Task4 and fullDelta objective remain
+open; typed native operation implementation is the next authorized source task.
+
+
+Active source/Gradle owner: /root/implement_native_operations (gpt-6-astra high),
+base993f5a9c93674bb3f477c9c4646202da9a0ad589. Dispatched tracked
+task-4-native-operation-implementation-brief.md; report target
+task-4-native-operation-report.md. Sole owner may change optional module native
+operation/admission/binding/receipt integration and tests; reviewed policy engine
+frozen, no physical guard installation, core changes or services. Root retains
+ledger/docs/git/evidence verification. No other source/build agent is active.
+
+
+Native owner implementation ongoing. Read-only follow-up audit identifies the
+protected prepareDeltaScanWithoutFileSkipping hook and an explicit original-to-owned
+TahoeLogFileIndex transition preserving SnapshotDescriptor/filter references.
+matchingFiles/getSnapshot/inputFiles and sizeInBytes require distinct native-entry
+attention; sizeInBytes must capture the same single volatile snapshot it evaluates.
+Root checked pinned source: prepared-index inputFiles/sizeInBytes use already
+prepared fields, while TahoeLogFileIndex can launch native work. Findings delivered
+to active implementer, new task-4-native-no-skipping-scope-audit.md retained. Both
+audit routes remain source-only until compile/runtime gates pass. No setting is
+disabled or silently excluded.
+
+
+Root independently confirmed native-operation-installed-red-2 original XML:
+1test/1failure with Unqualified Delta Ranger route: LogicalRDD and
+PreparedDeltaFileIndex.matchingFiles:386. First attempt was format setup only.
+Owner has published initial Java lifecycle/load bracket and Scala native admission/
+receipt preparation/prepared-index continuation, now compiling focused installed
+target. No green acceptance yet; no-skipping branch follows normal callback.
+Source remains confined to optional module, with reviewed engine frozen.
+
+
+Native first installed positive: root read native-operation-installed-green-2
+originalXML/exit,1test/0failure/error/skip. Exact asymmetric selfjoin rows now pass
+on3.5.4/3.3.2; final owner/ticket qualification remains open. Capture/no-skipping
+RED2 then exposed pending-candidate pre-CBO admission and original Tahoe index
+sizeInBytes aggregate from InjectRuntimeFilter.
+
+Ruling: implement the already-planned no-skipping owned-index transition before
+adding eager size aggregation during load — root read original failure stack and
+official Spark3.5.4 defaultBatches ordering: InjectRuntimeFilter follows
+super.defaultBatches, which includes Pre CBO Rules. The failure has real optimizer
+frames, no receipt replay; current source simply lacks the no-skipping override.
+Thus this evidence does not establish pre-CBO native statistics needing a larger
+load scope. Cost if wrong is one focused runtime check; preserve RED and reconsider
+only for a concrete genuinely earlier callback. No post-close issuance relaxation.
+Source:https://raw.githubusercontent.com/apache/spark/v3.5.4/sql/core/src/main/scala/org/apache/spark/sql/execution/SparkOptimizer.scala
+
+
+Native capture/broadcast GREEN root parsed2tests/0failure/error/skip. First
+no-skipping implementation still failed1of3 at base TahoeLogFileIndex.sizeInBytes,
+not owned callback. Owner identified and root confirmed equality hazard: inherited
+native index equality makes filesystem/logical replacements compare equal, so
+transformUp can discard the intended ownership transition. Ruling: explicitly
+reconstruct the finite already-admitted Project/Filter/Join/SubqueryAlias tree,
+preserving exact outputs/tags and recorded index identities; keep native equals
+unchanged. Cost if wrong is bounded tree reconstruction rework; actual installed
+index/size callback assertions must prove the transition, not rows alone.
+
+
+Root parsed no-skipping-green-2:3tests/0failure/error/skip, initial default and
+no-skipping paths now have actual installed positives on3.5.4/3.3.2. Broader native
+regression in progress; no final freeze. Author observed earlier native cache work
+executing unknown optimizer callback6times before user receipt qualification.
+Ruling: narrowly reuse the already-reviewed Prefix.qualify at resolved native
+admission/check before optimization, preserving its exact manifest semantics —
+new native work moved earlier and must obey the same no-unknown-callback contract.
+Cost if wrong is bounded qualifier integration rework; require0invocations and
+normal native positive, invalidate failed operation evidence. Old known-gap
+assertion becomes exact installed-row positive while originalRED remains archived.
+
+
+Native regression2 original XML:264tests/3failures/0errors/0skips. Besides the
+expected old-gap assertion and unknown optimizer callback, the exact foreign-owner
+aggregate negative failed: active owner a could fall back to an old sealed b
+witness. Author fixed classification to reject that fallback; only actual getter
+rebinding under the current owner establishes its lineage. Original cross-owner
+negative and outside-successful-close exact clone positive are retained. Fixes
+remain under test; this is a production ownership defect, not fixture migration.
+
+Ruling: defer the ValidateRetainedBinding operation factory to the subsequent
+native-head/action validator increment, where its actual metadata bracket and
+consumer will exist — adding an unused authority issuer now would lack its real
+consumer proof. Current acceptance covers LoadNamed, PrepareScans and explicit
+owned continuations only. Retained-binding/action validation remains required and
+unimplemented. Cost if wrong is a bounded factory/API integration change in that
+next increment, without relaxing current ownership.
+
+
+Native owner-green-3 root read original XML:12tests/2failures. Unknown-optimizer,
+foreign-owner aggregate and installed previous-gap fixes are no longer listed
+among failures in this focused set. New actual user MapPartitions closure was
+accepted by native shape admission: author tightening finite native origin at
+issuance while retaining exact function identity in sealed witness. Concurrency
+fixture waited inside Snapshot computedState lazy initialization, holding the
+lock the second invocation needed. Author will warm that cache using an actual
+owned fallback before overlapping callbacks; cold size path remains separately
+covered. No production lock workaround or configuration changes authorized.
+All evidence remains provisional pending source freeze and final matrix/review.
+
+
+Native function origin diagnostic4 root read: genuine MapPartitions closure is
+Snapshot lambda in pinned Delta JAR, but genuine MapElements is a Dataset lambda
+in pinned Spark SQL JAR. Root obtained official Spark3.5.4 Dataset source (private
+evidence native-function-root-source-Dataset-3.5.4.scala): typed select1592–1601
+constructs Tuple1[U1] then maps _._1 for structured output. Pinned Delta Snapshot
+361–367 calls stateDS.where(add IS NOT NULL).select(add.as[AddFile]); this explains
+the helper. Sent exact source path to author: qualify the finite Tuple1/AddFile
+recipe with owned state lineage and captured function identity, not a general
+Spark-origin exception. No root production edits or test JVMs.
+Source:https://github.com/apache/spark/blob/v3.5.4/sql/core/src/main/scala/org/apache/spark/sql/Dataset.scala#L1592-L1601
+
+
+Author runtime shape diagnostic confirmed exact Tuple1[AddFile] helper over
+DeserializeToObject(Project(add, Filter(IsNotNull(add), sealed LogicalRDD))).
+Finite predicate now checks function origin, expected Tuple1 argument schema,
+AddFile output object, actual sealed state identity, exact add field/filter, and
+normalized expected encoder. Temporary diagnostics removed. Owner-green-5 runs
+13focused controls including changed function/schema/encoder/projected-field/
+input-RDD negatives; result not yet accepted. Author javap observation of only
+private final transient authority field on each owned index awaits final evidence
+review; no serialization claim based only on source modifiers.
+
+
+Root confirmed owner-green-5 exit0 and original XML11tests/0failure/error/skip,
+correcting author provisional13estimate. Actual dependency hashes verify
+Spark3.5.4,Delta3.3.0,Ranger2.8.0. This run used defaults and formatting before
+tests; diagnostic passing evidence only, not final frozen qualification. Author
+batched no-skipping inputFiles, physical scan clone identity, subclass serialized
+field checks and final-load-publication failure invalidation before regression3.
+Full optional module regression3 plus Javadoc is running with explicit3.5.4/3.3.0.
+
+
+Ruling: preserve captured function identity for surviving function occurrences
+during active-owner reclassification as well as after successful scope close —
+the task's exact-function witness requirement must not be bypassed by issuing a
+new witness over a copied-tag plan containing a different genuine Delta closure.
+Fresh native construction still uses finite recipe/origin qualification; approved
+optimizer removal and actual getter cache rebinding remain supported. Add an
+active-owner genuine-function substitution negative with unchanged positive. Cost
+if wrong is bounded propagation handling for a concrete native optimizer rewrite;
+no blanket whole-tree equality or class-origin-only authorization substitution.
+Current regression3 already in flight must finish unchanged and be preserved.
+
+
+Root parsed regression3 original XML after completion:270tests/2failures/0errors/
+0skips,exit1, explicitSpark3.5.4/Delta3.3.0. Failures: old original Tahoe index
+accidentally targeted by new owned-subclass serialization assertion (fixture
+target correction); trustedReplayPreservesNativeRowsThroughPruningFoldingInsets
+AndEmptyResults rejected with Unqualified empty native preparation (production
+empty-plan handling). No other suite failures. Author resumes source only after
+run completion, includes active-owner function mutation RED before final freeze.
+
+
+Root drafted task-4-action-validation-implementation-brief.md for the next
+sequential increment (retained-binding native head validation + complete original
+policy decision reevaluation). Not dispatched; current native source must first
+pass independent review and be checkpointed. The draft explicitly excludes
+physical guard installation/retained action integration claims and preserves
+data-only advancement versus within-bracket drift distinction.
+
+
+Root parsed native-operation-function-empty-red original XML2tests/2failures:
+active-owner genuine function replacement accepted; false AND id=1L optimizes to
+mask Project(concat(secret,-masked)) over empty LocalRelation(id,secret,region).
+Author implementing bounded already-admitted empty wrappers and prepared witness
+verification; all original obligations retained. Prior function evidence checked
+across tagged native subtrees. Function occurrence inventory must consume captured
+role/output/function entries as a multiset, so optimizer removals can shrink it
+without permitting copied extra occurrences. Author adding duplicated native
+MapPartitions occurrence negative after current focused run; no final freeze.
+
+
+Root parsed function-empty-green XML12tests/2failures/0errors/0skips,exit1.
+Active genuine-function replacement control now passes. Remaining failures are
+prepared empty recipe mismatch after normal optimization and malformed encoder
+GetStructField child StringType producing ClassCastException during resolution.
+Author will narrow fail-closed handling to invalid resolution without dropping
+encoder negatives; fatal errors remain outside that handling. Current function-
+count-red captures extra native function occurrence and actual final empty shape
+before multiset/collapse fixes. Later Spark ConvertToLocalRelation is a hypothesis
+for the latter, not yet a verified result.
+
+
+Root verified function-count-green exit0 and original XML12tests/0failures/0errors/
+0skips. This closes focused active function replacement/duplication, empty
+projection collapse and malformed encoder checks on that source. Targeted root
+search found no checkpoint reference in native Scala tests or NativeSelect Java
+fixture; author asked to add real checkpoint-backed ordinary named load with
+actual checkpoint leaf evidence before native route freeze. This verifies the
+current design's native checkpoint route; later physical checkpoint classification
+remains explicitly outside this increment.
+
+
+Root parsed regression4 full optional module original XML271tests/0failures/
+0errors/0skips,exit0; author confirms Javadoc passed. Includes checkpoint-only
+actual named load. Checkpoint+subsequent JSON-tail targeted RED now running.
+Author proposes exact positional Union with >=2 branches, qualified native log
+leaves and one common owned log root; no ordinary-data/RDD unions, by-name or
+missing-column variants. Root README update is reserved before final freeze.
+Private root row verifier is ready; no native final matrix acceptance yet.
+
+
+Root parsed checkpoint-tail-green12tests/1failure and diagnostic3 originalXML.
+Diagnostic3: pinned prefix output nativeShape=true but classify=false; exact same
+DeltaLog.CanonicalPathFunction occurs2times before projection pushdown through
+checkpoint/JSON Union and4times after. Root checked archived pinned Spark
+Optimizer.scala808–853: PushProjectionThroughUnion duplicates deterministic
+projection into every branch and remaps output attributes. No new function object.
+Fixture receipt uses actual initialSnapshot.version, excluding stale fixed-v0
+metadata as the cause. Earlier observer diagnostics are not semantic REDs.
+
+Ruling: canonical-path UDF occurrence inventory must normalize by exact owned
+log-leaf identity, add/remove path role and exact function instance, retaining
+multiplicity per leaf/role — a shared pre-Union application expands into leaf
+obligations consumed by branch-local applications after pinned pushdown. Keep
+MapPartitions/MapElements strict. Child-tag reconciliation requires verified
+parent-derived transition covering the exact native inputs; never ignore old
+evidence generally. Add same-leaf/role duplicate application negative and retain
+foreign/replaced function negatives. Cost if wrong is bounded lineage mapping
+rework; blanket count relaxation or arbitrary replay authority is not permitted.
+
+
+Root parsed checkpoint-tail-binding-green11tests/1failure/0errors/0skips,exit1;
+combined named load still reports sanitized failure. Boundary diagnostic captures
+original SparkException at QueryExecution.analyzed -> Dataset.mapPartitions ->
+Snapshot.stateReconstruction -> stateDF capture. This can wrap JUnit assertions
+inside analyzer, so earlier inference that duplicate/replaced negatives passed
+merely because no direct assertion appeared is withdrawn. Author tracing bounded
+cause chain class/frames only, no messages/credentials, before any further
+admission change. Final test observation should distinguish fixture negative
+assertions from actual load failure where possible. Temporary instrumentation
+must be removed before freeze; no final qualification claim.
+
+
+Checkpoint boundary cause chain identified AssertionFailedError at test duplicate.
+resolved: observer added a column to only one Union branch, so arities differed.
+This is a negative-fixture construction error, not another proven production
+rejection. The prior standalone pinned prefix positive had passed. Author restores
+production sanitization and preserves output shape while duplicating the exact
+canonical UDF inside an existing expression, requiring resolved/native-shape
+positive before precise classifier denial. Binding-green-2 now running; no freeze.
+
+
+Root verified checkpoint-tail-binding-green-2 originalXML11tests/0failures/
+0errors/0skips,exit0: actual checkpoint+JSON tail and same-output function
+negatives pass on that source. Final prior-child transition control exposed a
+test assumption: PushProjectionThroughUnion can create a new Union without old
+child tag; under active valid owner untagged finite native construction follows
+fresh issuance. It is not universal orphan/untagged-plan denial. Author changes
+control to copy the actual original Union witness explicitly, verifying conflict
+denial without parent transition and acceptance under the verified parent.
+Ruling: test actual prior-evidence conflict, not assumed universal Spark tag
+propagation — design already distinguishes finite fresh issuance from surviving
+captured identity. Cost if wrong is bounded transition-test rework; no new global
+registry or relaxation of copied-evidence checks. Prior orphan attempt is a
+diagnostic assumption failure, not a demonstrated production vulnerability.
+
+
+Native-operation final source frozen at79 files; manifestSHA256
+0b557168c2d9bc11a04b614fd33c3b74ecd621d5b7284ef8e29bc386b642d9dc.
+Root verified final-format exit0/Javadoc, then first final matrix row
+native-operation-matrix-s354-d330 originalXML271tests/0failures/0errors/0skips,
+11compiledarchives with entry hashes, explicit Spark3.5.4/Delta3.3.0/Ranger2.8.0
+pin hashes and all79 current/archived/pre-run source hashes. Root proof retained.
+Read-only independent review_native_operations dispatched against15-file frozen
+module diffSHA25626a70eedbffdd10ce1f287702063149eff340875a13f4332a1b998786afedcec.
+Other three version pairs continue under sole source/Gradle owner with no source
+mutation. No native increment acceptance until all rows and review resolve.
+
+
+Independent review identified a likely no-skipping coverage gap against the
+explicit audit runtime gates: no-skipping two-catalog, quoted mapped-column,
+partition selection and changed-head/schema/mapping compatibility cases. Root
+read the audit and ruled these gates binding through the implementation brief;
+no waiver or inferred qualification from data-skipping-enabled tests. Reviewer
+continues full task review. Sole author instructed to finish/archive active row
+but hold later matrix rows and source edits until complete findings, avoiding
+unnecessary reruns on likely incomplete test source. First frozen271 result
+remains valid historical evidence, not increment acceptance.
+
+
+Native-operation independent review SPEC ISSUES / QUALITY NEEDS FIXES:
+R1 missing installed no-skipping two-catalog/mapped/partition query gates;
+R2 missing distinct no-skipping selection/compatibility/provenance/lifetime controls.
+No confirmed production defect. Root verified findings against audit and actual
+code; fix round1 dispatched to same sole author. Minor deprecated checkpoint test
+API warning also included. Second old-freeze row independently verified54/0/0/0
+Spark3.5.4/Delta3.3.2/Ranger2.8,79files/11compiledarchives; later rows held unstarted.
+Ruling: if fix1 changes only tests, keep old271 full regression with exact original
+source scope and qualify all affected suites on final test bytes across four pairs;
+prove production source identical across freezes. A production fix instead requires
+fresh full first-pair regression. This avoids rerunning unrelated unchanged tests
+without mislabeling source or accepting missing native coverage.
+
+Root old-freeze summary independently verifies54 affected XML cases as multiset
+subset of271 full-row invocations (325executions across completed2rows). Two
+parameterized display names repeat in full XML, so269unique display strings do
+not imply only269tests; do not claim271distinct semantic test identities from
+names alone. JDK evidence: harness explicitJAVA_HOME plus external executable
+probeOpenJDK17.0.16+0 and bounded observed live executable paths, no per-Test.doFirst
+runtime field or inferred PID roles. Original-freeze root summary retained.
+
+
+Fix1 initial focused original XML verified6tests/2failures/0errors/0skips,exit1
+(native-operation-fix1-noskip-controls): existing b.secret MASK_NULL means expected
+unmasked b-one row was wrong; warmed getSnapshot performs no analyzer callback,
+so injected failure did not fire. Author correcting fixture expectations and
+using actual matchingFiles query path for exception cleanup. Passing controls
+cover current-head0→1/schema-mapping native rejection, no-skipping backing/session/
+clone proof, independent callback overlap, and checkpoint-tail public overload.
+No confirmed production defect; production source remains unchanged so far.
+
+Fix1 corrected focused controls root verified6/0/0/0,exit0, original captured
+production source hashes unchanged. All R1/R2 cases represented; one mapping-only
+refinement now separates unchanged logical names/types/nullability from changed
+native physical mapping, using genuine staged rename/drop/re-add commits and
+requiring native DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS. Final new freeze and four-pair
+59-invocation affected-suite matrix pending; no final acceptance yet.
+
+
+Fix1 final focused mapping-controls original XML root verified6/0/0/0,exit0,
+Javadoc present. New source freeze80filesSHA256
+1d9c6b426660a00e015ff43652c963297eb7bfbd8ce307a75bbef5163f659bc9.
+Root compared all captured paths: only NativeOperations test checkpoint overload
+and new TestDeltaRangerNoSkipping differ. Production/build/README unchanged.
+Fix diff22868bytesSHA25618ab4c9d7e384730f2fe6533ca087dfc856dd8d9e9cd6eaba4b56f181ce52353.
+Scoped independent review_native_fix1 dispatched to R1/R2/minor and fix-induced
+issues only while final eight-suite59-invocation four-pair matrix runs. Source
+frozen; no final acceptance until all proof and review findings resolve.
+
+Scoped independent fix1 review: R1 ADDRESSED, R2 ADDRESSED, checkpoint Minor
+ADDRESSED; no new Critical/Important breakage or out-of-scope observations.
+Root read report. Reviewer explicitly conditions acceptance on final59-per-pair
+matrix, exact original XML/pins/source/compiled hashes and same case multisets.
+No source changes requested. No native checkpoint/Task4 completion claimed yet.
+
+Fix1 final row s354-d330 independently verified59/0/0/0,exit0,80frozen source
+files and11compiled archives, exact Spark3.5.4/Delta3.3.0/Ranger2.8 pin hashes.
+Row duration271.9seconds is consistent with prior54-test row207.3seconds plus
+new controls; no stall/restart. Other3rows pending. Reviewed PolicyEngine and
+uninstalled CollectGuardExec hashes still match accepted prerequisite values.
+
+Fix1 second final row s354-d332 independently verified59/0/0/0,exit0,
+80sourcefiles/11compiledarchives and exact Spark3.5.4/Delta3.3.2/Ranger2.8 pins.
+Both Spark3.5.4 rows have identical59-case XML multisets. Two Spark3.5.6 rows
+remain pending; no increment acceptance yet.
+
+
+Native-operation increment: accepted after fix round1 (Task4 remains open).
+Final rows all independently verified59tests/0failures/0errors/0skips,exit0 on
+Spark3.5.4/3.5.6 x Delta3.3.0/3.3.2 with Ranger2.8.0:236executions, identical
+59-case XML multisets. Each row binds80frozen current/archived/pre-run files and
+11compiledarchives with entry hashes and exact dependency pin hashes.
+Final freezeSHA2561d9c6b426660a00e015ff43652c963297eb7bfbd8ce307a75bbef5163f659bc9.
+Root aggregate proof native-operation-fix1-root-matrix-summary.json confirms only
+NativeOperations checkpoint test and new NoSkipping test differ from original
+freeze; production/build unchanged. Original271 full-module regression retains
+its original test-source scope, not a final-test-source rerun. JDK17 provenance
+uses explicit harness executable and bounded external probe as recorded.
+Original review R1/R2/Minor all resolved by independent scoped review; its final
+matrix evidence condition now satisfied by root audit. No new source fix needed.
+Native owner/callback increment accepted; physical/retained action/fullDelta/live
+new-artifact qualification remains pending. Root preparing exact27-file local
+checkpoint; no push/PR/deployment/services operation. Next authorized source task:
+real retained-registration and complete action decision validator brief.

@@ -90,15 +90,27 @@ All production source remained unchanged between those runs. Source/compiled-inp
 proofs and independent SPEC PASS / QUALITY READY are recorded in
 `task-4-analysis-receipt-report.md` and `task-4-analysis-receipt-review.md`.
 
-A baseline comparison exposed an existing installed asymmetric self-join failure:
-late native file selection runs on a broadcast worker after the synchronous scope
-closes. The direct mask component positive remains separate from that installed
-failure. The next dependent native-operation brief and fallback-scope audit identify
-an owner-bound prepared-index continuation through public Delta hooks; this seam
-still needs production implementation and runtime qualification. Native operation
-ownership, physical provenance, installed collection enforcement and the broader
-full-Delta requirements remain open. No new artifact was deployed to the live
-Ranger fixture by this offline increment.
+Owned native load/preparation operations and delayed index continuations are now
+implemented and independently reviewed. The real asymmetric self-join succeeds
+through its broadcast-worker callback; named checkpoint-plus-JSON-tail loading and
+the separate no-skipping route retain exact native ownership and compatibility
+checks. Pending cache candidates cannot execute, copied or mismatched evidence
+rejects, and native callbacks clear their per-thread operation on failure.
+
+The original full-module regression passed 271 invocations on Spark 3.5.4 /
+Delta 3.3.0. Review required additional no-skipping query, snapshot compatibility
+and continuation controls; those test-only changes passed scoped re-review.
+Production/build source remained identical. The final eight affected suites passed
+59 invocations on each of all four Spark/Delta pairs (236 executions) with Ranger
+2.8.0. Root verified original XML, exact frozen source, compiled inputs, dependency
+pins and matching test-case inventories. The original full row retains its original
+test-source scope; it is not relabeled as a full rerun after the test additions.
+See the native-operation report, review and fix-1 review in the task ledger.
+
+The next increment implements retained-registration and complete action decision
+validation for the later collection guard. Physical provenance and installed
+retained-action enforcement remain open, along with the broader full-Delta goal.
+No new artifact was deployed to the live Ranger fixture by this offline work.
 
 ## Global Constraints
 

@@ -19,7 +19,7 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
-import org.apache.spark.sql.{Encoders, Row}
+import org.apache.spark.sql.{Dataset, Encoders, Row}
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.analysis.SimpleAnalyzer
@@ -43,45 +43,23 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
 
 /** Finite admission for fresh SELECT; native log reconstruction is a separate typed route. */
 private[ranger] object DeltaRangerPlanAdmission {
-  private class NativeScope(val indices: Seq[TahoeLogFileIndex]) {
-    val statsSchemas = scala.collection.mutable.Set.empty[StructType]
-    val stateRdds = scala.collection.mutable.ArrayBuffer.empty[LogicalRDD]
-    val aggregateOutputs = scala.collection.mutable.ArrayBuffer.empty[Seq[Attribute]]
-  }
-  private val nativeScope = new ThreadLocal[NativeScope]()
+  private def operation = DeltaRangerNativeOperation.current()
   private lazy val actionSchema = Encoders.product[SingleAction].schema
   private lazy val snapshotStateEncoder =
     Encoders.product[SnapshotState].asInstanceOf[ExpressionEncoder[SnapshotState]]
   private lazy val snapshotStateSchema = snapshotStateEncoder.schema
 
-  def withNativeMetadata[T](body: => T): T = withNativeScans(Seq.empty)(body)
-
-  def withNativeScans[T](indices: Seq[TahoeLogFileIndex])(body: => T): T = {
-    if (nativeScope.get() != null) throw new SecurityException("Nested native Delta metadata scope")
-    nativeScope.set(new NativeScope(indices))
-    try body
-    finally nativeScope.remove()
-  }
-
   def registerSnapshot(index: TahoeLogFileIndex, snapshot: Snapshot): Unit = {
-    val scope = nativeScope.get()
-    if (
-      scope == null || !scope.indices.exists(_ eq index) || !(snapshot.deltaLog eq index.deltaLog)
-    ) {
-      throw new SecurityException("Native snapshot is outside authorized scan preparation")
-    }
-    // Capture native lineage before filesForScan can ask Snapshot for computedState. Reconstructing
-    // stateDF may reenter the existing typed log route; aggregate admission never initializes it.
-    snapshot.stateDF.queryExecution.analyzed match {
-      case rdd: LogicalRDD if !rdd.isStreaming && rdd.schema == actionSchema =>
-        scope.stateRdds += rdd
-      case _ => throw new SecurityException("Native snapshot state lineage is not qualified")
-    }
-    scope.statsSchemas += StructType(Encoders.product[AddFile].schema.fields.map { field =>
-      if (field.name == "stats") field.copy(dataType = snapshot.statsSchema, nullable = true)
-      else field
-    })
+    if (operation == null) throw new SecurityException("Native snapshot lacks an owner")
+    operation.capture(index, snapshot)
   }
+
+  // Removed ambient entry points retain fail-closed behavior for callers compiled against the
+  // earlier experimental surface. Ownership can only come from a registration or full receipt.
+  def withNativeMetadata[T](body: => T): T =
+    throw new SecurityException("Native metadata requires an owner")
+  def withNativeScans[T](indices: Seq[TahoeLogFileIndex])(body: => T): T =
+    throw new SecurityException("Native scans require a complete receipt")
 
   def query(plan: LogicalPlan): Unit = {
     if (!plan.resolved || plan.isStreaming) reject("unresolved or streaming plan")
@@ -104,7 +82,10 @@ private[ranger] object DeltaRangerPlanAdmission {
     case other => reject("expression " + other.prettyName)
   }
 
-  def internalMetadata(plan: LogicalPlan): Boolean = {
+  def internalMetadata(plan: LogicalPlan): Boolean =
+    DeltaRangerNativeProvenance.classify(plan) != DeltaRangerNativeProvenance.UserPlan
+
+  private[ranger] def nativeShape(plan: LogicalPlan): Boolean = {
     if (snapshotStateAggregate(plan) || snapshotStateBinding(plan)) return true
     plan match {
       case GlobalLimit(
@@ -119,8 +100,7 @@ private[ranger] object DeltaRangerPlanAdmission {
           if binding.deserializer.dataType == ObjectType(
             classOf[SingleAction]
           ) || binding.deserializer.dataType == ObjectType(classOf[Row]) ||
-            (nativeScope
-              .get() != null && binding.deserializer.dataType == ObjectType(classOf[AddFile])) =>
+            (operation != null && binding.deserializer.dataType == ObjectType(classOf[AddFile])) =>
         binding.child match {
           case local: LocalRelation if local.data.isEmpty && !local.isStreaming =>
             return !binding.expressions.exists(_.exists {
@@ -134,23 +114,27 @@ private[ranger] object DeltaRangerPlanAdmission {
     }
     val leaves = plan.collectLeaves()
     val nativeNodes = !plan.exists {
+      case union: Union => !nativeLogUnion(union)
       case _: LogicalRelation | _: LogicalRDD | _: Project | _: Filter | _: Sort |
           _: RepartitionByExpression | _: SerializeFromObject | _: DeserializeToObject |
           _: MapPartitions | _: MapElements =>
         false
       case _ => true
     }
-    leaves.nonEmpty && nativeNodes && !plan.exists(_.isInstanceOf[Command]) &&
+    val nativeFunctions = !plan.exists {
+      case node: MapPartitions => !nativeObjectFunction(node.func)
+      case node: MapElements   => !nativeAddFileSelect(node)
+      case _                   => false
+    }
+    leaves.nonEmpty && nativeNodes && nativeFunctions && !plan.exists(_.isInstanceOf[Command]) &&
     !plan.exists(_.expressions.exists(_.exists {
       case _: SubqueryExpression | _: PythonUDF => true
       case udf: ScalaUDF                        => !nativeUdf(udf, leaves)
       case _                                    => false
     })) &&
     leaves.forall {
-      case rdd: LogicalRDD if nativeScope.get() != null =>
-        !rdd.isStreaming && (rdd.schema == actionSchema || nativeScope
-          .get()
-          .statsSchemas(rdd.schema))
+      case rdd: LogicalRDD if operation != null =>
+        operation.contains(rdd, false) || operation.contains(rdd, true)
       case relation: LogicalRelation if !relation.isStreaming && relation.catalogTable.isEmpty =>
         relation.relation match {
           case fs: HadoopFsRelation =>
@@ -159,10 +143,7 @@ private[ranger] object DeltaRangerPlanAdmission {
                 index.getClass == classOf[DeltaLogFileIndex] && fs.fileFormat == index.format &&
                 index.rootPaths.nonEmpty && index.rootPaths.forall { path =>
                   path.getParent != null && path.getParent.getName == "_delta_log" &&
-                  (nativeScope.get() == null || nativeScope
-                    .get()
-                    .indices
-                    .exists(_.deltaLog.logPath == path.getParent)) &&
+                  operation != null && operation.ownsLogRoot(path.getParent) &&
                   path.getName.matches(
                     "[0-9]{20}(\\.json|\\.checkpoint(\\.[0-9]{10}\\.[0-9]{10})?\\.parquet)"
                   )
@@ -175,9 +156,54 @@ private[ranger] object DeltaRangerPlanAdmission {
     }
   }
 
+  // Snapshot.loadActions combines its checkpoint and JSON-tail indices positionally. This is
+  // only a log reconstruction union: each leaf must still pass the owned native-log checks above.
+  private def nativeLogUnion(union: Union): Boolean = {
+    val leaves = union.collectLeaves()
+    val indices = leaves.flatMap {
+      case relation: LogicalRelation =>
+        relation.relation match {
+          case fs: HadoopFsRelation =>
+            fs.location match {
+              case index: DeltaLogFileIndex if index.getClass == classOf[DeltaLogFileIndex] =>
+                Some(index)
+              case _ => None
+            }
+          case _ => None
+        }
+      case _ => None
+    }
+    union.getClass == classOf[Union] && !union.byName && !union.allowMissingCol &&
+    union.children.size >= 2 && indices.size == leaves.size &&
+    indices.flatMap(_.rootPaths).map(_.getParent).distinct.size == 1
+  }
+
+  private[ranger] def pendingCache(plan: LogicalPlan): Boolean = plan match {
+    case rdd: LogicalRDD
+        if operation != null && operation.capturingSnapshot() != null &&
+          !rdd.isStreaming && rdd.getClass == classOf[LogicalRDD] =>
+      val schema = if (operation.capturingStats()) {
+        StructType(Encoders.product[AddFile].schema.fields.map { field =>
+          if (field.name == "stats")
+            field.copy(dataType = operation.capturingSnapshot().statsSchema, nullable = true)
+          else field
+        })
+      } else actionSchema
+      rdd.schema == schema
+    case _ => false
+  }
+
+  private[ranger] def encoderBinding(plan: LogicalPlan): Boolean = plan match {
+    case binding: DeserializeToObject =>
+      binding.child match {
+        case local: LocalRelation if local.data.isEmpty => nativeShape(plan)
+        case _                                          => false
+      }
+    case _ => false
+  }
+
   private def snapshotStateAggregate(plan: LogicalPlan): Boolean = plan match {
-    case aggregate: Aggregate
-        if nativeScope.get() != null && aggregate.groupingExpressions.isEmpty =>
+    case aggregate: Aggregate if operation != null && aggregate.groupingExpressions.isEmpty =>
       val child = aggregate.child match {
         case Project(columns, rdd: LogicalRDD)
             if columns == rdd.output.filter(attribute =>
@@ -188,10 +214,7 @@ private[ranger] object DeltaRangerPlanAdmission {
         case other => other
       }
       child match {
-        case rdd: LogicalRDD if !rdd.isStreaming && nativeScope.get().stateRdds.exists {
-              registered =>
-                (registered.rdd eq rdd.rdd) && registered.output == rdd.output
-            } =>
+        case rdd: LogicalRDD if operation.contains(rdd, false) =>
           val attributes = rdd.output.map(attribute => attribute.name -> attribute).toMap
           val add = attributes("add")
           val size = GetStructField(add, add.dataType.asInstanceOf[StructType].fieldIndex("size"))
@@ -225,9 +248,7 @@ private[ranger] object DeltaRangerPlanAdmission {
               (Set("fileSizeHistogram", "deletedRecordCountsHistogramOpt").contains(alias.name) &&
                 alias.child == Literal.create(null, snapshotStateSchema(alias.name).dataType))
             }
-          if (valid && !nativeScope.get().aggregateOutputs.contains(aggregate.output)) {
-            nativeScope.get().aggregateOutputs += aggregate.output
-          }
+          if (valid) operation.recordAggregate(aggregate.output)
           valid
         case _ => false
       }
@@ -236,12 +257,13 @@ private[ranger] object DeltaRangerPlanAdmission {
 
   private def snapshotStateBinding(plan: LogicalPlan): Boolean = plan match {
     case binding: DeserializeToObject
-        if nativeScope
-          .get() != null && binding.deserializer.dataType == ObjectType(classOf[SnapshotState]) =>
+        if operation != null && binding.deserializer.dataType == ObjectType(
+          classOf[SnapshotState]
+        ) =>
       binding.child match {
         case local: LocalRelation
             if local.data.isEmpty && !local.isStreaming &&
-              nativeScope.get().aggregateOutputs.contains(local.output) && !binding.deserializer
+              operation.hasAggregate(local.output) && !binding.deserializer
                 .exists {
                   case _: ScalaUDF | _: PythonUDF | _: SubqueryExpression => true
                   case _                                                  => false
@@ -266,8 +288,64 @@ private[ranger] object DeltaRangerPlanAdmission {
     case _ => false
   }
 
+  // Snapshot.allFiles selects the AddFile struct from the exact sealed state. Spark's typed
+  // Dataset.select flattens its Tuple1 with a Dataset-owned function, not a Delta-owned closure.
+  // Origin is only one issuance prerequisite; the encoder, field, filter and backing RDD are exact.
+  private def nativeAddFileSelect(node: MapElements): Boolean = {
+    val actual = node.func.getClass
+    val expected = classOf[Dataset[_]]
+    val encoder = ExpressionEncoder.tuple(
+      Encoders.product[AddFile].asInstanceOf[ExpressionEncoder[AddFile]]
+    )
+    if (
+      operation == null || actual.getProtectionDomain.getCodeSource == null ||
+      actual.getProtectionDomain.getCodeSource != expected.getProtectionDomain.getCodeSource ||
+      actual.getClassLoader != expected.getClassLoader ||
+      !actual.getName.startsWith("org.apache.spark.sql.Dataset$$Lambda$") ||
+      node.argumentClass != classOf[Tuple1[_]] || node.argumentSchema != encoder.schema ||
+      node.outputObjAttr.dataType != ObjectType(classOf[AddFile])
+    ) return false
+    node.child match {
+      case binding: DeserializeToObject =>
+        binding.child match {
+          case project @ Project(
+                Seq(add: AttributeReference),
+                Filter(IsNotNull(filtered), rdd: LogicalRDD)
+              )
+              if operation.contains(rdd, false) && filtered == add &&
+                rdd.output.find(_.name == "add").contains(add) =>
+            try {
+              val expectedDeserializer =
+                encoder.resolveAndBind(project.output, SimpleAnalyzer).deserializer
+              val actualDeserializer = BindReferences.bindReference(
+                SimplifyCasts(binding).asInstanceOf[DeserializeToObject].deserializer,
+                AttributeSeq(project.output)
+              )
+              def normalized(expression: Expression): Expression =
+                ReassignLambdaVariableID(binding.copy(deserializer = expression))
+                  .asInstanceOf[DeserializeToObject]
+                  .deserializer
+              normalized(actualDeserializer) == normalized(expectedDeserializer)
+            } catch {
+              case scala.util.control.NonFatal(_) => false
+            }
+          case _ => false
+        }
+      case _ => false
+    }
+  }
+
+  private def nativeObjectFunction(function: AnyRef): Boolean = {
+    val actual = function.getClass
+    val expected = classOf[DeltaLog]
+    val origin = actual.getProtectionDomain.getCodeSource
+    operation != null && origin != null && origin == expected.getProtectionDomain.getCodeSource &&
+    actual.getClassLoader == expected.getClassLoader &&
+    actual.getName.startsWith("org.apache.spark.sql.delta.")
+  }
+
   private def nativeUdf(udf: ScalaUDF, leaves: Seq[LogicalPlan]): Boolean = {
-    if (nativeScope.get() == null || !udf.nullable) return false
+    if (operation == null || !udf.nullable) return false
     val functionClass = udf.function.getClass
     val nativeClass = classOf[DeltaLog]
     val origin = functionClass.getProtectionDomain.getCodeSource
@@ -296,7 +374,7 @@ private[ranger] object DeltaRangerPlanAdmission {
       udf.dataType == BooleanType && udf.inputPrimitives == Seq(true, false, false, false) &&
       udf.children.map(_.dataType) == Seq(BooleanType, LongType, LongType, LongType) &&
       leaves.exists {
-        case rdd: LogicalRDD if nativeScope.get().statsSchemas(rdd.schema) =>
+        case rdd: LogicalRDD if operation.contains(rdd, true) =>
           val arguments = udf.children
           arguments.head.references.subsetOf(AttributeSet(rdd.output)) &&
           attribute(arguments(1), rdd.output, "size") &&

@@ -45,11 +45,11 @@ class TestDeltaRangerNativeSnapshotAdmission {
     try {
       NativeSelectFixture.withSpark(
         spark => {
-          val index = snapshotIndex(spark, "b")
-          val snapshot = index.getSnapshot
-          val triggered = snapshot.getClass.getMethod("_computedStateTriggered")
-          assertEquals(false, triggered.invoke(snapshot))
-          DeltaRangerPlanAdmission.withNativeScans(Seq(index)) {
+          NativeSelectFixture.withNativeOperation(spark) { index =>
+            val snapshot = index.getSnapshot
+            val triggered = snapshot.getClass.getMethod("_computedStateTriggered")
+            assertEquals(false, triggered.invoke(snapshot))
+            DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
             val first = snapshot.stateDF.queryExecution.analyzed.asInstanceOf[LogicalRDD]
             val second = snapshot.stateDF.queryExecution.analyzed.asInstanceOf[LogicalRDD]
             assertTrue(first.rdd eq second.rdd)
@@ -114,13 +114,12 @@ class TestDeltaRangerNativeSnapshotAdmission {
   ): Unit = {
     def rejected(plan: LogicalPlan): Unit =
       assertFalse(DeltaRangerPlanAdmission.internalMetadata(plan), plan.nodeName)
-    rejected(aggregate); rejected(binding)
-    DeltaRangerPlanAdmission.withNativeMetadata { rejected(aggregate); rejected(binding) }
-    val index = snapshotIndex(spark, "b")
+    assertTrue(DeltaRangerPlanAdmission.internalMetadata(aggregate.clone()))
+    rejected(binding)
     val rdd = aggregate.child.asInstanceOf[LogicalRDD]
     val local = binding.child.asInstanceOf[LocalRelation]
-    DeltaRangerPlanAdmission.withNativeScans(Seq(index)) {
-      rejected(aggregate); rejected(binding)
+    NativeSelectFixture.withNativeOperation(spark) { index =>
+      rejected(binding)
       DeltaRangerPlanAdmission.registerSnapshot(index, index.getSnapshot)
       assertTrue(DeltaRangerPlanAdmission.internalMetadata(aggregate))
       assertTrue(DeltaRangerPlanAdmission.internalMetadata(binding))
@@ -306,9 +305,9 @@ class TestDeltaRangerNativeSnapshotAdmission {
       }
       rejected(binding.copy(deserializer = capture))
     }
-    rejected(aggregate); rejected(binding)
-    val foreign = snapshotIndex(spark, "a")
-    DeltaRangerPlanAdmission.withNativeScans(Seq(foreign)) {
+    assertTrue(DeltaRangerPlanAdmission.internalMetadata(aggregate.clone()))
+    rejected(binding)
+    NativeSelectFixture.withNativeOperation(spark, "a") { foreign =>
       DeltaRangerPlanAdmission.registerSnapshot(foreign, foreign.getSnapshot)
       rejected(aggregate); rejected(binding)
     }

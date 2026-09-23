@@ -176,6 +176,45 @@ class TestDeltaRangerRegistrationBindingsNative {
     }
 
   @Test
+  def failedFinalPublicationInvalidatesCapturedLoadEvidenceAndClearsScope(): Unit = {
+    val policy = new TestDeltaRangerNativeSelect.Fixture
+    try
+      withWrapperSpark(
+        spark => {
+          val f = new WrapperFixture(spark, policy)
+          var captured: org.apache.spark.sql.execution.LogicalRDD = null
+          try {
+            f.onRead = number =>
+              if (number == 3) {
+                val operation = DeltaRangerNativeOperation.current()
+                assertNotNull(operation)
+                assertEquals(DeltaRangerNativeOperation.Callback.LOAD, operation.callback())
+                val snapshot = DeltaLog
+                  .forTable(spark, NativeSelectFixture.locations("a"))
+                  .unsafeVolatileSnapshot
+                val state = snapshot.stateDF.queryExecution.analyzed
+                  .asInstanceOf[org.apache.spark.sql.execution.LogicalRDD]
+                assertTrue(operation.contains(state, false))
+                captured = state.clone().asInstanceOf[org.apache.spark.sql.execution.LogicalRDD]
+                assertNotNull(DeltaRangerNativeProvenance.requireExecutable(captured, spark))
+                f.properties.put("delta.registration.receipt.generation", "2")
+              }
+            assertThrows(classOf[SecurityException], () => f.wrapper.loadTable(name))
+            assertNotNull(captured)
+            assertNull(DeltaRangerNativeOperation.current())
+            val failure = assertThrows(
+              classOf[SecurityException],
+              () => DeltaRangerNativeProvenance.requireExecutable(captured, spark)
+            )
+            assertTrue(failure.getMessage.contains("no sealed executable evidence"))
+          } finally f.close()
+        },
+        Some(extensions => NativeSelectFixture.extension(policy)(extensions))
+      )
+    finally policy.engine.close()
+  }
+
+  @Test
   def concurrentCloseDoesNotWaitForFinalMetadataBracketOrPublishAfterClose(): Unit =
     withWrapperSpark { spark =>
       val policy = new TestDeltaRangerNativeSelect.Fixture

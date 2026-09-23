@@ -109,26 +109,33 @@ Unknown, missing, duplicate or lossy helper resources reject. Public row-filter/
 stage-1 ExprId remapping and marker elimination are used after original authorization; stock
 request-generating authorization/filter/mask rules are not installed.
 
-The native optimizer delegate runs only after authorized fresh analysis, before Delta's own
-`PrepareDeltaScan`. Its private synchronous metadata scope preserves native reconstruction and
-caching while constraining observed internal metadata RDD/encoder routes. A narrow protected
-`getDeltaScanGenerator` override calls the public native superclass once, registers only the actual
-selected Snapshot's statistics schema for that authorized index, and returns it unchanged. No
-snapshot/schema registration survives the delegation. Scope clears on exceptions and does not
-propagate to other threads; user RDD/raw scan routes outside it reject. Native DeltaLogFileIndex
-reconstruction and exact readless SingleAction/Row encoder bindings are separate exceptions;
-AddFile binding requires the scope. All binding exceptions require an empty LocalRelation and
-reject child reads, nonnative targets, UDFs and subqueries.
+Ordinary loading and native scan preparation use finite, owner-bearing operations. Loading
+carries the actual PUBLISHED observation through native loading and seals against the completed
+registration binding. Preparation consumes the complete original decision receipt. Actual state
+and statistics getters seal only their returned RDD identities and full outputs; reentrant cache
+candidates remain analysis-only until then. A successful close freezes issuance and preserves
+sealed evidence, while failure invalidates that operation's evidence. Later cache use requires
+explicit rebinding through the current owner's actual snapshot getters. Empty encoder helpers
+remain analysis-only and cannot authorize execution.
 
-Native reconstruction needs two narrowly qualified ScalaUDF forms: Delta's canonical path
-function and its nondeterministic four-argument size collector. Admission jointly requires the
-active scope, native leaf/snapshot lineage, function class/family, pinned Delta classloader and
-CodeSource, signature/nullability/determinism, and exact argument lineage. It rejects other
-same-signature functions and unrelated arguments. Python UDFs, subqueries and commands reject.
-The native private testing callback is neither called nor replaced by the companion; trusted
-launcher code must not inject callbacks or replace pinned classes. This finite reconstruction
-qualification covers the tested native fixture routes, not every checkpoint/table-feature shape.
-These exceptions do not establish metadata confidentiality or arbitrary-job security.
+Prepared indexes retain their original scan occurrences and selected snapshot. A delayed
+`matchingFiles` callback, including one on a broadcast worker, enters a fresh owned operation and
+passes the actual filters unchanged to Delta. The separate no-skipping index covers snapshot,
+file-list and size callbacks while preserving Delta's snapshot selection. Neither route inherits
+thread-local authority. Scope clears on every exit; index copies do not acquire authority, and
+serialized references retain no driver authorization payload.
+
+Native reconstruction includes qualified JSON/checkpoint reads and positional unions of log
+reads from the same owned table log. It binds actual function objects and preserves captured
+function occurrence counts during reclassification, accounting for canonical-path projection
+pushdown by exact log leaf and path field. Delta's canonical-path and size-collector UDFs require
+their pinned origin, signature and argument lineage. Spark's typed `AddFile` select
+requires its exact encoder, field/filter structure and owned state RDD. Arbitrary same-schema
+RDDs, substituted functions, mixed log roots, Python UDFs, subqueries and commands reject. The
+native private testing callback is neither called nor replaced; trusted launcher code must not
+inject callbacks or replace pinned classes. These finite routes do not cover every checkpoint or
+table-feature shape and do not establish metadata confidentiality or arbitrary-job security.
+
 Analysis resolves each original scan through its canonical wrapper's exact registration binding.
 A driver-owned decision receipt retains every original occurrence, resource, subject/group set,
 engine publication stamp and captured mask/filter decision, including absent filters and NONE
@@ -144,11 +151,11 @@ authority, so deserialized references cannot authorize a query. Empty-result opt
 all original authorization obligations. User SQL caches, row-tracking normalization and other
 unqualified transformations reject rather than acquire authority from a copied receipt.
 
-An asymmetric self-join can trigger additional native statistics work from a broadcast worker
-after the synchronous metadata scope closes. That installed-extension route currently rejects;
-a passing direct mask-rewrite component test does not establish its end-to-end support. Typed
-native operation ownership and delayed native provenance remain required to close this gap.
-Analysis receipts do not install collection-time revocation checks on retained Datasets. Physical
+The installed asymmetric self-join route uses the owned delayed callback, retaining both
+original scan obligations even when the same table is loaded twice. Empty-result optimization
+also retains every original obligation, including when Spark collapses a masked projection to
+an empty relation. Logical native evidence and index ownership are inputs to the later physical
+classifier; they do not install collection-time revocation checks on retained Datasets. Physical
 provenance, retained-action enforcement, deployment and full Delta-operation gates remain open.
 
 ## Deployment

@@ -29,12 +29,24 @@ import scala.collection.mutable
 import org.apache.kyuubi.plugin.spark.authz.{OperationType, PrivilegeObjectType, PrivilegesBuilder}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{
+  LogicalPlan,
+  Project,
+  Filter,
+  Join,
+  SubqueryAlias,
+  LocalRelation
+}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.kyuubi.plugin.spark.authz.rule.RuleEliminateMarker
 import org.apache.kyuubi.plugin.spark.authz.rule.datamasking.RuleApplyDataMaskingStage1
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
-import org.apache.spark.sql.delta.stats.{DeltaScanGenerator, PrepareDeltaScan}
+import org.apache.spark.sql.delta.stats.{
+  DeltaScan,
+  DeltaScanGenerator,
+  PrepareDeltaScan,
+  PreparedDeltaFileIndex
+}
 import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -47,7 +59,8 @@ private[ranger] class DeltaRangerReadRule(
   import DeltaRangerReadRule._
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
-    if (!plan.resolved || DeltaRangerPlanAdmission.internalMetadata(plan)) return plan
+    if (!plan.resolved || nativeAdmission(plan, spark) != DeltaRangerNativeProvenance.UserPlan)
+      return plan
     // Our pre-CBO ordering also places this resolution rule before Delta's native V1 fallback.
     // Defer only native intermediate relations; the final check never admits an unmarked V2 plan.
     if (
@@ -130,22 +143,81 @@ private[ranger] class DeltaRangerReadRule(
 }
 
 private[ranger] object DeltaRangerReadRule {
+  private def nativeAdmission(
+      plan: LogicalPlan,
+      spark: SparkSession
+  ): DeltaRangerNativeProvenance.Admission = {
+    val admission = DeltaRangerNativeProvenance.classify(plan)
+    if (admission != DeltaRangerNativeProvenance.UserPlan) {
+      try DeltaRangerDecisionReceipt.qualifyNative(plan, spark)
+      catch {
+        case failure: SecurityException =>
+          admission match {
+            case sealedNative: DeltaRangerNativeProvenance.SealedNative =>
+              sealedNative.witness.invalidate()
+            case _ => Option(DeltaRangerNativeOperation.current()).foreach(_.invalidate())
+          }
+          throw new DeltaRangerNativeOperation.OptimizerRejected(
+            failure.getMessage.contains("consumer")
+          )
+      }
+    }
+    admission
+  }
+
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
-    if (!DeltaRangerPlanAdmission.internalMetadata(plan))
+    if (nativeAdmission(plan, spark) == DeltaRangerNativeProvenance.UserPlan)
       DeltaRangerDecisionReceipt.check(plan, spark, optimized = false)
   }
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
-    if (DeltaRangerPlanAdmission.internalMetadata(plan)) return plan
-    DeltaRangerDecisionReceipt.check(plan, spark, optimized = true)
-    val indices = plan
-      .collect {
-        case relation: LogicalRelation if relation.relation.isInstanceOf[HadoopFsRelation] =>
-          relation.relation.asInstanceOf[HadoopFsRelation].location
-      }
-      .collect { case index: TahoeLogFileIndex => index }
-    DeltaRangerPlanAdmission.withNativeScans(indices) {
-      new PrepareDeltaScan(spark) {
+    nativeAdmission(plan, spark) match {
+      case _: DeltaRangerNativeProvenance.SealedNative => return plan
+      case DeltaRangerNativeProvenance.AnalysisOnlyNative =>
+        throw new SecurityException("Pending native Delta analysis cannot execute")
+      case DeltaRangerNativeProvenance.UserPlan =>
+    }
+    val owner = DeltaRangerNativeScans.consume(plan, spark)
+    owner.run { operation =>
+      val prepared = new PrepareDeltaScan(spark) {
+        override protected def prepareDeltaScanWithoutFileSkipping(
+            candidate: LogicalPlan
+        ): LogicalPlan = {
+          val native = super.prepareDeltaScanWithoutFileSkipping(candidate)
+          def replace(node: LogicalPlan): LogicalPlan = {
+            val result = node match {
+              case relation: LogicalRelation =>
+                relation.relation match {
+                  case fs: HadoopFsRelation =>
+                    fs.location match {
+                      case index: TahoeLogFileIndex =>
+                        val owned = DeltaRangerLogIndex.create(owner, index, operation)
+                        relation.copy(relation = fs.copy(location = owned)(spark))
+                      case _ => throw new SecurityException("Unqualified no-skipping native index")
+                    }
+                  case _ => throw new SecurityException("Unqualified no-skipping native relation")
+                }
+              case project: Project => project.copy(child = replace(project.child))
+              case filter: Filter   => filter.copy(child = replace(filter.child))
+              case join: Join => join.copy(left = replace(join.left), right = replace(join.right))
+              case alias: SubqueryAlias => alias.copy(child = replace(alias.child))
+              case local: LocalRelation if local.data.isEmpty => local
+              case _ => throw new SecurityException("Unqualified no-skipping native transition")
+            }
+            result.copyTagsFrom(node)
+            result
+          }
+          // Tahoe equality intentionally ignores authority. Generic transformUp would discard
+          // an equal native index replacement; direct finite copies preserve its exact identity.
+          replace(native)
+        }
+
+        override protected def getPreparedIndex(
+            scan: DeltaScan,
+            index: TahoeLogFileIndex
+        ): PreparedDeltaFileIndex =
+          DeltaRangerPreparedIndex.create(owner, index, scan, operation)
+
         override protected def getDeltaScanGenerator(
             index: TahoeLogFileIndex
         ): DeltaScanGenerator = {
@@ -158,6 +230,7 @@ private[ranger] object DeltaRangerReadRule {
           generator
         }
       }.apply(plan)
+      owner.finish(prepared, operation)
     }
   }
 

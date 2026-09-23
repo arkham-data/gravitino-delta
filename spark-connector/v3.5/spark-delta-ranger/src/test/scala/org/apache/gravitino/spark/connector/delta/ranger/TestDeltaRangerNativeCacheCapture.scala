@@ -85,31 +85,26 @@ class TestDeltaRangerNativeCacheCapture {
 
   @Test
   def productionLogicalExtensionCoexistsWithScopedPublicGetterCapture(): Unit = {
-    val capture = new NativeCacheCapture
     val fixture = new TestDeltaRangerNativeSelect.Fixture
     try {
       NativeSelectFixture.withSpark(
         spark => {
-          val index = snapshotIndex(spark, "b")
-          val snapshot = index.getSnapshot
-          val (state, stats) = DeltaRangerPlanAdmission.withNativeScans(Seq(index)) {
-            val state = captureGetter(capture, StateCacheGetter, snapshot.stateDF)
+          NativeSelectFixture.withNativeOperation(spark) { index =>
+            val snapshot = index.getSnapshot
             DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
-            val stats = captureGetter(capture, StatsCacheGetter, snapshot.withStats)
-            state -> stats
+            Seq(snapshot.stateDF, snapshot.withStats).foreach { frame =>
+              val actual = frame.queryExecution.analyzed.asInstanceOf[LogicalRDD]
+              assertNotNull(DeltaRangerNativeProvenance.requireExecutable(actual, spark))
+              assertSame(actual.rdd, frame.queryExecution.analyzed.asInstanceOf[LogicalRDD].rdd)
+              frame.queryExecution.executedPlan
+            }
           }
-          assertCaptureOrder(capture, state)
-          assertCaptureOrder(capture, stats)
-          writeEventInventory("production-scope", spark, capture, Seq(state, stats))
           assertEquals(
             Set(Row(1L, "keep"), Row(2L, "drop"), Row(3L, "keep")),
             spark.sql("SELECT id, region FROM b.db.t").collect().toSet
           )
         },
-        Some(extensions => {
-          installObservers(extensions, capture)
-          NativeSelectFixture.extension(fixture)(extensions)
-        })
+        Some(extensions => NativeSelectFixture.extension(fixture)(extensions))
       )
     } finally fixture.engine.close()
   }

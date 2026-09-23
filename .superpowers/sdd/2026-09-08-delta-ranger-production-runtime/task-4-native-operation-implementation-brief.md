@@ -8,7 +8,8 @@ until the later physical provenance gate is implemented and reviewed.
 ## Binding inputs
 
 Read task-4-physical-provenance-design.md, especially sections 3–5 and 7–8;
-task-4-native-fallback-scope-audit.md; task-4-registration-receipt-design.md; and
+task-4-native-fallback-scope-audit.md; task-4-native-no-skipping-scope-audit.md;
+task-4-registration-receipt-design.md; and
 the accepted analysis-receipt report/review. Use the existing real registration
 bindings, finite metadata reader, opaque engine stamps, complete decision receipt
 and native cache characterization. Do not recreate those foundations.
@@ -78,3 +79,29 @@ source publication/build serialization, independent review, docs/commits and all
 services. No core/API/server/client/storage-schema changes, live policy writes,
 Docker/deployment or catalog-demo edits in this increment. Report original XML,
 source hashes, compiled inputs, remaining limits and precise acceptance status.
+
+## Scope ruling: retained-binding operation
+
+Implement LoadNamed, PrepareScans and their explicit owned continuations here.
+The design's ValidateRetainedBinding factory belongs to the later native-head/
+action validator increment, together with its actual metadata bracket and
+consumer tests. Do not expose an unused authority issuer now. Record retained
+binding/action validation as required remaining work, with no current support
+claim. This does not relax any native ownership requirement in this task.
+
+## Function identity clarification
+
+Exact captured function identity also applies during active-owner reclassification.
+A copied-tag plan must not acquire a fresh witness after replacing a surviving
+captured function with another genuine Delta function instance. Fresh native
+construction remains subject to finite origin/recipe checks; explicit getter
+rebinding and qualified optimizer removals remain supported. Prove the active
+case as well as the post-close case without blanket whole-tree equality.
+
+Canonical-path projection pushdown through a qualified native checkpoint/JSON
+Union is a finite permitted transition: account by exact log-leaf identity,
+add/remove path role and exact function instance, with multiplicity per leaf/role.
+The same pre-Union call covers each branch; post-pushdown calls consume those
+obligations. Other object-function occurrence counts remain strict. Reconcile
+child evidence only through the verified parent transition. Test additional calls
+on the same leaf/role and foreign/replaced functions as negatives.

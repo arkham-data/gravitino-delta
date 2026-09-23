@@ -222,7 +222,35 @@ class TestDeltaRangerDecisionReceipt {
         "SELECT x.secret FROM a.db.t x JOIN a.db.t y ON x.id = y.id WHERE y.id = 1L" -> Set(
           Row("a-one-masked")
         )
-      ).foreach { case (sql, expected) => assertEquals(expected, spark.sql(sql).collect().toSet) }
+      ).foreach { case (sql, expected) =>
+        val frame = spark.sql(sql)
+        assertEquals(expected, frame.collect().toSet)
+        if (expected.isEmpty) {
+          val prepared = frame.queryExecution.optimizedPlan
+          val proof = DeltaRangerNativeScans.prepared(prepared)
+          assertEquals(1, proof.owner.obligations.size)
+          assertTrue(proof.occurrences.isEmpty)
+          proof.verify(prepared.clone(), spark)
+          val beforeCollapse = new TestPrefix(spark).execute(frame.queryExecution.analyzed.clone())
+          proof.verify(beforeCollapse.clone(), spark)
+          val changed = beforeCollapse match {
+            case project: org.apache.spark.sql.catalyst.plans.logical.Project =>
+              project.copy(projectList = project.projectList.map { expression =>
+                expression
+                  .withNewChildren(Seq(Literal.create(null, expression.dataType)))
+                  .asInstanceOf[NamedExpression]
+              })
+            case _ =>
+              throw new AssertionError(
+                "Expected the actual masked projection over an empty local relation"
+              )
+          }
+          assertEquals(beforeCollapse.output, changed.output)
+          val rejected =
+            assertThrows(classOf[SecurityException], () => proof.verify(changed, spark))
+          assertTrue(rejected.getMessage.contains("Empty native preparation changed"))
+        }
+      }
     }
 
   @Test
@@ -467,7 +495,7 @@ class TestDeltaRangerDecisionReceipt {
     }
 
   @Test
-  def installedAsymmetricSelfJoinRetainsBaselineNativeOperationGap(): Unit =
+  def installedAsymmetricSelfJoinPreservesReceiptAndReturnsNativeRows(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
       val query = spark.sql(
         "SELECT x.secret AS first, y.secret AS second FROM a.db.t x JOIN a.db.t y ON x.id = y.id WHERE y.region = 'keep'"
@@ -475,16 +503,8 @@ class TestDeltaRangerDecisionReceipt {
       val receipt = query.queryExecution.analyzed.getTagValue(tag).get.receipt
       assertEquals(2, receipt.obligations.size)
       DeltaRangerReadRule.check(query.queryExecution.analyzed.clone(), spark)
-      val failure = assertThrows(classOf[Exception], () => query.collect())
-      var cause: Throwable = failure
-      while (cause != null && !cause.isInstanceOf[SecurityException]) cause = cause.getCause
-      assertNotNull(cause)
-      assertEquals("Unqualified Delta Ranger route: LogicalRDD", cause.getMessage)
-      assertTrue(
-        cause.getStackTrace.exists(
-          _.getClassName == "org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex"
-        )
-      )
+      assertEquals(Set(Row("a-one-masked", "a-one-masked"), Row(null, null)), query.collect().toSet)
+
     }
 
   @Test

@@ -75,48 +75,58 @@ final class DeltaRangerRegistrationBindings {
     try {
       requireLive();
       PublishedObservation before = reader.read(id);
-      Table loaded = loader.get();
-      if (!(loaded instanceof DeltaTableV2)) throw denied();
-      DeltaTableV2 table = (DeltaTableV2) loaded;
-      if (table.timeTravelOpt().isDefined()
-          || !table.options().isEmpty()
-          || table.hasPartitionFilters()
-          || table.catalogTable().isEmpty()
-          || table.ttSafeCatalogTable().isEmpty()
-          || table.catalogTable().get() != table.ttSafeCatalogTable().get()) throw denied();
-      Snapshot snapshot = table.initialSnapshot();
-      BaseRelation base = table.toBaseRelation();
-      if (!(base instanceof HadoopFsRelation)) throw denied();
-      HadoopFsRelation relation = (HadoopFsRelation) base;
-      if (!(relation.location() instanceof TahoeLogFileIndex)) throw denied();
-      TahoeLogFileIndex index = (TahoeLogFileIndex) relation.location();
-      if (snapshot.deltaLog() != table.deltaLog() || index.deltaLog() != table.deltaLog())
-        throw denied();
-      CatalogTable descriptor = table.catalogTable().get();
-      PublishedObservation after = reader.read(id);
-      if (!before.samePublication(after)) throw denied();
-      validateDescriptor(descriptor, after, snapshot);
-      if (!locationMatches(after.location(), table.path().toUri())
-          || !locationMatches(after.location(), table.deltaLog().dataPath().toUri()))
-        throw denied();
-      validateIndex(index, after, snapshot);
-      // DeltaLog.buildHadoopFsRelationWithFileIndex passes the full snapshot schema as dataSchema,
-      // including partition columns, and passes the ordered partition schema separately.
-      if (!logicalSchema(snapshot.schema()).equals(logicalSchema(relation.dataSchema()))
-          || !logicalSchema(snapshot.metadata().partitionSchema())
-              .equals(logicalSchema(relation.partitionSchema()))) throw denied();
-      RegistrationBinding binding =
-          new RegistrationBinding(after, descriptor, relation, index, snapshot);
-      // Network and lazy native work above never hold this monitor. Close and insertion share it.
-      synchronized (this) {
-        requireLive();
-        reader.requireLive(before);
-        reader.requireLive(after);
-        drain(collected, entries);
-        entries.put(new IdentityKey<>(descriptor, collected), binding);
-        latest = after;
+      try (DeltaRangerNativeOperation operation =
+          DeltaRangerNativeOperation.load(this, reader, before)) {
+        Table loaded = loader.get();
+        if (!(loaded instanceof DeltaTableV2)) throw denied();
+        DeltaTableV2 table = (DeltaTableV2) loaded;
+        if (table.timeTravelOpt().isDefined()
+            || !table.options().isEmpty()
+            || table.hasPartitionFilters()
+            || table.catalogTable().isEmpty()
+            || table.ttSafeCatalogTable().isEmpty()
+            || table.catalogTable().get() != table.ttSafeCatalogTable().get()) throw denied();
+        Snapshot snapshot = table.initialSnapshot();
+        BaseRelation base = table.toBaseRelation();
+        if (!(base instanceof HadoopFsRelation)) throw denied();
+        HadoopFsRelation relation = (HadoopFsRelation) base;
+        if (!(relation.location() instanceof TahoeLogFileIndex)) throw denied();
+        TahoeLogFileIndex index = (TahoeLogFileIndex) relation.location();
+        if (snapshot.deltaLog() != table.deltaLog() || index.deltaLog() != table.deltaLog())
+          throw denied();
+        operation.capture(index, snapshot);
+        CatalogTable descriptor = table.catalogTable().get();
+        PublishedObservation after = reader.read(id);
+        if (!before.samePublication(after)) throw denied();
+        validateDescriptor(descriptor, after, snapshot);
+        if (!locationMatches(after.location(), table.path().toUri())
+            || !locationMatches(after.location(), table.deltaLog().dataPath().toUri()))
+          throw denied();
+        validateIndex(index, after, snapshot);
+        // DeltaLog.buildHadoopFsRelationWithFileIndex passes the full snapshot schema as
+        // dataSchema,
+        // including partition columns, and passes the ordered partition schema separately.
+        if (!logicalSchema(snapshot.schema()).equals(logicalSchema(relation.dataSchema()))
+            || !logicalSchema(snapshot.metadata().partitionSchema())
+                .equals(logicalSchema(relation.partitionSchema()))) throw denied();
+        RegistrationBinding binding =
+            new RegistrationBinding(after, descriptor, relation, index, snapshot);
+        // Network and lazy native work above never hold this monitor. Close and insertion share it.
+        synchronized (this) {
+          requireLive();
+          reader.requireLive(before);
+          reader.requireLive(after);
+          drain(collected, entries);
+          entries.put(new IdentityKey<>(descriptor, collected), binding);
+          latest = after;
+        }
+        operation.completeLoad(
+            new BoundRegistrationScan(
+                this, descriptor, relation, index, index.deltaLog(), binding));
+        return loaded;
       }
-      return loaded;
+    } catch (DeltaRangerNativeOperation.OptimizerRejected failure) {
+      throw failure;
     } catch (Exception | LinkageError failure) {
       throw denied();
     }
@@ -224,7 +234,7 @@ final class DeltaRangerRegistrationBindings {
       throw denied();
   }
 
-  private static boolean locationMatches(String expected, URI actual) {
+  static boolean locationMatches(String expected, URI actual) {
     if (expected.equals(actual.toString())) return true;
     URI configured = URI.create(expected);
     // Local fixtures may express the same absolute file path with or without the file scheme.

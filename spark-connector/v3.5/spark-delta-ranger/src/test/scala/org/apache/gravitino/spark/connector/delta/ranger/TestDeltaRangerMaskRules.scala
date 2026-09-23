@@ -29,6 +29,26 @@ import org.junit.jupiter.api.Test
 
 class TestDeltaRangerMaskRules {
   @Test
+  def installedAsymmetricSelfJoinKeepsBothOriginalObligations(): Unit = {
+    val f = new TestDeltaRangerNativeSelect.Fixture
+    try {
+      NativeSelectFixture.withSpark(
+        spark => {
+          val frame = spark.sql(
+            "SELECT x.secret AS first, y.secret AS second FROM a.db.t x JOIN a.db.t y ON x.id=y.id WHERE y.region='keep'"
+          )
+          assertEquals(2, DeltaRangerReadRule.extract(frame.queryExecution.analyzed, spark).size)
+          assertEquals(
+            Set(Row("a-one-masked", "a-one-masked"), Row(null, null)),
+            frame.collect().toSet
+          )
+        },
+        Some(extensions => NativeSelectFixture.extension(f)(extensions))
+      )
+    } finally f.engine.close()
+  }
+
+  @Test
   def copiedAuthorizationCannotAdmitChangedLiteral(): Unit = {
     NativeSelectFixture.withBoundSpark { (spark, f) =>
       try {
@@ -92,7 +112,7 @@ class TestDeltaRangerMaskRules {
   @Test
   def installedExtensionExecutesFreshNamedScansAndInternalNativeReconstruction(): Unit = {
     val f = new TestDeltaRangerNativeSelect.Fixture
-    val nativeUdfPlans = scala.collection.mutable.ArrayBuffer.empty[LogicalPlan]
+    val nativeUdfPlans = scala.collection.mutable.ArrayBuffer.empty[(SparkSession, LogicalPlan)]
     val nativeBindings = scala.collection.mutable.Set.empty[String]
     try {
       NativeSelectFixture.withSpark(
@@ -160,16 +180,17 @@ class TestDeltaRangerMaskRules {
             Set(Row("a-one-masked"), Row(null)),
             nextSession.sql("SELECT secret FROM a.db.t").collect().toSet
           )
-          val indices = spark
+          val nativePlan = spark
             .sql("SELECT a.secret, b.secret FROM a.db.t a JOIN b.db.t b ON a.id = b.id")
             .queryExecution
             .analyzed
-            .collect { case relation: org.apache.spark.sql.execution.datasources.LogicalRelation =>
+          val indices = nativePlan.collect {
+            case relation: org.apache.spark.sql.execution.datasources.LogicalRelation =>
               relation.relation
                 .asInstanceOf[org.apache.spark.sql.execution.datasources.HadoopFsRelation]
                 .location
                 .asInstanceOf[org.apache.spark.sql.delta.files.TahoeLogFileIndex]
-            }
+          }
           assertEquals(
             Set(
               "org.apache.spark.sql.delta.actions.SingleAction",
@@ -179,11 +200,10 @@ class TestDeltaRangerMaskRules {
             nativeBindings.toSet
           )
           assertTrue(nativeUdfPlans.nonEmpty)
-          val qualified = nativeUdfPlans.toVector
-          DeltaRangerPlanAdmission.withNativeScans(indices) {
-            indices.foreach(index =>
-              DeltaRangerPlanAdmission.registerSnapshot(index, index.getSnapshot)
-            )
+          val qualified = nativeUdfPlans.toVector.filter(_._1 eq spark).map(_._2)
+          DeltaRangerNativeScans.consume(nativePlan, spark, optimized = false).run { _ =>
+            indices
+              .foreach(index => DeltaRangerPlanAdmission.registerSnapshot(index, index.getSnapshot))
             qualified.foreach { plan =>
               assertTrue(DeltaRangerPlanAdmission.internalMetadata(plan))
               val differentFunction = plan.transformAllExpressions {
@@ -218,7 +238,9 @@ class TestDeltaRangerMaskRules {
               )
             }
           }
-          qualified.foreach(plan => assertFalse(DeltaRangerPlanAdmission.internalMetadata(plan)))
+          qualified.foreach(plan =>
+            assertTrue(DeltaRangerPlanAdmission.internalMetadata(plan.clone()))
+          )
           f.maskColumn = "odd` name"; f.customCatalog = "q"
           assertEquals(
             Set(Row("q-one-masked")),
@@ -226,7 +248,7 @@ class TestDeltaRangerMaskRules {
           )
         },
         Some(extensions => {
-          extensions.injectResolutionRule(_ =>
+          extensions.injectResolutionRule(session =>
             new org.apache.spark.sql.catalyst.rules.Rule[LogicalPlan] {
               override def apply(plan: LogicalPlan): LogicalPlan = {
                 if (
@@ -237,7 +259,7 @@ class TestDeltaRangerMaskRules {
                     )
                   )
                 ) {
-                  nativeUdfPlans += plan
+                  nativeUdfPlans += session -> plan
                 }
                 plan match {
                   case binding: org.apache.spark.sql.catalyst.plans.logical.DeserializeToObject
