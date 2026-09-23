@@ -68,6 +68,20 @@ uses application discovery only for visibility, and looks up the current actor a
 mutation transport. It closes its owned metadata client/engine lease on close, failed initialization
 or Spark application end; it never closes the application/current-actor manager.
 
+Ordinary named loads read the PUBLISHED registration before and after native Delta loading
+through that same metadata lease. Each read includes table receipt and schema conversion;
+expiry or closure before it finishes rejects the result. Registration changes during the load
+also reject. A completed load binds the exact native descriptor, relation and file index to its
+catalog owner, preserving the native Delta table. Equal descriptor copies or a replacement index
+at the same path do not satisfy that binding.
+
+The binding retains the complete native schema, protocol, partition ordering and column-mapping
+evidence, and checks the native logical schema against Gravitino columns. Partitioned tables
+and name-mapped columns have
+native fallback tests on all four supported version pairs. Schema forms where Delta drops
+`NullType` columns currently reject because the resulting schemas differ. These load checks do
+not install action-time validation for a retained Dataset; that enforcement remains incomplete.
+
 Application discovery must already expose each catalog using the local-only
 `CATALOG/USE_CATALOG/ALLOW` visibility grant. A hidden catalog is absent from Spark registration;
 metadata credentials do not discover it. Visibility grants no table SELECT. The separate reader

@@ -33,6 +33,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -40,13 +41,17 @@ import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ScheduledExecutorService;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationCommand;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationIdentity;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationReceipt;
+import org.apache.gravitino.client.GravitinoClient;
+import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.TableCatalog;
+import org.apache.gravitino.spark.connector.SparkTypeConverter;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.ranger.authorization.hadoop.config.RangerPluginConfig;
 import org.apache.ranger.plugin.model.RangerServiceDef;
@@ -121,6 +126,21 @@ public final class TestDeltaRangerNativeSelect {
             Optional.of(snapshot.metadata().id()),
             OptionalLong.of(snapshot.version()));
     when(registration.properties()).thenReturn(receipt.toProperties());
+    when(registration.name()).thenReturn("t");
+    SparkTypeConverter converter = new SparkTypeConverter();
+    Column[] columns =
+        Arrays.stream(snapshot.schema().fields())
+            .map(
+                field ->
+                    Column.of(
+                        field.name(),
+                        converter.toGravitinoType(field.dataType()),
+                        null,
+                        field.nullable(),
+                        false,
+                        Column.DEFAULT_VALUE_NOT_SET))
+            .toArray(Column[]::new);
+    when(registration.columns()).thenReturn(columns);
     when(tables.loadTable(NameIdentifier.of("db", "t"))).thenReturn(registration);
     spark.sql("CREATE DATABASE IF NOT EXISTS spark_catalog.db").collect();
     spark
@@ -133,7 +153,11 @@ public final class TestDeltaRangerNativeSelect {
             .sessionState()
             .catalog()
             .getTableMetadata(new TableIdentifier("t", Option.apply("db")));
-    DeltaRangerMetadataClient lease = new DeltaRangerMetadataClient();
+    GravitinoClient client = mock(GravitinoClient.class);
+    when(client.loadCatalog("a")).thenReturn(metadata);
+    DeltaRangerMetadataClient lease =
+        new DeltaRangerMetadataClient(
+            System::nanoTime, mock(ScheduledExecutorService.class), builder -> client);
     Fixture fixture = new Fixture();
     DeltaRangerCatalogSpark35.State state =
         new DeltaRangerCatalogSpark35.State(
@@ -143,7 +167,7 @@ public final class TestDeltaRangerNativeSelect {
             },
             () -> metadata,
             ignored -> fixture.engine);
-    try (DeltaRangerCatalogSpark35 wrapper = new DeltaRangerCatalogSpark35(state, () -> metadata)) {
+    try (DeltaRangerCatalogSpark35 wrapper = new DeltaRangerCatalogSpark35(state)) {
       wrapper.initialize(
           "a",
           new CaseInsensitiveStringMap(
@@ -168,7 +192,7 @@ public final class TestDeltaRangerNativeSelect {
           "untouched", spark.sql("SELECT sentinel FROM spark_catalog.db.t").first().getString(0));
       spark.conf().set("spark.databricks.delta.catalog.update.enabled", "true");
       assertThrows(
-          IllegalArgumentException.class,
+          SecurityException.class,
           () -> wrapper.loadTable(Identifier.of(new String[] {"db"}, "t")));
     } finally {
       spark.conf().set("spark.databricks.delta.catalog.update.enabled", "false");

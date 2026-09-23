@@ -55,6 +55,7 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
       "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerSparkExtension";
   private final State state;
   @Nullable private DeltaRangerPolicyEngine engine;
+  @Nullable private DeltaRangerRegistrationBindings bindings;
   @Nullable private SparkContext context;
   @Nullable private SparkListener shutdown;
   private boolean initialized;
@@ -66,11 +67,7 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   }
 
   DeltaRangerCatalogSpark35(State state) {
-    this(state, state.metadata);
-  }
-
-  DeltaRangerCatalogSpark35(State state, Supplier<Catalog> metadataReads) {
-    super(metadataReads, state::actor);
+    super(state.metadata, state::actor);
     this.state = state;
   }
 
@@ -125,6 +122,9 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
           builder -> builder.withSimpleAuth(metadata.principal));
       engine = state.engines.apply(conf);
       super.initialize(name, options);
+      bindings =
+          new DeltaRangerRegistrationBindings(
+              new DeltaRangerRegistrationReader(state.metadata, metalake, name), engine);
       context = session.sparkContext();
       shutdown =
           new SparkListener() {
@@ -139,6 +139,12 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
       close();
       throw failure;
     }
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public Table loadTable(Identifier id) {
+    return registrationBindings().load(id, () -> super.loadTable(id));
   }
 
   /** {@inheritDoc} */
@@ -158,6 +164,7 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   public synchronized void close() {
     if (closed) return;
     closed = true;
+    if (bindings != null) bindings.close();
     try {
       state.metadata.close();
     } finally {
@@ -168,6 +175,11 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
         super.close();
       }
     }
+  }
+
+  synchronized DeltaRangerRegistrationBindings registrationBindings() {
+    if (closed || bindings == null) throw new SecurityException("Delta Ranger catalog is not live");
+    return bindings;
   }
 
   synchronized DeltaRangerPolicyEngine policyEngine() {

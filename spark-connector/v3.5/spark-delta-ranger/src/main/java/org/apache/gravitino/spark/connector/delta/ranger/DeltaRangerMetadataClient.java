@@ -53,6 +53,7 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
   private final ScheduledExecutorService scheduler;
   private final Object leaseIdentity = new Object();
   @Nullable private Supplier<GravitinoClient> clients;
+  @Nullable private Function<GravitinoClient.ClientBuilder, GravitinoClient> clientFactory;
   @Nullable private GravitinoClient client;
   @Nullable private ScheduledFuture<?> expiration;
   @Nullable private String catalog;
@@ -68,8 +69,16 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
   }
 
   DeltaRangerMetadataClient(LongSupplier nanoTime, ScheduledExecutorService scheduler) {
+    this(nanoTime, scheduler, null);
+  }
+
+  DeltaRangerMetadataClient(
+      LongSupplier nanoTime,
+      ScheduledExecutorService scheduler,
+      @Nullable Function<GravitinoClient.ClientBuilder, GravitinoClient> clientFactory) {
     this.nanoTime = nanoTime;
     this.scheduler = scheduler;
+    this.clientFactory = clientFactory;
   }
 
   /**
@@ -93,14 +102,16 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
     DeltaRangerResourceKey.literal(metalake);
     DeltaRangerConfig.require(uri != null && !uri.trim().isEmpty(), "Metadata endpoint required");
     DeltaRangerConfig.require(authentication != null, "Separate metadata authentication required");
+    Function<GravitinoClient.ClientBuilder, GravitinoClient> construction = clientFactory;
     configure(
         catalog,
         lifetime,
         () -> {
-          MetadataBuilder builder = new MetadataBuilder(uri, metalake);
+          MetadataBuilder builder = new MetadataBuilder(uri, metalake, construction);
           authentication.accept(builder);
           return builder.build();
         });
+    clientFactory = null;
   }
 
   /**
@@ -240,6 +251,7 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
   private GravitinoClient terminate() {
     closed = true;
     clients = null;
+    clientFactory = null;
     if (expiration != null) {
       expiration.cancel(false);
       expiration = null;
@@ -290,10 +302,15 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
 
   private static final class MetadataBuilder extends GravitinoClient.ClientBuilder {
     private final String expectedMetalake;
+    @Nullable private final Function<GravitinoClient.ClientBuilder, GravitinoClient> construction;
 
-    private MetadataBuilder(String uri, String metalake) {
+    private MetadataBuilder(
+        String uri,
+        String metalake,
+        @Nullable Function<GravitinoClient.ClientBuilder, GravitinoClient> construction) {
       super(uri);
       expectedMetalake = metalake;
+      this.construction = construction;
       withMetalake(metalake);
     }
 
@@ -306,7 +323,8 @@ public final class DeltaRangerMetadataClient implements Supplier<Catalog>, AutoC
       DeltaRangerConfig.require(
           expectedMetalake.equals(metalakeName),
           "Metadata authentication callback changed the metalake binding");
-      return super.build();
+      // The package-local construction seam runs only below the real authentication checks.
+      return construction == null ? super.build() : construction.apply(this);
     }
   }
 }

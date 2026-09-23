@@ -333,7 +333,8 @@ private[ranger] object NativeSelectFixture {
   var locations: Map[String, String] = Map.empty
   def withSpark(
       test: SparkSession => Unit,
-      extension: Option[SparkSessionExtensions => Unit] = None
+      extension: Option[SparkSessionExtensions => Unit] = None,
+      startupOptions: Map[String, String] = Map.empty
   ): Unit = {
     val directory = Files.createTempDirectory("delta-ranger-native")
     locations = Seq("a", "b", "q").map(c => c -> directory.resolve(c).toString).toMap
@@ -352,6 +353,7 @@ private[ranger] object NativeSelectFixture {
       .config("spark.sql.catalog.a", classOf[NativeSelectTestCatalog].getName)
       .config("spark.sql.catalog.b", classOf[NativeSelectTestCatalog].getName)
       .config("spark.sql.catalog.q", classOf[NativeSelectTestCatalog].getName)
+    startupOptions.foreach { case (key, value) => builder.config(key, value) }
     var spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
     try {

@@ -61,6 +61,45 @@ import org.junit.jupiter.api.Test;
 
 class TestDeltaRangerMetadataClient {
   @Test
+  void injectedFactoryRunsOnlyAfterExplicitAuthenticationAndMetalakeValidation() {
+    AtomicInteger constructions = new AtomicInteger();
+    GravitinoClient client = mock(GravitinoClient.class);
+    Catalog catalog = mock(Catalog.class);
+    when(client.loadCatalog("delta_a")).thenReturn(catalog);
+    for (int mode = 0; mode < 3; mode++) {
+      int configuration = mode;
+      try (DeltaRangerMetadataClient lease =
+          new DeltaRangerMetadataClient(
+              () -> 0L,
+              mock(ScheduledExecutorService.class),
+              builder -> {
+                constructions.incrementAndGet();
+                return client;
+              })) {
+        lease.configure(
+            "http://127.0.0.1:1",
+            "lake",
+            "delta_a",
+            Duration.ofMinutes(1),
+            builder -> {
+              if (configuration > 0) builder.withSimpleAuth("separate-metadata");
+              if (configuration == 1) builder.withMetalake("other-lake");
+            });
+        if (mode < 2) {
+          assertThrows(IllegalArgumentException.class, lease::get);
+          assertEquals(0, constructions.get());
+        } else {
+          assertSame(catalog, lease.get());
+          assertSame(catalog, lease.get());
+          assertEquals(1, constructions.get());
+        }
+      }
+    }
+    verify(client, times(2)).loadCatalog("delta_a");
+    verify(client, times(1)).close();
+  }
+
+  @Test
   void lazyReadSupplierOwnsOnlyItsClientAndDoesNotUseMutationActor() {
     GravitinoClient client = mock(GravitinoClient.class);
     Catalog metadata = mock(Catalog.class);
