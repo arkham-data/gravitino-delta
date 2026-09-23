@@ -401,3 +401,32 @@ Collection guard independent review SPEC PASS / QUALITY PASS, no findings; revie
 Next cohesive integration ruling: consume actual wrapper registration bindings and opaque engine stamps in production logical analysis, capture original masks/filters once and rewrite from captured values, keep a complete original driver receipt behind inert serializable tag references. Guard installation waits for owned native operations/physical provenance. Concrete task-4-analysis-receipt-implementation-brief.md assigned to binding author in PRIVATE STAGING ONLY. Metadata author owns disjoint engine Instant overloads/tests to sample one policy access time per batch; no mutable global clock or new public API. Both must await checkpoint and serialized publication/build grants. This closes the original-decision capture gap without claiming action/current-native-head validity. No live calls.
 
 Binding scoped review closure PASS, LOW deterministic-collision finding resolved, README wording independently PASS; finalclosureSHA341c5727a3ee35c083e72efc9d1e89261ae01185af2ae0d5ad108136722e9267. Root accepts both binding and uninstalled guard increments. Exact20filecheckpoint prepared:10production/testsourcefiles, README,plan,ledger, sixsafecomponentbrief/report/reviewfiles plusnextanalysisbrief. Sourcehashes frozen; knowncredentialscan0 and diffcheck required atstage. Next testfixture ruling: test-only TableCatalog may forward native named loads to actual optionalwrapper, canonical resolver injects that exact wrapper; production constructor stillrequires actualwrapper throughcatalogManager. No engine-only/fabricated binding path.
+
+September23 continuation: previous turn classified PROGRESS (verified implementation/reviews/evidence), then workspace credit failure interrupted the new analysis task before source publication. Authoritative recovery shows no live agents; current ten source hashes still match reviewed final artifacts. Rechecked all six original XML/exit records and compiled archives, exact20safe-file manifest and known-credential scan. Committed local checkpoint52ef6ce5b9475fa644be0344616cf9b67f46c0ab; no push/deployment. Untested evaluation-time source exists only in private staging. New work uses sequential implementers per current SDD skill; evaluation-time first, analysis receipt next.
+
+| Tasks / interface | Evidence and ruling |
+| --- | --- |
+| Evaluation time -> analysis receipt | Package-private Instant overloads; caller samples one time; disjoint production files. Sequential publication/build avoids mixed snapshots. |
+| Analysis receipt -> future native/physical owner | Bindings and capture are real; guard remains uninstalled until native provenance is implemented. No current-head/action-validity claim from analysis-only checks. |
+| Evaluation-time internal consistency | Tests exercise actual request time and existing readiness logic; staged code is unqualified until RED/GREEN/review. |
+| Analysis receipt internal consistency | Exact tree equality does not survive optimizer prefix; require explicit supported transformation binding, not copied-tag authority. Prior agent identified this unresolved implementation seam before interruption. |
+
+Current implementer /root/implement_evaluation_time (gpt-6-sol high) owns only engine/time tests and exclusive Gradle slot. Independent read-only /root/reconcile_receipt_optimizer (gpt-6-astra high) owns short optimizer-reconciliation doc. No live services touched. Root found official/public optimizer batch surface but RuleExecutor.Batch is protected[catalyst]; normal subclass access may support bounded prefix replay without a private-package bridge, pending source-backed judgment. First time-test attempts are setup failures (wrapper cache permission, ErrorProne test warnings), not behavioral RED.
+
+Optimizer reconciliation source report completed by /root/reconcile_receipt_optimizer. Ruling: implement an ordinary Ranger-package SparkOptimizer prefix subclass and compare its replay of the approved detached tree against the incoming pre-CBO tree — this retains real Spark rewrite semantics while preventing copied-marker authority — cost if wrong is replay overhead and bounded integration rework. Compile/public-access and all4native tests are still required. Replay only qualified rules under capturedSQLConf; no candidate normalization/privatebridge. Source-found exceptions (rowtracking GenerateRowIDs, clock-dependent datetime casts, >2join star-schema statistics path) require explicit handling; these remain fullDelta conformance requirements, not accepted permanent exclusions. Brief updated; implementation waits for engine-time review/slot release.
+
+
+September 23 evaluation-time prerequisite complete: root independently checked
+final original XML 36 tests / 0 failures / 0 errors / 0 skips, exit 0, two exact
+source hashes, 11 compiled input archives and the pinned Spark 3.5.4 / Delta 3.3.2 /
+Ranger 2.8.0 jars. Semantic RED is one actual access denial when the requested time
+is deliberately ignored; missing API and setup attempts remain separately labeled.
+Independent SPEC PASS / QUALITY PASS in task-4-evaluation-time-review.md; no findings.
+The Scala caller is still pending. Build/source slot is released.
+
+Root separately compiled the proposed ordinary Ranger-package optimizer subclass
+against both Spark patches (Delta 3.3.2, Scala compiler 2.12.21, JDK17), exits 0.
+Actual optimizer batch inspection, typed native optimizer rule, SQLConf clone and
+scoped execution methods are accessible without a private bridge. Evidence is
+optimizer-public-seam-compile-20260923; this proves compilation, not replay safety
+or native query behavior. All runtime gates remain in the analysis receipt brief.

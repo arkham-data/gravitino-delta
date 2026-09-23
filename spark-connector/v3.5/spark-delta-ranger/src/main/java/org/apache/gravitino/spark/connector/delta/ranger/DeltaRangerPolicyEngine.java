@@ -110,8 +110,12 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
    * @param key original canonical resource, including explicit table-wide reads
    */
   public void authorize(DeltaRangerQuerySubject subject, DeltaRangerResourceKey key) {
+    authorize(subject, key, Instant.now());
+  }
+
+  void authorize(DeltaRangerQuerySubject subject, DeltaRangerResourceKey key, Instant accessTime) {
     synchronized (owner) {
-      RangerAccessResult result = evaluate(subject, key, 0);
+      RangerAccessResult result = evaluate(subject, key, 0, accessTime);
       if (!result.getIsAllowed()) {
         throw new SecurityException("Delta Ranger access denied");
       }
@@ -127,11 +131,16 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
    * @return NONE, a typed NULL instruction, or a syntactically validated SQL expression
    */
   public MaskDecision mask(DeltaRangerQuerySubject subject, DeltaRangerResourceKey key) {
+    return mask(subject, key, Instant.now());
+  }
+
+  MaskDecision mask(
+      DeltaRangerQuerySubject subject, DeltaRangerResourceKey key, Instant accessTime) {
     synchronized (owner) {
       if (key.column() == null || !"select".equals(key.accessType())) {
         throw new SecurityException("Mask requires a canonical SELECT column");
       }
-      RangerAccessResult result = evaluate(subject, key, 1);
+      RangerAccessResult result = evaluate(subject, key, 1, accessTime);
       if (!result.isMaskEnabled()) {
         return new MaskDecision(MaskDecision.Kind.NONE, null);
       }
@@ -160,11 +169,16 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
    * @return optional syntactically validated expression
    */
   public Optional<String> rowFilter(DeltaRangerQuerySubject subject, DeltaRangerResourceKey key) {
+    return rowFilter(subject, key, Instant.now());
+  }
+
+  Optional<String> rowFilter(
+      DeltaRangerQuerySubject subject, DeltaRangerResourceKey key, Instant accessTime) {
     synchronized (owner) {
       if (key.column() != null || !"select".equals(key.accessType())) {
         throw new SecurityException("Row filter requires a canonical SELECT table");
       }
-      RangerAccessResult result = evaluate(subject, key, 2);
+      RangerAccessResult result = evaluate(subject, key, 2, accessTime);
       if (!result.isRowFilterEnabled()) {
         return Optional.empty();
       }
@@ -593,11 +607,15 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
   }
 
   private RangerAccessResult evaluate(
-      DeltaRangerQuerySubject subject, DeltaRangerResourceKey key, int policyType) {
+      DeltaRangerQuerySubject subject,
+      DeltaRangerResourceKey key,
+      int policyType,
+      Instant accessTime) {
     requireOpen();
     try {
       Objects.requireNonNull(subject, "Authenticated query subject required");
       Objects.requireNonNull(key, "Canonical resource required");
+      Date requestTime = Date.from(Objects.requireNonNull(accessTime, "Access time required"));
       SnapshotStamp before = snapshot();
       RangerBasePlugin plugin = owner.backend.plugin();
       AccessResource resource = key.resource();
@@ -616,7 +634,7 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
               "Downloaded role resolution returned null"));
       request.setAccessType(key.accessType());
       request.setAction(key.accessType());
-      request.setAccessTime(Date.from(Instant.now()));
+      request.setAccessTime(requestTime);
       request.setClusterName(plugin.getClusterName());
       RangerAccessResult result;
       if (policyType == 0) {

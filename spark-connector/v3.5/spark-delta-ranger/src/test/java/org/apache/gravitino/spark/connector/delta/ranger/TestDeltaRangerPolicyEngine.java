@@ -36,9 +36,11 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.PrivilegedExceptionAction;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -290,6 +292,94 @@ class TestDeltaRangerPolicyEngine {
       assertEquals(Collections.singleton("finance"), request.getUserGroups());
       assertEquals(Collections.singleton("downloaded-role"), request.getUserRoles());
       assertEquals("select", request.getAccessType());
+    }
+  }
+
+  @Test
+  @SuppressWarnings("JavaUtilDate")
+  void explicitEvaluationTimeIsSharedAcrossTimeDependentDecisions() throws Exception {
+    Fixture f = new Fixture(directory);
+    Instant accessTime = Instant.parse("2026-09-21T12:34:56.789Z");
+    Date expected = Date.from(accessTime);
+    doAnswer(
+            call -> {
+              RangerAccessRequest request = call.getArgument(0);
+              f.requests.add(request);
+              RangerAccessResult result =
+                  new RangerAccessResult(0, "service", f.definition, request);
+              result.setIsAllowed(accessTime.equals(request.getAccessTime().toInstant()));
+              return result;
+            })
+        .when(f.plugin)
+        .isAccessAllowed(any(RangerAccessRequest.class));
+    doAnswer(
+            call -> {
+              RangerAccessRequest request = call.getArgument(0);
+              f.requests.add(request);
+              RangerAccessResult result =
+                  new RangerAccessResult(1, "service", f.definition, request);
+              if (accessTime.equals(request.getAccessTime().toInstant())) {
+                result.setMaskType("CUSTOM");
+                result.setMaskedValue("upper({col})");
+              }
+              return result;
+            })
+        .when(f.plugin)
+        .evalDataMaskPolicies(any(), any());
+    doAnswer(
+            call -> {
+              RangerAccessRequest request = call.getArgument(0);
+              f.requests.add(request);
+              RangerAccessResult result =
+                  new RangerAccessResult(2, "service", f.definition, request);
+              if (accessTime.equals(request.getAccessTime().toInstant())) {
+                result.setFilterExpr("region = 'allowed'");
+              }
+              return result;
+            })
+        .when(f.plugin)
+        .evalRowFilterPolicies(any(), any());
+    try (DeltaRangerPolicyEngine lease = f.owner.acquire(f.config)) {
+      lease.authorize(f.subject, f.key, accessTime);
+      assertEquals(
+          DeltaRangerPolicyEngine.MaskDecision.Kind.EXPRESSION,
+          lease.mask(f.subject, f.key, accessTime).kind());
+      assertEquals("region = 'allowed'", lease.rowFilter(f.subject, f.table, accessTime).get());
+      assertEquals(3, f.requests.size());
+      f.requests.forEach(request -> assertEquals(expected, request.getAccessTime()));
+      assertNotSame(f.requests.get(0).getAccessTime(), f.requests.get(1).getAccessTime());
+      assertNotSame(f.requests.get(1).getAccessTime(), f.requests.get(2).getAccessTime());
+      f.requests.get(0).getAccessTime().setTime(0L);
+      assertEquals(expected, f.requests.get(1).getAccessTime());
+      assertEquals(expected, f.requests.get(2).getAccessTime());
+    }
+  }
+
+  @Test
+  @SuppressWarnings("JavaUtilDate")
+  void publicEvaluationUsesCurrentTimeAndInvalidExplicitTimesFailClosed() throws Exception {
+    Fixture f = new Fixture(directory);
+    f.maskType = "MASK_NULL";
+    f.filter = "region = 'allowed'";
+    try (DeltaRangerPolicyEngine lease = f.owner.acquire(f.config)) {
+      long before = System.currentTimeMillis() - 1000L;
+      lease.authorize(f.subject, f.key);
+      lease.mask(f.subject, f.key);
+      lease.rowFilter(f.subject, f.table);
+      long after = System.currentTimeMillis() + 1000L;
+      assertEquals(3, f.requests.size());
+      f.requests.forEach(
+          request -> {
+            assertTrue(request.getAccessTime().getTime() >= before);
+            assertTrue(request.getAccessTime().getTime() <= after);
+          });
+      f.requests.clear();
+      for (Instant invalid : Arrays.asList(null, Instant.MIN, Instant.MAX)) {
+        assertThrows(SecurityException.class, () -> lease.authorize(f.subject, f.key, invalid));
+        assertThrows(SecurityException.class, () -> lease.mask(f.subject, f.key, invalid));
+        assertThrows(SecurityException.class, () -> lease.rowFilter(f.subject, f.table, invalid));
+      }
+      assertTrue(f.requests.isEmpty());
     }
   }
 
@@ -620,8 +710,10 @@ class TestDeltaRangerPolicyEngine {
                 if (nullMask) {
                   return null;
                 }
+                RangerAccessRequest request = call.getArgument(0);
+                requests.add(request);
                 RangerAccessResult result =
-                    new RangerAccessResult(1, "service", definition, call.getArgument(0));
+                    new RangerAccessResult(1, "service", definition, request);
                 result.setPolicyVersion(plugin.getPoliciesVersion());
                 result.setMaskType(maskType);
                 result.setMaskedValue(maskValue);
@@ -633,8 +725,10 @@ class TestDeltaRangerPolicyEngine {
                 if (nullFilter) {
                   return null;
                 }
+                RangerAccessRequest request = call.getArgument(0);
+                requests.add(request);
                 RangerAccessResult result =
-                    new RangerAccessResult(2, "service", definition, call.getArgument(0));
+                    new RangerAccessResult(2, "service", definition, request);
                 result.setPolicyVersion(plugin.getPoliciesVersion());
                 result.setFilterExpr(filter);
                 return result;

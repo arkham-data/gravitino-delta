@@ -77,3 +77,23 @@ Spotless/Javadoc; run affected real-native tests on all four Spark3.5.4/3.5.6 x
 Delta3.3.0/3.3.2 pairs with Ranger2.8.0. Freeze exact source hashes and compiled
 inputs, report honest limits, then independent cross-review. No live services,
 Docker, policy writes or deployment in this slice.
+
+## Optimizer boundary reconciliation (September 23)
+
+Read task-4-analysis-optimizer-reconciliation.md for the concrete source-backed
+route and proof obligations. Prefer an ordinary Ranger-package SparkOptimizer
+subclass replaying only the qualified prefix before Pre CBO Rules on the retained
+approved clone, under a private SQLConf snapshot, then direct exact comparison of
+the incoming candidate. Never optimize the candidate into acceptance. Compile the
+public/protected hook on both Spark patches before deeper integration; retain no
+private-package bridge or reflection. The reconciliation is not runtime evidence.
+
+Qualify the actual prefix and native Delta RangePartitionIdRewrite; unknown rules
+must reject before invocation. Preserve original obligations across pruning and
+empty-result rewrites. Handle clock-dependent datetime casts, row-tracking
+normalization, user cache substitution and statistics-producing star-schema
+reordering explicitly; no silent configuration changes or source-identity
+relaxation. Temporary unsupported combinations remain gaps toward full Delta
+conformance, not a redefinition of the final objective. Record proof and failure
+boundaries precisely. The complete original source/binding and mask/filter
+inventory remains authoritative even if optimizer removes a scan.

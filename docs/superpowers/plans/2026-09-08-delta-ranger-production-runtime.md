@@ -79,6 +79,12 @@ source versions and review status. Native operation ownership, physical provenan
 and the complete original-decision receipt remain integration gates. The 208 live
 checks and checkpoint 56/81 are unchanged by this offline work.
 
+The engine now accepts an explicit immutable access time for each access, mask and
+filter request. This prerequisite passed 36 focused tests and independent review;
+the next logical receipt caller must sample one time for the whole batch. The
+optimizer-prefix subclass compiles on both Spark patches; runtime replay and
+complete receipt consumption remain unqualified.
+
 ## Global Constraints
 
 - One Ranger resource service is provisioned for exactly one metalake. Server pushdown and Spark engine bind to the same service identity and metalake; canonical catalog is within that metalake. Policy labels are mutation ownership selectors, not an extra Ranger resource dimension. No global catalog-name uniqueness assumption.
