@@ -23,7 +23,7 @@ import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
 
 /** Optional extension for the bounded fresh Delta SELECT contract. */
 class DeltaRangerSparkExtension private[ranger] (
-    engines: (SparkSession, DeltaRangerReadRule.Scan) => DeltaRangerPolicyEngine,
+    catalogs: (SparkSession, DeltaRangerReadRule.Scan) => DeltaRangerCatalogSpark35,
     validateStartup: Boolean = false
 ) extends (SparkSessionExtensions => Unit) {
 
@@ -31,7 +31,7 @@ class DeltaRangerSparkExtension private[ranger] (
   def this() = this(
     (spark, scan) =>
       spark.sessionState.catalogManager.catalog(scan.catalog) match {
-        case catalog: DeltaRangerCatalogSpark35 => catalog.policyEngine()
+        case catalog: DeltaRangerCatalogSpark35 => catalog
         case _ =>
           throw new SecurityException(
             "Canonical Delta scan does not belong to a Ranger-enabled catalog"
@@ -44,18 +44,9 @@ class DeltaRangerSparkExtension private[ranger] (
     extensions.injectResolutionRule(spark => {
       if (validateStartup)
         DeltaRangerSparkExtension.validateExtensions(spark.conf.get("spark.sql.extensions", ""))
-      new DeltaRangerReadRule(spark, scan => engines(spark, scan))
+      new DeltaRangerReadRule(spark, scan => catalogs(spark, scan))
     })
-    extensions.injectPreCBORule(spark =>
-      new org.apache.spark.sql.catalyst.rules.Rule[
-        org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-      ] {
-        override def apply(
-            plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-        ): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan =
-          DeltaRangerReadRule.prepare(plan, spark)
-      }
-    )
+    extensions.injectPreCBORule(spark => new DeltaRangerPreCboRule(spark))
     extensions.injectCheckRule(spark => plan => DeltaRangerReadRule.check(plan, spark))
   }
 }
@@ -75,4 +66,14 @@ private[ranger] object DeltaRangerSparkExtension {
       )
     }
   }
+}
+
+private[ranger] final class DeltaRangerPreCboRule(spark: SparkSession)
+    extends org.apache.spark.sql.catalyst.rules.Rule[
+      org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+    ] {
+  override def apply(
+      plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+  ): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan =
+    DeltaRangerReadRule.prepare(plan, spark)
 }

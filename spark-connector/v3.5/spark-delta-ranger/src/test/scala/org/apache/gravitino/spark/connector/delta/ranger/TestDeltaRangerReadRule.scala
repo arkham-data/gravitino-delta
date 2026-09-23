@@ -331,6 +331,105 @@ class NativeSelectInstalledExtension extends (SparkSessionExtensions => Unit) {
 private[ranger] object NativeSelectFixture {
   var installer: Option[SparkSessionExtensions => Unit] = None
   var locations: Map[String, String] = Map.empty
+  var policy: Option[TestDeltaRangerNativeSelect.Fixture] = None
+  var catalogPolicies: Map[String, TestDeltaRangerNativeSelect.Fixture] = Map.empty
+  private val bound = new java.util.IdentityHashMap[
+    SparkSession,
+    scala.collection.mutable.Map[String, NativeBoundCatalogFixture]
+  ]()
+
+  def bindingFixture(spark: SparkSession, catalog: String): NativeBoundCatalogFixture = {
+    wrapper(spark, catalog)
+    bound.get(spark)(catalog)
+  }
+  def withBoundSpark(test: (SparkSession, TestDeltaRangerNativeSelect.Fixture) => Unit): Unit = {
+    val fixture = new TestDeltaRangerNativeSelect.Fixture
+    try withSpark(spark => test(spark, fixture), Some(extension(fixture)))
+    finally fixture.engine.close()
+  }
+  def wrapper(spark: SparkSession, catalog: String): DeltaRangerCatalogSpark35 = {
+    var entries = bound.get(spark)
+    if (entries == null) {
+      entries = scala.collection.mutable.Map.empty[String, NativeBoundCatalogFixture]
+      bound.put(spark, entries)
+    }
+    entries
+      .getOrElseUpdate(
+        catalog,
+        new NativeBoundCatalogFixture(
+          spark,
+          catalogPolicies.getOrElse(catalog, policy.get),
+          catalog
+        )
+      )
+      .wrapper
+  }
+
+  // Component-only native row controls deliberately do not install production admission.
+  // Every source still comes from an actual wrapper and every decision from its owning engine.
+  def componentRewriter(
+      spark: SparkSession,
+      fixture: TestDeltaRangerNativeSelect.Fixture
+  ): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan => org.apache.spark.sql.catalyst.plans.logical.LogicalPlan = {
+    import scala.collection.JavaConverters._
+    configure(spark, fixture)
+    plan => {
+      val subject = DeltaRangerQuerySubject.current(spark)
+      val instant = java.time.Instant.now()
+      val bound = DeltaRangerReadRule.extract(plan, spark).map { case (scan, columns) =>
+        val binding = wrapper(spark, scan.catalog).registrationBindings().resolve(scan.relation)
+        (scan, columns, binding, binding.engine())
+      }
+      bound.foreach { case (scan, columns, _, engine) =>
+        DeltaRangerResourceKey
+          .select(scan.catalog, scan.database, scan.table, columns.asJava, scan.owner.orNull)
+          .asScala
+          .foreach(key => engine.authorize(subject, key, instant))
+      }
+      val replacements = new java.util.IdentityHashMap[
+        LogicalRelation,
+        org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+      ]()
+      bound.foreach { case (scan, columns, _, engine) =>
+        val decisions = DeltaRangerMaskRules.capture(scan, columns, engine, subject, instant)
+        replacements.put(
+          scan.relation,
+          DeltaRangerMaskRules.rewrite(scan, columns, decisions, spark)
+        )
+      }
+      val stage0 = plan.transformUp { case relation: LogicalRelation => replacements.get(relation) }
+      val rewritten = RuleEliminateMarker(RuleApplyDataMaskingStage1(spark)(stage0))
+      bound.foreach(_._3.recheckPublication())
+      rewritten
+    }
+  }
+
+  def rule(
+      spark: SparkSession,
+      fixture: TestDeltaRangerNativeSelect.Fixture
+  ): DeltaRangerReadRule = {
+    configure(spark, fixture)
+    new DeltaRangerReadRule(spark, scan => wrapper(spark, scan.catalog))
+  }
+
+  def extension(fixture: TestDeltaRangerNativeSelect.Fixture): SparkSessionExtensions => Unit = {
+    policy = Some(fixture)
+    extensions =>
+      new DeltaRangerSparkExtension((spark, scan) => wrapper(spark, scan.catalog))(extensions)
+  }
+
+  private def configure(spark: SparkSession, fixture: TestDeltaRangerNativeSelect.Fixture): Unit = {
+    policy = Some(fixture)
+    Seq("a", "b", "q").foreach(c =>
+      spark.conf.set("spark.sql.catalog." + c, classOf[NativeBoundForwardingCatalog].getName)
+    )
+    val configured = spark.conf.get("spark.sql.extensions")
+    if (!configured.contains(DeltaRangerCatalogSpark35.EXTENSION))
+      spark.sessionState.conf.setConfString(
+        "spark.sql.extensions",
+        DeltaRangerCatalogSpark35.EXTENSION + "," + configured
+      )
+  }
   def withSpark(
       test: SparkSession => Unit,
       extension: Option[SparkSessionExtensions => Unit] = None,
@@ -338,10 +437,26 @@ private[ranger] object NativeSelectFixture {
   ): Unit = {
     val directory = Files.createTempDirectory("delta-ranger-native")
     locations = Seq("a", "b", "q").map(c => c -> directory.resolve(c).toString).toMap
+    val metadataConfig = directory.resolve("metadata.properties")
+    Files.write(
+      metadataConfig,
+      "auth-type=simple\nprincipal=separate-metadata-reader\nlifetime-seconds=300\n".getBytes(
+        java.nio.charset.StandardCharsets.UTF_8
+      )
+    )
+    Files.setPosixFilePermissions(
+      metadataConfig,
+      java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")
+    )
     val builder = SparkSession
       .builder()
       .master("local[2]")
       .appName("delta-ranger-native")
+      .config("spark.gravitino.enableDeltaSupport", "true")
+      .config("spark.gravitino.enableDeltaRangerSupport", "true")
+      .config("spark.sql.gravitino.uri", "http://127.0.0.1:1")
+      .config("spark.sql.gravitino.metalake", "lake")
+      .config("spark.gravitino.deltaRanger.metadata.config", metadataConfig.toString)
       .config("spark.ui.enabled", "false")
       .config("spark.driver.host", "127.0.0.1")
       .config("spark.sql.shuffle.partitions", "2")
@@ -368,7 +483,14 @@ private[ranger] object NativeSelectFixture {
             .format("delta")
             .option("delta.columnMapping.mode", "name")
             .save(location)
-        else data.write.format("delta").save(location)
+        else
+          data.write
+            .format("delta")
+            .option(
+              "delta.enableRowTracking",
+              startupOptions.getOrElse("spark.test.delta.rowTracking", "false")
+            )
+            .save(location)
       }
       extension.foreach { install =>
         org.apache.spark.sql.delta.DeltaLog.clearCache()
@@ -388,12 +510,24 @@ private[ranger] object NativeSelectFixture {
           )
           .getOrCreate()
       }
+      if (extension.nonEmpty && policy.nonEmpty) configure(spark, policy.get)
       test(spark)
     } finally {
+      import scala.collection.JavaConverters._
+      bound.values().asScala.foreach(_.values.foreach(_.close()))
+      bound.clear()
+      policy = None
+      catalogPolicies = Map.empty
       spark.stop()
       installer = None
       SparkSession.clearActiveSession()
       SparkSession.clearDefaultSession()
     }
   }
+}
+
+/** Test transport forwards every named load through the actual registration-owning wrapper. */
+class NativeBoundForwardingCatalog extends NativeSelectTestCatalog {
+  override def loadTable(id: Identifier): Table =
+    NativeSelectFixture.wrapper(SparkSession.active, name()).loadTable(id)
 }

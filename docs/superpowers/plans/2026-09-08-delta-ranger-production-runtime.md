@@ -75,15 +75,30 @@ with Ranger 2.8.0 in every captured runtime. The new collection-guard component
 passed four tests on each diagonal pair, including repeated collection, denial
 before child preparation, Spark copies, rendering and serialization. It remains
 uninstalled. See the binding and collection-guard reports in the ledger for exact
-source versions and review status. Native operation ownership, physical provenance
-and the complete original-decision receipt remain integration gates. The 208 live
+source versions and review status. Native operation ownership and physical provenance
+remain integration gates. The 208 live
 checks and checkpoint 56/81 are unchanged by this offline work.
 
 The engine now accepts an explicit immutable access time for each access, mask and
 filter request. This prerequisite passed 36 focused tests and independent review;
-the next logical receipt caller must sample one time for the whole batch. The
-optimizer-prefix subclass compiles on both Spark patches; runtime replay and
-complete receipt consumption remain unqualified.
+the logical receipt now samples one time for the whole batch. The production
+receipt resolves actual wrapper bindings, retains original decisions and occurrences,
+checks observed publication/subject/configuration drift, and compares pre-CBO input
+against a qualified optimizer replay. The four-pair matrix passed 287 executions;
+four additional focused mask-removal checks passed against a final test-only update.
+All production source remained unchanged between those runs. Source/compiled-input
+proofs and independent SPEC PASS / QUALITY READY are recorded in
+`task-4-analysis-receipt-report.md` and `task-4-analysis-receipt-review.md`.
+
+A baseline comparison exposed an existing installed asymmetric self-join failure:
+late native file selection runs on a broadcast worker after the synchronous scope
+closes. The direct mask component positive remains separate from that installed
+failure. The next dependent native-operation brief and fallback-scope audit identify
+an owner-bound prepared-index continuation through public Delta hooks; this seam
+still needs production implementation and runtime qualification. Native operation
+ownership, physical provenance, installed collection enforcement and the broader
+full-Delta requirements remain open. No new artifact was deployed to the live
+Ranger fixture by this offline increment.
 
 ## Global Constraints
 

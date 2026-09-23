@@ -89,8 +89,9 @@ needs scoped registration/schema/table metadata reads, while query SELECT decisi
 current authenticated UGI and Ranger policies. Actual public visibility/revocation/metadata-only
 transport composition is part of the packaged acceptance gate.
 
-Admitted fresh plans are resolved named native Delta scans with projections, predicates,
-top-level columns, ordinary aliases and inner equijoins/predicate joins. Original projected,
+The fresh-plan logical grammar accepts resolved named native Delta scans with projections,
+predicates, top-level columns, ordinary aliases and inner equijoins/predicate joins.
+Native execution remains limited to the qualified routes described below. Original projected,
 predicate and join columns are authorized for all scans before any mask/filter request.
 CUSTOM expressions and typed NULL masks preserve original column types; cross-column mask
 expressions, nested references, UDFs and unsupported expressions reject. Row filters operate
@@ -128,9 +129,27 @@ The native private testing callback is neither called nor replaced by the compan
 launcher code must not inject callbacks or replace pinned classes. This finite reconstruction
 qualification covers the tested native fixture routes, not every checkpoint/table-feature shape.
 These exceptions do not establish metadata confidentiality or arbitrary-job security.
-A per-analysis subject marker prevents repeated masking and rejects a changed subject; it is not
-revocation protection for cached/reused plans. Those deployment and full Delta-operation gates
-remain open.
+Analysis resolves each original scan through its canonical wrapper's exact registration binding.
+A driver-owned decision receipt retains every original occurrence, resource, subject/group set,
+engine publication stamp and captured mask/filter decision, including absent filters and NONE
+masks. The complete batch uses one policy evaluation time. Registration publication, engine,
+subject and SQL configuration changes observed during analysis reject the plan. Decisions are
+captured once and used for rewriting; analyzer reentry validates the receipt without remasking.
+
+Before native preparation, the receipt compares the incoming plan with a replay of the approved
+plan through the qualified Spark optimizer prefix. Actual source identities, expressions,
+attributes and child structure must agree; a copied tag cannot authorize a changed plan. Unknown
+optimizer rules reject before invocation. Tags carry an inert serializable reference with transient
+authority, so deserialized references cannot authorize a query. Empty-result optimization retains
+all original authorization obligations. User SQL caches, row-tracking normalization and other
+unqualified transformations reject rather than acquire authority from a copied receipt.
+
+An asymmetric self-join can trigger additional native statistics work from a broadcast worker
+after the synchronous metadata scope closes. That installed-extension route currently rejects;
+a passing direct mask-rewrite component test does not establish its end-to-end support. Typed
+native operation ownership and delayed native provenance remain required to close this gap.
+Analysis receipts do not install collection-time revocation checks on retained Datasets. Physical
+provenance, retained-action enforcement, deployment and full Delta-operation gates remain open.
 
 ## Deployment
 

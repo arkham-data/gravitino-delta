@@ -58,7 +58,7 @@ class TestDeltaRangerNativeSnapshotAdmission {
             assertEquals(false, triggered.invoke(snapshot))
           }
         },
-        Some(extensions => new DeltaRangerSparkExtension((_, _) => f.engine)(extensions))
+        Some(extensions => NativeSelectFixture.extension(f)(extensions))
       )
     } finally f.engine.close()
   }
@@ -101,7 +101,7 @@ class TestDeltaRangerNativeSnapshotAdmission {
               }
             }
           )
-          new DeltaRangerSparkExtension((_, _) => f.engine)(extensions)
+          NativeSelectFixture.extension(f)(extensions)
         })
       )
     } finally f.engine.close()

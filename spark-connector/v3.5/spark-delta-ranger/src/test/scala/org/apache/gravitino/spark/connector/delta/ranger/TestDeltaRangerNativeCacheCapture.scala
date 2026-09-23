@@ -108,7 +108,7 @@ class TestDeltaRangerNativeCacheCapture {
         },
         Some(extensions => {
           installObservers(extensions, capture)
-          new DeltaRangerSparkExtension((_, _) => fixture.engine)(extensions)
+          NativeSelectFixture.extension(fixture)(extensions)
         })
       )
     } finally fixture.engine.close()

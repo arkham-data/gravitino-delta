@@ -29,11 +29,33 @@ import org.junit.jupiter.api.Test
 
 class TestDeltaRangerMaskRules {
   @Test
-  def quotedColumnsAndSelfJoinAliasesKeepOriginalIdentity(): Unit = {
+  def copiedAuthorizationCannotAdmitChangedLiteral(): Unit = {
+    NativeSelectFixture.withBoundSpark { (spark, f) =>
+      try {
+        val rule = NativeSelectFixture.rule(spark, f)
+        val approved =
+          rule(spark.sql("SELECT secret FROM a.db.t WHERE id = 1").queryExecution.analyzed)
+        DeltaRangerReadRule.check(approved.clone(), spark)
+        val changed = approved.transformAllExpressions {
+          case literal: org.apache.spark.sql.catalyst.expressions.Literal if literal.value == 1L =>
+            org.apache.spark.sql.catalyst.expressions.Literal(2L)
+        }
+        changed.copyTagsFrom(approved)
+        assertThrows(classOf[SecurityException], () => DeltaRangerReadRule.check(changed, spark))
+      } finally f.engine.close()
+    }
+  }
+
+  @Test
+  def componentQuotedColumnsAndAsymmetricSelfJoinPreserveExactRows(): Unit = {
     NativeSelectFixture.withSpark { spark =>
       val f = new TestDeltaRangerNativeSelect.Fixture
       try {
-        val rule = new DeltaRangerReadRule(spark, _ => f.engine)
+        val rule = NativeSelectFixture.componentRewriter(spark, f)
+        def componentRows(sql: String): Set[Row] =
+          TestDeltaRangerNativeSelect
+            .rows(spark, rule(spark.sql(sql).queryExecution.analyzed))
+            .toSet
         val plan = spark
           .sql(
             "SELECT x.secret AS first, y.secret AS second FROM a.db.t x JOIN a.db.t y ON x.id = y.id WHERE y.region = 'keep'"
@@ -56,12 +78,12 @@ class TestDeltaRangerMaskRules {
         f.maskColumn = "odd` name"; f.customCatalog = "q"
         assertEquals(
           Set(Row("q-one-masked")),
-          rows(spark, rule, "SELECT x.`odd`` name` AS `quoted alias` FROM q.db.t x WHERE x.id = 1")
+          componentRows("SELECT x.`odd`` name` AS `quoted alias` FROM q.db.t x WHERE x.id = 1")
         )
         f.maskType = "MASK_NULL"
         assertEquals(
           Set(Row(null)),
-          rows(spark, rule, "SELECT `odd`` name` FROM q.db.t WHERE id = 1")
+          componentRows("SELECT `odd`` name` FROM q.db.t WHERE id = 1")
         )
       } finally f.engine.close()
     }
@@ -76,7 +98,7 @@ class TestDeltaRangerMaskRules {
       NativeSelectFixture.withSpark(
         spark => {
           val rules = spark.sessionState.optimizer.preCBORules.map(_.getClass.getName)
-          val companion = rules.indexWhere(_.startsWith(classOf[DeltaRangerSparkExtension].getName))
+          val companion = rules.indexWhere(_ == classOf[DeltaRangerPreCboRule].getName)
           val native =
             rules.indexOf(classOf[org.apache.spark.sql.delta.stats.PrepareDeltaScan].getName)
           assertTrue(companion >= 0 && native > companion, rules.mkString(","))
@@ -133,6 +155,7 @@ class TestDeltaRangerMaskRules {
               .collect()
           )
           val nextSession = spark.newSession()
+          NativeSelectFixture.rule(nextSession, f)
           assertEquals(
             Set(Row("a-one-masked"), Row(null)),
             nextSession.sql("SELECT secret FROM a.db.t").collect().toSet
@@ -230,7 +253,7 @@ class TestDeltaRangerMaskRules {
               }
             }
           )
-          new DeltaRangerSparkExtension((_, _) => f.engine)(extensions)
+          NativeSelectFixture.extension(f)(extensions)
         })
       )
     } finally f.engine.close()
@@ -238,10 +261,9 @@ class TestDeltaRangerMaskRules {
 
   @Test
   def nativeRowsKeepCatalogFiltersMasksAndJoinIdentityInBothOrders(): Unit = {
-    NativeSelectFixture.withSpark { spark =>
-      val f = new TestDeltaRangerNativeSelect.Fixture
+    NativeSelectFixture.withBoundSpark { (spark, f) =>
       try {
-        val rule = new DeltaRangerReadRule(spark, _ => f.engine)
+        val rule = NativeSelectFixture.rule(spark, f)
         Seq(("a", "b"), ("b", "a")).foreach { case (left, right) =>
           val plan = spark
             .sql(
@@ -272,10 +294,9 @@ class TestDeltaRangerMaskRules {
 
   @Test
   def originalDeniedProjectionPredicateAndJoinColumnsRejectBeforeMasks(): Unit = {
-    NativeSelectFixture.withSpark { spark =>
-      val f = new TestDeltaRangerNativeSelect.Fixture
+    NativeSelectFixture.withBoundSpark { (spark, f) =>
       try {
-        val rule = new DeltaRangerReadRule(spark, _ => f.engine)
+        val rule = NativeSelectFixture.rule(spark, f)
         Seq(
           ("a:secret", "SELECT secret FROM a.db.t"),
           ("a:region", "SELECT secret FROM a.db.t WHERE region = 'keep'"),
@@ -292,10 +313,9 @@ class TestDeltaRangerMaskRules {
 
   @Test
   def unsupportedPathsShapesMasksAndNewSubjectReject(): Unit = {
-    NativeSelectFixture.withSpark { spark =>
-      val f = new TestDeltaRangerNativeSelect.Fixture
+    NativeSelectFixture.withBoundSpark { (spark, f) =>
       try {
-        val rule = new DeltaRangerReadRule(spark, _ => f.engine)
+        val rule = NativeSelectFixture.rule(spark, f)
         Seq(
           s"SELECT * FROM delta.`${NativeSelectFixture.locations("a")}`",
           "SELECT count(*) FROM a.db.t",

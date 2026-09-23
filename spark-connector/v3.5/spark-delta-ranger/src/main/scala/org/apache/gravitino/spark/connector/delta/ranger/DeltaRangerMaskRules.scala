@@ -29,13 +29,18 @@ import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project
 import org.apache.spark.sql.types.BooleanType
 
 private[ranger] object DeltaRangerMaskRules {
-  def rewrite(
+  final class Decisions(
+      val filter: java.util.Optional[String],
+      val masks: Map[String, DeltaRangerPolicyEngine.MaskDecision]
+  )
+
+  def capture(
       scan: DeltaRangerReadRule.Scan,
       columns: Set[String],
       engine: DeltaRangerPolicyEngine,
       subject: DeltaRangerQuerySubject,
-      spark: SparkSession
-  ): LogicalPlan = {
+      instant: java.time.Instant
+  ): Decisions = {
     def key(column: String): DeltaRangerResourceKey =
       new DeltaRangerResourceKey(
         scan.catalog,
@@ -45,7 +50,21 @@ private[ranger] object DeltaRangerMaskRules {
         "select",
         scan.owner.orNull
       )
-    val filter = engine.rowFilter(subject, key(null))
+    new Decisions(
+      engine.rowFilter(subject, key(null), instant),
+      columns.toVector.sorted
+        .map(column => column -> engine.mask(subject, key(column), instant))
+        .toMap
+    )
+  }
+
+  def rewrite(
+      scan: DeltaRangerReadRule.Scan,
+      columns: Set[String],
+      decisions: Decisions,
+      spark: SparkSession
+  ): LogicalPlan = {
+    val filter = decisions.filter
     val filtered = if (filter.isPresent) {
       val condition = resolve(filter.get(), scan.relation.output, spark)
       if (condition.dataType != BooleanType)
@@ -55,7 +74,7 @@ private[ranger] object DeltaRangerMaskRules {
     val output = scan.relation.output.map { attribute =>
       if (!columns(attribute.name)) attribute
       else {
-        val decision = engine.mask(subject, key(attribute.name))
+        val decision = decisions.masks(attribute.name)
         val expression = decision.kind() match {
           case DeltaRangerPolicyEngine.MaskDecision.Kind.NONE => None
           case DeltaRangerPolicyEngine.MaskDecision.Kind.NULL =>

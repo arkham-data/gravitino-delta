@@ -20,6 +20,7 @@
 package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.util.{IdentityHashMap, UUID}
+import java.time.Instant
 
 import scala.collection.JavaConverters._
 
@@ -27,8 +28,8 @@ import scala.collection.mutable
 
 import org.apache.kyuubi.plugin.spark.authz.{OperationType, PrivilegeObjectType, PrivilegesBuilder}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.kyuubi.plugin.spark.authz.rule.RuleEliminateMarker
 import org.apache.kyuubi.plugin.spark.authz.rule.datamasking.RuleApplyDataMaskingStage1
@@ -41,7 +42,7 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
 
 private[ranger] class DeltaRangerReadRule(
     spark: SparkSession,
-    engines: DeltaRangerReadRule.Scan => DeltaRangerPolicyEngine
+    catalogs: DeltaRangerReadRule.Scan => DeltaRangerCatalogSpark35
 ) extends Rule[LogicalPlan] {
   import DeltaRangerReadRule._
 
@@ -63,68 +64,80 @@ private[ranger] class DeltaRangerReadRule(
       throw new SecurityException("Native Delta catalog updates must remain disabled")
     }
     val subject = DeltaRangerQuerySubject.current(spark)
-    val identity = subject.user() -> subject.groups().asScala.toSet
-    plan.getTagValue(authorized) match {
-      case Some(previous) if previous == identity => return plan
-      case Some(_) => throw new SecurityException("Reanalyze Delta SELECT for the current subject")
-      case _       =>
+    if (DeltaRangerDecisionReceipt.present(plan)) {
+      DeltaRangerDecisionReceipt.check(plan, spark, optimized = false)
+      return plan
     }
-    if (plan.exists(_.getTagValue(authorized).nonEmpty))
+    if (plan.exists(DeltaRangerDecisionReceipt.present))
       throw new SecurityException("Derived or reused Delta plans are not qualified")
     DeltaRangerPlanAdmission.query(plan)
     val scans = extract(plan, spark)
-    val bound = scans.map { case (scan, columns) => (scan, columns, engines(scan)) }
-    val versions = bound.map(_._3).distinct.map(e => e -> version(e)).toMap
+    val bound = scans.map { case (scan, columns) =>
+      val binding = catalogs(scan).registrationBindings().resolve(scan.relation)
+      if (binding.index().metadata.configuration.get("delta.enableRowTracking").contains("true"))
+        throw new SecurityException(
+          "Delta decision receipt rejected: row tracking is not qualified"
+        )
+      (scan, columns, binding, binding.engine())
+    }
+    val configuration = spark.sessionState.conf.clone()
+    val stamps = bound.map(_._4).distinct.map(e => e -> e.snapshotStamp()).toMap
+    val instant = Instant.now()
     // Complete original authorization for every table before asking for any rewrite.
     bound
-      .flatMap { case (scan, columns, engine) =>
+      .flatMap { case (scan, columns, binding, engine) =>
         DeltaRangerResourceKey
           .select(scan.catalog, scan.database, scan.table, columns.asJava, scan.owner.orNull)
           .asScala
           .map(key => engine -> key)
       }
       .distinct
-      .foreach { case (engine, key) => engine.authorize(subject, key) }
+      .foreach { case (engine, key) => engine.authorize(subject, key, instant) }
     val replacements = new IdentityHashMap[LogicalRelation, LogicalPlan]()
-    bound.foreach { case (scan, columns, engine) =>
-      replacements.put(
-        scan.relation,
-        DeltaRangerMaskRules.rewrite(scan, columns, engine, subject, spark)
+    val obligations = bound.map { case (scan, columns, binding, engine) =>
+      new DeltaRangerDecisionReceipt.Obligation(
+        scan,
+        columns,
+        binding,
+        DeltaRangerMaskRules.capture(scan, columns, engine, subject, instant)
       )
     }
-    val stage0 = plan.transformUp { case relation: LogicalRelation => replacements.get(relation) }
-    val rewritten = RuleEliminateMarker(RuleApplyDataMaskingStage1(spark)(stage0))
-    versions.foreach { case (engine, before) =>
-      if (version(engine) != before)
-        throw new SecurityException("Ranger snapshot changed; reanalyze SELECT")
+    if (configuration.getAllConfs != spark.sessionState.conf.getAllConfs)
+      throw new SecurityException("Delta decision receipt rejected: configuration changed")
+    val rewritten = SQLConf.withExistingConf(configuration) {
+      obligations.foreach { obligation =>
+        val scan = obligation.scan
+        val columns = obligation.columns
+        replacements.put(
+          scan.relation,
+          DeltaRangerMaskRules.rewrite(scan, columns, obligation.decisions, spark)
+        )
+      }
+      val stage0 = plan.transformUp { case relation: LogicalRelation => replacements.get(relation) }
+      RuleEliminateMarker(RuleApplyDataMaskingStage1(spark)(stage0))
     }
-    rewritten.setTagValue(authorized, identity)
+    DeltaRangerDecisionReceipt.attach(
+      rewritten,
+      spark,
+      subject,
+      obligations,
+      stamps,
+      instant,
+      configuration
+    )
     rewritten
-  }
-
-  private def version(engine: DeltaRangerPolicyEngine): (Long, Long) = {
-    val versions = engine.versions()
-    (versions.policy(), versions.role())
   }
 }
 
 private[ranger] object DeltaRangerReadRule {
-  private val authorized = TreeNodeTag[(String, Set[String])]("gravitino.delta.ranger.fresh-select")
-
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
-    if (!DeltaRangerPlanAdmission.internalMetadata(plan)) {
-      val subject = DeltaRangerQuerySubject.current(spark)
-      if (
-        !plan.getTagValue(authorized).contains(subject.user() -> subject.groups().asScala.toSet)
-      ) {
-        throw new SecurityException("Delta SELECT did not pass fresh analysis admission")
-      }
-    }
+    if (!DeltaRangerPlanAdmission.internalMetadata(plan))
+      DeltaRangerDecisionReceipt.check(plan, spark, optimized = false)
   }
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
     if (DeltaRangerPlanAdmission.internalMetadata(plan)) return plan
-    check(plan, spark)
+    DeltaRangerDecisionReceipt.check(plan, spark, optimized = true)
     val indices = plan
       .collect {
         case relation: LogicalRelation if relation.relation.isInstanceOf[HadoopFsRelation] =>

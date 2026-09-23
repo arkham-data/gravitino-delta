@@ -223,7 +223,7 @@ class TestDeltaRangerRegistrationBindingsNative {
             assertNotNull(f.wrapper.registrationBindings().resolve(fallback(warm)))
           } finally f.close()
         },
-        Some(extensions => new DeltaRangerSparkExtension((_, _) => policy.engine)(extensions))
+        Some(extensions => NativeSelectFixture.extension(policy)(extensions))
       )
     finally policy.engine.close()
   }

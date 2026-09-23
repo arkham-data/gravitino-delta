@@ -451,6 +451,22 @@ final class DeltaRangerRegistrationBindings {
       return binding.nativeVersion;
     }
 
+    DeltaRangerPolicyEngine engine() {
+      requireLive();
+      return owner.engine;
+    }
+
+    void recheckPublication() {
+      requireLive();
+      PublishedObservation current =
+          owner.reader.read(
+              Identifier.of(
+                  new String[] {binding.observation.database()}, binding.observation.table()));
+      if (!binding.observation.samePublication(current)) throw denied();
+      requireLive();
+      owner.reader.requireLive(current);
+    }
+
     void requireLive() {
       owner.requireLive();
       owner.reader.requireLive(binding.observation);

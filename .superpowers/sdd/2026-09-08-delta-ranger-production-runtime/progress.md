@@ -430,3 +430,123 @@ Actual optimizer batch inspection, typed native optimizer rule, SQLConf clone an
 scoped execution methods are accessible without a private bridge. Evidence is
 optimizer-public-seam-compile-20260923; this proves compilation, not replay safety
 or native query behavior. All runtime gates remain in the analysis receipt brief.
+
+
+Current resume checkpoint (September 23):
+- Local HEAD: 513e13ba1ee85dd8226f2785c636fd2b76071f79. Reviewed named-load/guard
+  checkpoint is parent 52ef6ce5b9475fa644be0344616cf9b67f46c0ab.
+- /root/implement_analysis_receipt (gpt-6-astra high) owns the only active source
+  and Gradle slot, implementing the tracked analysis receipt brief. It must not
+  modify the frozen engine-time source or install physical/guard enforcement.
+- /root/implement_evaluation_time and /root/review_evaluation_time finished their
+  task; /root/reconcile_receipt_optimizer finished its source-only document.
+- Next acceptance: actual wrapper-backed logical receipt, captured decisions,
+  optimizer comparison, all four native pairs, independent spec/quality review.
+- Following required work: typed native operation ownership, current native-head
+  binding validation, physical provenance and installed collection enforcement.
+- No live query, Docker/service operation, policy mutation, deployment or demo
+  edit occurred in this continuation. The old 56/81 fixture checkpoint is historical;
+  fresh external continuity verification is required before using it again.
+
+
+Analysis receipt implementation is active. Root confirmed original behavioral RED
+analysis-receipt-red-3: copied marker plus changed literal was accepted, causing
+one expected-SecurityException assertion failure. Initial implementation now
+consumes actual wrapper bindings and captured decisions; first compile/native
+control is in progress, not accepted. Early root integration feedback sent to the
+owner: retain independent mutable literal payloads (and verify retained tree against
+its frozen binding before replay), and validate the complete expression subtree
+before evaluating a foldable datetime-cast child. Both need observable negative
+tests; final independent review remains pending.
+
+
+First receipt native regression reached runtime: green-attempt-2 preserved six
+fixture static-config failures, then green-attempt-3 original XML has six tests /
+one failure. The remaining installed-extension failure is the prefix rule-order
+check. Root verified official Spark BaseSessionStateBuilder appends custom pre-CBO
+rules after SparkOptimizer's OptimizeMetadataOnlyDeleteFromTable; the owner must
+qualify that exact inactive-on-SELECT built-in before our consumer, not require our
+rule at index zero or admit arbitrary predecessors. Source-backed correction sent;
+no matrix or final acceptance yet.
+
+
+Receipt continuation: root independently parsed original analysis-receipt-green-attempt-4
+XML and exit record: 16 tests / 1 failure / 0 errors / 0 skips, exit 1. Ten receipt
+tests and five mask/native tests pass; asymmetric self-join still fails during
+PreparedDeltaFileIndex.matchingFiles -> Snapshot.filesForScan on a broadcast worker
+outside the existing native scan scope. Original hardening REDs remain preserved.
+The implementation owner is determining whether this is a latent fixture gap or
+a new regression; no acceptance, native-admission widening, configuration disabling,
+live service actions or guard installation. Original obligations must survive
+empty-result optimization. Unknown optimizer callbacks and unsupported foldable
+children now have explicit no-invocation controls, pending frozen matrix/review.
+
+
+Ruling: preserve the original asymmetric self-join row test as an explicitly
+separate production-mask component control, and preserve the installed query as a
+precise existing-native-gap characterization — baseline-native-control-2 proves
+committed513e13ba1 has the same installed failure while its original direct-rule
+positive passes. Root verified12unchangedScala files, only one added test method,
+original2test/1failure XML and11compiledarchives. Production receipt consumer
+qualification remains mandatory; no fabricated receipt/test bypass. Cost if wrong
+is extra fixture rework, with installed selfjoin acceptance still mandatory in the
+next typed-native-operation increment. This does not close fullDelta or task4.
+
+
+Further receipt tests remain implementation work: limits-red-2 exposed signed-zero
+literal equality and clock-dependent date acceptance plus row-tracking/cache fixture
+assertion issues. Later config-red-1 original XML20tests/2failures shows the earlier
+literal/date controls now pass, but configuration mutation during backend evaluation
+is accepted and cache rejection expects the wrong boundary. Root instructed owner
+to capture configuration before policy calls and reject drift rather than adopt it
+at final attachment. No acceptance or final matrix yet.
+
+
+Root verified focused-green-2 original XML:87tests/1failure, only instrumentation
+fixture None.get in NativeCacheCapture; all21receipt tests and the other focused
+suites passed. Author now runs focused-green-3 after fixture correction plus
+ExprId/mixed-child controls and a late-metadata tree-mutation regression. Root
+updated and froze README wording: replaces obsolete subject-only marker description
+with actual logical receipt semantics, explicitly distinguishes direct mask component
+coverage from installed asymmetric selfjoin gap, and keeps action/physical/fullDelta
+requirements open. No native admission/core changes; reviewed engine source hash
+remains unchanged. Final4matrix/review still pending.
+
+
+Ruling: after original final356332 finishes, add the missing explicit mask-Project
+removal assertion to the existing changed-tree test and run only that changed test
+on all4profiles with normal formatting and fresh source/compiled captures. Production
+source stays frozen. Preserve original47-source full matrix and use a separately
+versioned final test-source manifest/supplement; do not relabel historical XML.
+Reason: targeted coverage satisfies the direct mask-removal requirement without
+repeating unrelated suites. Cost if wrong is an additional focused regression run,
+with the final independent review still required. Root will regenerate its review
+package for the final test bytes before dispatch.
+
+
+Receipt final evidence now independently verified by root: original4matrix rows
+128+53+53+53=287executions/0failure/error/skip,47frozen source archives perrow,
+44compiledarchives and exact Spark/Delta/Ranger2.8jars. Final direct mask-Project
+removal supplement passes1test on each pair (4additional executions),47revised
+source/current/archives each and44compiledarchives; exactly one test source changed,
+all production unchanged. Proofs: analysis-receipt-root-matrix-verification.json
+and analysis-receipt-root-supplement-verification.json. Author report final, source/
+Gradle ownership released. Independent /root/review_analysis_receipt (gpt-6-astra
+high) reviews14filepackage2; no task acceptance or checkpoint yet.
+
+Read-only /root/native_fallback_scope completed task-4-native-fallback-scope-audit.md.
+Root separately confirmed four relevant Delta class entries byte-identical across
+pinned3.3.0/3.3.2jars. Proposed public/protected prepared-index subclass seam is
+source-backed only, not compiled/runtime qualification. Next dependent
+task-4-native-operation-implementation-brief.md drafted against existing approved
+physical/native design, not dispatched while current task review remains open.
+No live service/Docker/policy/deployment/demo operations occurred.
+
+
+Independent receipt review completed: SPEC PASS / QUALITY READY, no actionable
+findings or pending task evidence. Root read the full review, confirmed its exact
+14file scope and final4supplement evidence. The logical receipt increment is accepted
+for local checkpoint; Task4/native/physical/fullDelta remain open. Next source work
+will consume the typed native-operation brief after checkpoint, with a fresh agent
+and the same one-owner Gradle/publication rule. No push or deployment is authorized
+by this checkpoint.

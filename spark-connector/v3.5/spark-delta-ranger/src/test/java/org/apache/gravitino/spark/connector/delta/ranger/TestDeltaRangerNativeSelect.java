@@ -42,6 +42,7 @@ import java.util.OptionalLong;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.function.Consumer;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationCommand;
@@ -211,6 +212,11 @@ public final class TestDeltaRangerNativeSelect {
     public final Set<String> denied = new HashSet<>();
     /** Observed evaluation order for original authorization and rewrites. */
     public final List<String> events = new ArrayList<>();
+    /** Requests observed at the policy transport boundary. */
+    public final List<RangerAccessRequest> requests = new ArrayList<>();
+    /** Hook for controlled concurrent changes during policy evaluation. */
+    public Consumer<RangerAccessRequest> onRequest = request -> {};
+
     /** Canonical column selected by the mask fixture. */
     public String maskColumn = "secret";
     /** Catalog receiving the custom mask and filter. */
@@ -263,6 +269,8 @@ public final class TestDeltaRangerNativeSelect {
           .thenAnswer(
               call -> {
                 RangerAccessRequest request = call.getArgument(0);
+                requests.add(request);
+                onRequest.accept(request);
                 String key =
                     request.getResource().getValue("catalog")
                         + ":"
@@ -278,6 +286,8 @@ public final class TestDeltaRangerNativeSelect {
           .thenAnswer(
               call -> {
                 RangerAccessRequest request = call.getArgument(0);
+                requests.add(request);
+                onRequest.accept(request);
                 RangerAccessResult result =
                     new RangerAccessResult(1, "service", definition, request);
                 events.add("mask");
@@ -292,6 +302,8 @@ public final class TestDeltaRangerNativeSelect {
           .thenAnswer(
               call -> {
                 RangerAccessRequest request = call.getArgument(0);
+                requests.add(request);
+                onRequest.accept(request);
                 RangerAccessResult result =
                     new RangerAccessResult(2, "service", definition, request);
                 events.add("filter");

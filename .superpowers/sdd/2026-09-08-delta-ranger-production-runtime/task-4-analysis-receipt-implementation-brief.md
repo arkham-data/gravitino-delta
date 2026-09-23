@@ -97,3 +97,22 @@ relaxation. Temporary unsupported combinations remain gaps toward full Delta
 conformance, not a redefinition of the final objective. Record proof and failure
 boundaries precisely. The complete original source/binding and mask/filter
 inventory remains authoritative even if optimizer removes a scan.
+
+## Proven pre-existing asymmetric self-join gap
+
+The isolated `analysis-receipt-baseline-native-control-2` compiles the baseline
+513e13ba1 Scala source with one added installed-extension query. Original XML has
+two tests: the original direct-rule asymmetric self-join passes, while the same
+installed SQL fails at PreparedDeltaFileIndex.matchingFiles / Snapshot.filesForScan
+on a broadcast worker with an unqualified LogicalRDD. Root verified the archived
+source against git, the sole added test diff, and compiled input archives. This is
+an existing installed-native limitation, not receipt regression.
+
+Retain a narrowly named component test of actual wrapper-bound scans and production
+MaskRules.capture/rewrite plus Kyuubi marker rules for the original row semantics.
+It creates no production receipt and makes no installed-enforcement claim. Keep the
+installed failure as a precise characterization and required next native-operation
+acceptance target. Production receipt attachment still requires the qualified
+pre-CBO consumer; no test bypass or native-admission widening is allowed. Genuine
+installed two-catalog, quoted-column and receipt positives remain required. Full
+self-join support is unfinished until the installed query returns the expected rows.
