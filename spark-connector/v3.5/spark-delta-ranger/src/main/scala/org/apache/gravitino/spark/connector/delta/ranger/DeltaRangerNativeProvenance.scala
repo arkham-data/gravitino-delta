@@ -19,7 +19,10 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
+import org.apache.spark.sql.catalyst.plans.physical.UnknownPartitioning
+
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
@@ -45,14 +48,60 @@ private[ranger] object DeltaRangerNativeProvenance {
 
   final class Witness private[DeltaRangerNativeProvenance] (
       private val operation: DeltaRangerNativeOperation,
-      private val recipe: Vector[Any],
+      source: LogicalPlan,
       private val cache: Option[LogicalRDD],
       private val functions: Vector[Vector[Any]],
       private val inputs: Vector[Vector[Any]],
-      private val projectionAcrossUnion: Boolean
+      private val projectionAcrossUnion: Boolean,
+      parent: Option[Witness] = None
   ) {
+    private val original = source.clone()
+    original.foreach(_.unsetTagValue(tag))
+    private val recipe = binding(original)
+    private val session = operation.session()
+    private val configuration = session.sessionState.conf.clone()
+    private val settings = configuration.getAllConfs
+
+    private def originalUnchanged(expectedSession: SparkSession): Unit = {
+      if (!(expectedSession eq session) || settings != session.sessionState.conf.getAllConfs)
+        throw new SecurityException("Native continuation session or configuration changed")
+      requireValid(original, expectedSession)
+    }
+
+    private[DeltaRangerNativeProvenance] def continuePrefix(
+        candidate: LogicalPlan,
+        expectedSession: SparkSession
+    ): Witness = {
+      if (!operation.succeeded())
+        throw new SecurityException("Native continuation requires a successful closed owner")
+      originalUnchanged(expectedSession)
+      val expected = SQLConf.withExistingConf(configuration) {
+        DeltaRangerDecisionReceipt.nativePrefix(original.clone(), expectedSession)
+      }
+      originalUnchanged(expectedSession)
+      if (!prefixCorresponds(original, expected, candidate)) {
+        throw new SecurityException("Native continuation prefix binding changed")
+      }
+      val continued = new Witness(
+        operation,
+        candidate,
+        cache,
+        functions,
+        inputs,
+        projectionAcrossUnion,
+        Some(this)
+      )
+      candidate.setTagValue(tag, new Reference(continued))
+      continued
+    }
+
+    private[DeltaRangerNativeProvenance] def reconstructionOwnedBy(
+        expected: DeltaRangerNativeOperation
+    ): Boolean = (operation eq expected) && cache.isEmpty
+
     def requireValid(plan: LogicalPlan, session: SparkSession): Unit = {
       operation.requireEvidence(session)
+      parent.foreach(_.originalUnchanged(session))
       if (
         recipe != binding(plan) || cache
           .exists(rdd => !operation.contains(rdd, false) && !operation.contains(rdd, true))
@@ -109,7 +158,7 @@ private[ranger] object DeltaRangerNativeProvenance {
       if (DeltaRangerPlanAdmission.nativeShape(plan)) {
         val witness = new Witness(
           operation,
-          binding(plan),
+          plan,
           None,
           functionBindings(plan),
           logInputs(plan),
@@ -121,7 +170,7 @@ private[ranger] object DeltaRangerNativeProvenance {
       if (DeltaRangerPlanAdmission.pendingCache(plan)) {
         val witness = new Witness(
           operation,
-          binding(plan),
+          plan,
           Some(plan.asInstanceOf[LogicalRDD]),
           functionBindings(plan),
           logInputs(plan),
@@ -149,6 +198,113 @@ private[ranger] object DeltaRangerNativeProvenance {
         sealedNative.witness
       case _ => throw new SecurityException("Native Delta plan has no sealed executable evidence")
     }
+
+  /** Compare only the fresh nested-field aliases emitted by the qualified pinned prefix. */
+  private[ranger] def prefixCorresponds(
+      original: LogicalPlan,
+      expected: LogicalPlan,
+      candidate: LogicalPlan
+  ): Boolean = {
+    def embeddedIds(item: Any): Vector[ExprId] = item match {
+      case id: ExprId     => Vector(id)
+      case values: Seq[_] => values.toVector.flatMap(embeddedIds)
+      case Some(value)    => embeddedIds(value)
+      case _              => Vector.empty
+    }
+    def allIds(plan: LogicalPlan): Set[ExprId] =
+      embeddedIds(binding(plan)).toSet ++ plan.flatMap { node =>
+        node.output.map(_.exprId) ++ node.expressions.flatMap(_.collect {
+          case named: NamedExpression => named.exprId
+        })
+      }
+    val originalIds = allIds(original)
+    def producers(plan: LogicalPlan): Vector[(Vector[Int], Alias)] = {
+      def visit(node: LogicalPlan, path: Vector[Int]): Vector[(Vector[Int], Alias)] = {
+        val own = node match {
+          case project: Project if project.getClass == classOf[Project] =>
+            project.projectList.zipWithIndex.collect {
+              case (alias: Alias, index) if !originalIds(alias.exprId) => (path :+ index) -> alias
+            }.toVector
+          case _ => Vector.empty
+        }
+        own ++ node.children.zipWithIndex.flatMap { case (child, index) =>
+          visit(child, path :+ index)
+        }
+      }
+      visit(plan, Vector.empty)
+    }
+    val expectedProducers = producers(expected)
+    val actualProducers = producers(candidate)
+    if (expectedProducers.map(_._1) != actualProducers.map(_._1)) return false
+    val expectedIds = expectedProducers.map(_._2.exprId)
+    val actualIds = actualProducers.map(_._2.exprId)
+    if (
+      expectedIds.distinct.size != expectedIds.size || actualIds.distinct.size != actualIds.size ||
+      (allIds(expected) -- originalIds) != expectedIds.toSet ||
+      (allIds(candidate) -- originalIds) != actualIds.toSet
+    ) return false
+    val definitionsAgree =
+      expectedProducers.zip(actualProducers).forall { case ((_, left), (_, right)) =>
+        def field(alias: Alias): Option[GetStructField] = alias.child match {
+          case get: GetStructField
+              if alias.getClass == classOf[Alias] &&
+                get.getClass == classOf[GetStructField] &&
+                alias.name == "_extract_" + get.extractFieldName &&
+                get.references.forall(a => originalIds(a.exprId)) =>
+            Some(get)
+          case _ => None
+        }
+        field(left).nonEmpty && field(right).nonEmpty &&
+        value(left.child) == value(right.child) && left.name == right.name &&
+        left.qualifier == right.qualifier && left.dataType.json == right.dataType.json &&
+        left.nullable == right.nullable && left.metadata.json == right.metadata.json &&
+        left.explicitMetadata.map(_.json) == right.explicitMetadata.map(_.json) &&
+        left.nonInheritableMetadataKeys == right.nonInheritableMetadataKeys &&
+        left.exprId.jvmId == right.exprId.jvmId
+      }
+    if (!definitionsAgree) return false
+    val correspondence = actualIds.zip(expectedIds).toMap
+    def agrees(actual: Any, wanted: Any): Boolean = (actual, wanted) match {
+      case (a: ExprId, b: ExprId) =>
+        if (originalIds(a) || originalIds(b)) a == b
+        else correspondence.get(a).contains(b)
+      case (a: Seq[_], b: Seq[_]) =>
+        a.size == b.size && a.zip(b).forall { case (x, y) => agrees(x, y) }
+      case (Some(a), Some(b)) => agrees(a, b)
+      case _                  => actual == wanted
+    }
+    agrees(binding(candidate), binding(expected))
+  }
+
+  def continueAtPreCbo(plan: LogicalPlan, session: SparkSession): Option[Witness] = {
+    if (
+      DeltaRangerNativeOperation.current() != null ||
+      plan.exists(DeltaRangerDecisionReceipt.present)
+    ) return None
+    plan.getTagValue(tag).flatMap(_.get).map(_.continuePrefix(plan, session))
+  }
+
+  // Only the exact public getter return can establish this alternative to an RDD cache.
+  // Reconstruction evidence is never accepted by the operation's contains(LogicalRDD) path.
+  def returnedReconstruction(
+      plan: LogicalPlan,
+      operation: DeltaRangerNativeOperation,
+      session: SparkSession,
+      stats: Boolean
+  ): Witness = {
+    if (
+      !(DeltaRangerNativeOperation.current() eq operation) ||
+      operation.capturingSnapshot() == null ||
+      plan.getClass != (if (stats) classOf[Project] else classOf[SerializeFromObject])
+    )
+      throw new SecurityException(
+        "Unqualified native getter reconstruction: " + plan.getClass.getName
+      )
+    val witness = requireExecutable(plan, session)
+    if (!witness.reconstructionOwnedBy(operation))
+      throw new SecurityException("Native getter reconstruction has a different owner")
+    witness
+  }
 
   private def safelyResolved(plan: LogicalPlan): Boolean =
     try plan.resolved
@@ -250,7 +406,7 @@ private[ranger] object DeltaRangerNativeProvenance {
     override def hashCode(): Int = System.identityHashCode(item)
   }
 
-  private def binding(plan: LogicalPlan): Vector[Any] = {
+  private[ranger] def binding(plan: LogicalPlan): Vector[Any] = {
     val backing: Any = plan match {
       case rdd: LogicalRDD => new Identity(rdd.rdd)
       case relation: LogicalRelation =>
@@ -289,17 +445,30 @@ private[ranger] object DeltaRangerNativeProvenance {
         attr.nullable,
         attr.metadata.json
       )
-    case expr: Expression         => Vector(expr.getClass, expr.productIterator.map(value).toVector)
-    case values: Seq[_]           => values.map(value).toVector
-    case optional: Option[_]      => optional.map(value)
-    case array: Array[_]          => array.map(value).toVector
-    case text: UTF8String         => text.getBytes.toVector
-    case dataType: DataType       => dataType.json
-    case metadata: Metadata       => metadata.json
-    case text: String             => text
-    case number: java.lang.Number => number
-    case flag: Boolean            => flag
-    case id: ExprId               => id
-    case other: AnyRef            => new Identity(other)
+    case expr: Expression => Vector(expr.getClass, expr.productIterator.map(value).toVector)
+    // CachedDS recreates LogicalRDD wrappers with fresh immutable stock partitioning values.
+    case partitioning: UnknownPartitioning
+        if partitioning.getClass == classOf[UnknownPartitioning] =>
+      Vector(classOf[UnknownPartitioning], partitioning.numPartitions)
+    case pair: Tuple2[_, _]  => Vector(pair.getClass, value(pair._1), value(pair._2))
+    case dataType: DataType  => dataType.json
+    case metadata: Metadata  => metadata.json
+    case values: Seq[_]      => values.map(value).toVector
+    case optional: Option[_] => optional.map(value)
+    case array: Array[_]     => array.map(value).toVector
+    case text: UTF8String    => text.getBytes.toVector
+    case text: String        => text
+    case number: java.lang.Double =>
+      (classOf[java.lang.Double], java.lang.Double.doubleToRawLongBits(number))
+    case number: java.lang.Float =>
+      (classOf[java.lang.Float], java.lang.Float.floatToRawIntBits(number))
+    case decimal: org.apache.spark.sql.types.Decimal => decimal.toJavaBigDecimal
+    case number: java.lang.Byte                      => number
+    case number: java.lang.Short                     => number
+    case number: java.lang.Integer                   => number
+    case number: java.lang.Long                      => number
+    case flag: Boolean                               => flag
+    case id: ExprId                                  => id
+    case other: AnyRef                               => new Identity(other)
   }
 }

@@ -113,6 +113,10 @@ class TestDeltaRangerMaskRules {
   def installedExtensionExecutesFreshNamedScansAndInternalNativeReconstruction(): Unit = {
     val f = new TestDeltaRangerNativeSelect.Fixture
     val nativeUdfPlans = scala.collection.mutable.ArrayBuffer.empty[(SparkSession, LogicalPlan)]
+    val capturedUdfOwners = new java.util.IdentityHashMap[
+      LogicalPlan,
+      (DeltaRangerNativeOperation, Option[DeltaRangerNativeProvenance.Witness])
+    ]()
     val nativeBindings = scala.collection.mutable.Set.empty[String]
     try {
       NativeSelectFixture.withSpark(
@@ -201,6 +205,19 @@ class TestDeltaRangerMaskRules {
           )
           assertTrue(nativeUdfPlans.nonEmpty)
           val qualified = nativeUdfPlans.toVector.filter(_._1 eq spark).map(_._2)
+          var delayedOriginals = 0
+          qualified.foreach { plan =>
+            val (owner, witness) = capturedUdfOwners.get(plan)
+            if (owner != null && owner.succeeded() && witness.nonEmpty) {
+              witness.get.requireValid(plan, spark)
+              assertNotNull(DeltaRangerNativeProvenance.requireExecutable(plan.clone(), spark))
+              delayedOriginals += 1
+            }
+          }
+          assertTrue(
+            delayedOriginals > 0,
+            "Successful original owners must retain delayed evidence"
+          )
           DeltaRangerNativeScans.consume(nativePlan, spark, optimized = false).run { _ =>
             indices
               .foreach(index => DeltaRangerPlanAdmission.registerSnapshot(index, index.getSnapshot))
@@ -251,14 +268,27 @@ class TestDeltaRangerMaskRules {
           extensions.injectResolutionRule(session =>
             new org.apache.spark.sql.catalyst.rules.Rule[LogicalPlan] {
               override def apply(plan: LogicalPlan): LogicalPlan = {
+                val admission = DeltaRangerNativeProvenance.classify(plan)
                 if (
-                  DeltaRangerPlanAdmission.internalMetadata(plan) &&
+                  admission != DeltaRangerNativeProvenance.UserPlan &&
                   plan.exists(
                     _.expressions.exists(
                       _.exists(_.isInstanceOf[org.apache.spark.sql.catalyst.expressions.ScalaUDF])
                     )
                   )
                 ) {
+                  if (!capturedUdfOwners.containsKey(plan))
+                    capturedUdfOwners.put(
+                      plan,
+                      (
+                        DeltaRangerNativeOperation.current(),
+                        admission match {
+                          case sealedNative: DeltaRangerNativeProvenance.SealedNative =>
+                            Some(sealedNative.witness)
+                          case _ => None
+                        }
+                      )
+                    )
                   nativeUdfPlans += session -> plan
                 }
                 plan match {

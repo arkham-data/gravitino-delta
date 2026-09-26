@@ -34,8 +34,298 @@ import org.junit.jupiter.api.Test
 
 class TestDeltaRangerNativeOperations {
   @Test
+  def nativeCacheRebindingBindsExactUnknownPartitioningValues(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, _) =>
+      import org.apache.spark.sql.catalyst.plans.physical.{
+        UnknownPartitioning,
+        RoundRobinPartitioning
+      }
+      NativeSelectFixture.withNativeOperation(spark) { index =>
+        val operation = DeltaRangerNativeOperation.current()
+        val snapshot = index.getSnapshot
+        operation.capture(index, snapshot)
+        Seq(false -> snapshot.stateDF, true -> snapshot.withStats).foreach { case (stats, frame) =>
+          val original = frame.queryExecution.analyzed.asInstanceOf[LogicalRDD]
+          assertEquals(classOf[UnknownPartitioning], original.outputPartitioning.getClass)
+          val count = original.outputPartitioning.numPartitions
+          val changedCount =
+            original.copy(outputPartitioning = UnknownPartitioning(count + 1))(spark, None, None)
+          val changedType =
+            original.copy(outputPartitioning = RoundRobinPartitioning(count))(spark, None, None)
+          assertFalse(operation.contains(changedCount, stats))
+          assertFalse(operation.contains(changedType, stats))
+          val wrongRdd =
+            original.copy(rdd = spark.sparkContext.emptyRDD[InternalRow])(spark, None, None)
+          assertFalse(operation.contains(wrongRdd, stats))
+          val fresh =
+            original.copy(outputPartitioning = UnknownPartitioning(count))(spark, None, None)
+          assertNotSame(original.outputPartitioning, fresh.outputPartitioning)
+          assertSame(original.rdd, fresh.rdd)
+          assertEquals(original.output, fresh.output)
+          assertTrue(
+            operation.contains(fresh, stats),
+            "Fresh exact stock partitioning value must retain captured cache membership"
+          )
+        }
+      }
+    }
+
+  @Test
+  def uncachedRetainedStateKeepsExactPreparationAndDelayedNativeExecution(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, _) =>
+      val analyzed = spark.sql("SELECT id, region FROM b.db.t").queryExecution.analyzed
+      val owner = DeltaRangerNativeScans.consume(analyzed, spark, optimized = false)
+      val index = owner.obligations.head.binding.index()
+      val snapshot = index.deltaLog.unsafeVolatileSnapshot
+      val foreignOwner = DeltaRangerNativeScans.consume(
+        spark.sql("SELECT id, region FROM a.db.t").queryExecution.analyzed,
+        spark,
+        optimized = false
+      )
+      val foreignSnapshot =
+        foreignOwner.obligations.head.binding.index().deltaLog.unsafeVolatileSnapshot
+      var preparation: DeltaRangerNativeOperation = null
+      var oldState: LogicalRDD = null
+      var oldStats: LogicalRDD = null
+      owner.run { operation =>
+        preparation = operation
+        operation.capture(index, snapshot)
+        oldState = snapshot.stateDF.queryExecution.analyzed.asInstanceOf[LogicalRDD]
+        oldStats = snapshot.withStats.queryExecution.analyzed.asInstanceOf[LogicalRDD]
+        assertTrue(operation.contains(index, snapshot))
+      }
+      assertTrue(preparation.succeeded())
+      snapshot.uncache()
+      owner.invoke(index, Nil, Nil) { operation =>
+        assertThrows(
+          classOf[SecurityException],
+          () => operation.captureRetained(index, snapshot, operation)
+        )
+        assertThrows(
+          classOf[SecurityException],
+          () => operation.captureRetained(index.copy(), snapshot, preparation)
+        )
+        assertThrows(
+          classOf[SecurityException],
+          () => operation.captureRetained(index, foreignSnapshot, preparation)
+        )
+      }
+      foreignOwner.invoke(foreignOwner.obligations.head.binding.index(), Nil, Nil) { operation =>
+        assertThrows(
+          classOf[SecurityException],
+          () => operation.captureRetained(index, snapshot, preparation)
+        )
+      }
+      val frames = owner.invoke(index, Nil, Nil) { operation =>
+        assertFalse(
+          operation.contains(index, snapshot),
+          "Inherited evidence cannot complete fresh capture"
+        )
+        operation.captureRetained(index, snapshot, preparation)
+        assertTrue(operation.contains(index, snapshot))
+        assertTrue(operation.contains(oldState.clone().asInstanceOf[LogicalRDD], false))
+        assertFalse(operation.contains(oldStats, true), "Old stats cache must not transfer")
+        val decoy = oldState.copy(rdd = spark.sparkContext.emptyRDD[InternalRow])(spark, None, None)
+        assertFalse(operation.contains(decoy, false))
+        val changedOutput =
+          oldState.copy(output = oldState.output.map(_.withName("changed")))(spark, None, None)
+        assertFalse(operation.contains(changedOutput, false))
+        assertThrows(
+          classOf[SecurityException],
+          () => operation.requireEvidence(spark.newSession())
+        )
+        val state = snapshot.stateDF
+        val stats = snapshot.withStats
+        assertFalse(state.queryExecution.analyzed.isInstanceOf[LogicalRDD])
+        assertFalse(stats.queryExecution.analyzed.isInstanceOf[LogicalRDD])
+        assertThrows(
+          classOf[SecurityException],
+          () => foreignOwner.sealReconstruction(operation, state.queryExecution.analyzed, false)
+        )
+        Seq(state, stats)
+      }
+      assertNull(DeltaRangerNativeOperation.current())
+      var generatedProofs = 0
+      frames.foreach { frame =>
+        if (assertNestedFieldCorrespondence(frame.queryExecution.analyzed, spark))
+          generatedProofs += 1
+        assertNotNull(
+          DeltaRangerNativeProvenance.requireExecutable(frame.queryExecution.analyzed, spark)
+        )
+        assertFalse(
+          frame.queryExecution.executedPlan.exists(_.isInstanceOf[DeltaRangerCollectGuardExec])
+        )
+        assertTrue(
+          frame.collect().nonEmpty,
+          "Owned uncached native route must execute after owner close"
+        )
+        val copied = frame.queryExecution.analyzed.clone()
+        assertNotNull(DeltaRangerNativeProvenance.requireExecutable(copied, spark))
+        assertThrows(
+          classOf[SecurityException],
+          () => DeltaRangerNativeProvenance.requireExecutable(copied, spark.newSession())
+        )
+      }
+      assertTrue(generatedProofs > 0, "Must exercise actual generated native nested-field aliases")
+      var failed: DeltaRangerNativeOperation = null
+      val abort = assertThrows(
+        classOf[IllegalStateException],
+        () =>
+          owner.invoke(index, Nil, Nil) { operation =>
+            failed = operation
+            operation.captureRetained(index, snapshot, preparation)
+            assertTrue(operation.contains(oldState, false))
+            throw new IllegalStateException("abort inherited native invocation")
+          }
+      )
+      assertEquals("abort inherited native invocation", abort.getMessage)
+      assertNull(DeltaRangerNativeOperation.current())
+      assertThrows(classOf[SecurityException], () => failed.contains(oldState, false))
+      owner.invoke(index, Nil, Nil) { operation =>
+        assertThrows(
+          classOf[SecurityException],
+          () => operation.captureRetained(index, snapshot, failed)
+        )
+        operation.captureRetained(index, snapshot, preparation)
+        assertTrue(operation.contains(oldState, false))
+      }
+    }
+
+  private def assertNestedFieldCorrespondence(
+      original: LogicalPlan,
+      spark: SparkSession
+  ): Boolean = {
+    import org.apache.spark.sql.catalyst.expressions.{
+      Alias,
+      ExprId,
+      GetStructField,
+      NamedExpression
+    }
+    import org.apache.spark.sql.catalyst.plans.logical.{Project, MapPartitions}
+    val expected = DeltaRangerDecisionReceipt.nativePrefix(original.clone(), spark)
+    val candidate = DeltaRangerDecisionReceipt.nativePrefix(original.clone(), spark)
+    assertTrue(DeltaRangerNativeProvenance.prefixCorresponds(original, expected, candidate))
+    val originalIds = original
+      .flatMap(node =>
+        node.output.map(_.exprId) ++
+          node.expressions.flatMap(_.collect { case named: NamedExpression => named.exprId })
+      )
+      .toSet
+    def producer(plan: LogicalPlan): Option[Project] = plan.collectFirst {
+      case project: Project if project.projectList.exists {
+            case alias: Alias => alias.name.startsWith("_extract_") && !originalIds(alias.exprId)
+            case _            => false
+          } =>
+        project
+    }
+    if (producer(expected).isEmpty) return false
+    val left = producer(expected).get
+    val right = producer(candidate).get
+    val aliases = right.projectList.zipWithIndex.collect {
+      case (alias: Alias, index) if !originalIds(alias.exprId) => (alias, index)
+    }
+    assertTrue(aliases.size >= 2)
+    val (first, firstIndex) = aliases.head
+    val (second, secondIndex) = aliases(1)
+    def withId(alias: Alias, id: ExprId): Alias = Alias(alias.child, alias.name)(
+      id,
+      alias.qualifier,
+      alias.explicitMetadata,
+      alias.nonInheritableMetadataKeys
+    )
+    def changed(alias: Alias): Project =
+      right.copy(projectList = right.projectList.updated(firstIndex, alias))
+    def rejects(plan: LogicalPlan): Unit =
+      assertFalse(DeltaRangerNativeProvenance.prefixCorresponds(original, left, plan))
+    assertTrue(DeltaRangerNativeProvenance.prefixCorresponds(original, left, right))
+    rejects(right.copy(projectList = right.projectList.patch(firstIndex, Nil, 1)))
+    rejects(right.copy(projectList = right.projectList :+ withId(first, NamedExpression.newExprId)))
+    rejects(changed(withId(first, second.exprId)))
+    rejects(changed(withId(first, ExprId(first.exprId.id, java.util.UUID.randomUUID()))))
+    rejects(changed(withId(first, originalIds.head)))
+    val field = first.child.asInstanceOf[GetStructField]
+    rejects(
+      changed(Alias(org.apache.spark.sql.catalyst.expressions.Literal(1), first.name)(first.exprId))
+    )
+    rejects(changed(Alias(field, "_extract_changed")(first.exprId)))
+    rejects(changed(Alias(field, first.name)(first.exprId, Seq("changed"))))
+    rejects(
+      changed(
+        Alias(field, first.name)(
+          first.exprId,
+          first.qualifier,
+          Some(new org.apache.spark.sql.types.MetadataBuilder().putString("changed", "yes").build())
+        )
+      )
+    )
+    rejects(
+      changed(
+        Alias(field.copy(ordinal = if (field.ordinal == 0) 1 else 0), first.name)(first.exprId)
+      )
+    )
+    val consumerLeft = Project(left.output, left)
+    val consumerRight = Project(right.output, right)
+    assertTrue(DeltaRangerNativeProvenance.prefixCorresponds(original, consumerLeft, consumerRight))
+    val remapped = consumerRight.copy(projectList =
+      consumerRight.projectList
+        .updated(firstIndex, right.output(firstIndex).withExprId(second.exprId))
+    )
+    assertFalse(DeltaRangerNativeProvenance.prefixCorresponds(original, consumerLeft, remapped))
+    val swapped = consumerRight.copy(projectList =
+      consumerRight.projectList
+        .updated(firstIndex, right.output(firstIndex).withExprId(second.exprId))
+        .updated(secondIndex, right.output(secondIndex).withExprId(first.exprId))
+    )
+    assertFalse(DeltaRangerNativeProvenance.prefixCorresponds(original, consumerLeft, swapped))
+    val functionChanged = expected.transformUp { case node: MapPartitions =>
+      node.copy(func = (rows: Iterator[Any]) => rows)
+    }
+    assertNotEquals(expected, functionChanged)
+    assertThrows(
+      classOf[SecurityException],
+      () => DeltaRangerReadRule.prepare(functionChanged, spark)
+    )
+    true
+  }
+
+  @Test
+  def retainedStateBindingMustSnapshotSharedMutableSchema(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, _) =>
+      val owner = DeltaRangerNativeScans.consume(
+        spark.sql("SELECT id, region FROM b.db.t").queryExecution.analyzed,
+        spark,
+        optimized = false
+      )
+      val index = owner.obligations.head.binding.index()
+      val snapshot = index.deltaLog.unsafeVolatileSnapshot
+      var preparation: DeltaRangerNativeOperation = null
+      var oldState: LogicalRDD = null
+      owner.run { operation =>
+        preparation = operation
+        operation.capture(index, snapshot)
+        oldState = snapshot.stateDF.queryExecution.analyzed.asInstanceOf[LogicalRDD]
+      }
+      snapshot.uncache()
+      owner.invoke(index, Nil, Nil) { operation =>
+        operation.captureRetained(index, snapshot, preparation)
+        val schema = oldState.output
+          .find(_.name == "add")
+          .get
+          .dataType
+          .asInstanceOf[org.apache.spark.sql.types.StructType]
+        val field = schema.fields(0)
+        try {
+          schema.fields(0) = field.copy(name = "changed")
+          assertThrows(classOf[SecurityException], () => operation.contains(oldState, false))
+        } finally schema.fields(0) = field
+      }
+    }
+
+  @Test
   def pendingGetterCandidatesCannotExecuteAndOnlyReturnedLineageIsSealed(): Unit = {
     val candidates = new ConcurrentLinkedQueue[(LogicalRDD, LogicalRDD, Boolean)]()
+    val checkingPhysical = new java.util.concurrent.atomic.AtomicBoolean()
+    val physicalDenials = new java.util.concurrent.atomic.AtomicInteger()
     val f = new TestDeltaRangerNativeSelect.Fixture
     try
       NativeSelectFixture.withSpark(
@@ -45,6 +335,10 @@ class TestDeltaRangerNativeOperations {
             spark.sql("SELECT secret FROM a.db.t").collect().toSet
           )
           assertFalse(candidates.isEmpty)
+          assertTrue(
+            physicalDenials.get() > 0,
+            "Actual pending getter must reach physical planning"
+          )
           candidates.asScala.foreach { case (real, decoy, executableWhilePending) =>
             assertFalse(executableWhilePending, "Pre-CBO must reject pending cache candidates")
             assertNotNull(DeltaRangerNativeProvenance.requireExecutable(real.clone(), spark))
@@ -61,7 +355,7 @@ class TestDeltaRangerNativeOperations {
                 val operation = DeltaRangerNativeOperation.current()
                 plan match {
                   case rdd: LogicalRDD
-                      if operation != null &&
+                      if !checkingPhysical.get() && operation != null &&
                         operation.capturingSnapshot() != null &&
                         !operation.contains(rdd, false) && !operation.contains(rdd, true) =>
                     val decoy =
@@ -80,6 +374,21 @@ class TestDeltaRangerNativeOperations {
                           )
                           false
                       }
+                    checkingPhysical.set(true)
+                    try {
+                      val failure = assertThrows(
+                        classOf[SecurityException],
+                        () => {
+                          new org.apache.spark.sql.execution.QueryExecution(spark, rdd).executedPlan
+                          ()
+                        }
+                      )
+                      assertTrue(
+                        failure.getMessage.contains("Pending native Delta analysis cannot execute"),
+                        failure.getMessage
+                      )
+                      physicalDenials.incrementAndGet()
+                    } finally checkingPhysical.set(false)
                     candidates.add((rdd, decoy, permitted))
                   case _ =>
                 }
@@ -146,10 +455,22 @@ class TestDeltaRangerNativeOperations {
           }
           assertTrue(kinds.contains("json"), "Must observe the actual JSON tail after checkpoint")
           assertFalse(unions.isEmpty, "Must exercise actual native log union reconstruction")
+          assertNull(DeltaRangerNativeOperation.current())
           (inputs.asScala ++ unions.asScala ++ reconstructions.asScala).foreach(plan =>
             assertNotNull(DeltaRangerNativeProvenance.requireExecutable(plan.clone(), spark))
           )
-          assertNull(DeltaRangerNativeOperation.current())
+          val delayed = (inputs.asScala ++ unions.asScala ++ reconstructions.asScala)
+            .groupBy(_.getClass)
+            .values
+            .map(_.head)
+            .toSeq
+          assertTrue(delayed.size >= 3, "Must physically exercise input, union and reconstruction")
+          delayed.foreach { plan =>
+            val physical =
+              new org.apache.spark.sql.execution.QueryExecution(spark, plan.clone()).executedPlan
+            assertFalse(physical.exists(_.isInstanceOf[DeltaRangerCollectGuardExec]))
+            assertTrue(physical.executeCollect().nonEmpty)
+          }
         },
         Some(extensions => {
           extensions.injectResolutionRule(_ =>
@@ -389,6 +710,36 @@ class TestDeltaRangerNativeOperations {
             () => DeltaRangerNativeProvenance.requireExecutable(replaced, spark)
           )
           assertTrue(foreign.getMessage.contains("no sealed executable evidence"))
+          val physical =
+            new org.apache.spark.sql.execution.QueryExecution(spark, first._1.clone()).executedPlan
+          assertFalse(physical.exists(_.isInstanceOf[DeltaRangerCollectGuardExec]))
+          assertTrue(physical.executeCollect().nonEmpty)
+          var functions = 0
+          val changedFunction =
+            physical.transformUp { case node: org.apache.spark.sql.execution.MapPartitionsExec =>
+              functions += 1
+              node.copy(func = other._2.asInstanceOf[Iterator[Any] => Iterator[Any]])
+            }
+          assertTrue(functions > 0)
+          assertThrows(
+            classOf[SecurityException],
+            () => {
+              DeltaRangerPhysicalProvenance.capture(changedFunction, spark); ()
+            }
+          )
+          var encoders = 0
+          val changedEncoder = physical.transformAllExpressions {
+            case expression: org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke =>
+              encoders += 1
+              org.apache.spark.sql.catalyst.expressions.Literal.create(null, expression.dataType)
+          }
+          assertTrue(encoders > 0)
+          assertThrows(
+            classOf[SecurityException],
+            () => {
+              DeltaRangerPhysicalProvenance.capture(changedEncoder, spark); ()
+            }
+          )
           assertFalse(attempts.isEmpty, "Must exercise actual native object reconstruction")
           assertTrue(attempts.asScala.forall(!_))
           assertFalse(selects.isEmpty, "Must exercise actual native typed AddFile select")
@@ -712,6 +1063,7 @@ class TestDeltaRangerNativeOperations {
   def installedNoSkippingQueriesKeepNativeSettingAndRows(): Unit = {
     val f = new TestDeltaRangerNativeSelect.Fixture
     val sizes = new ConcurrentLinkedQueue[DeltaRangerLogIndex]()
+    val aggregates = new ConcurrentLinkedQueue[LogicalPlan]()
     try
       NativeSelectFixture.withSpark(
         spark => {
@@ -744,6 +1096,32 @@ class TestDeltaRangerNativeOperations {
             "Cold native size aggregation must run through the owned index"
           )
           sizes.asScala.foreach(index => assertTrue(installed.exists(_ eq index)))
+          assertNull(DeltaRangerNativeOperation.current())
+          assertFalse(aggregates.isEmpty, "Must capture actual owned size aggregate")
+          aggregates.asScala.foreach { plan =>
+            val physical =
+              new org.apache.spark.sql.execution.QueryExecution(spark, plan.clone()).executedPlan
+            assertFalse(physical.exists(_.isInstanceOf[DeltaRangerCollectGuardExec]))
+            assertTrue(physical.executeCollect().nonEmpty)
+            var changedOutputs = 0
+            val changed = physical.transformAllExpressions {
+              case alias: org.apache.spark.sql.catalyst.expressions.Alias =>
+                changedOutputs += 1
+                alias.withNewChildren(
+                  Seq(
+                    org.apache.spark.sql.catalyst.expressions.Literal
+                      .create(null, alias.child.dataType)
+                  )
+                )
+            }
+            assertTrue(changedOutputs > 0)
+            assertThrows(
+              classOf[SecurityException],
+              () => {
+                DeltaRangerPhysicalProvenance.capture(changed, spark); ()
+              }
+            )
+          }
           assertEquals("false", spark.conf.get("spark.databricks.delta.stats.skipping"))
         },
         Some(extensions => {
@@ -755,8 +1133,13 @@ class TestDeltaRangerNativeOperations {
                   op != null && op
                     .callback() == DeltaRangerNativeOperation.Callback.SIZE_IN_BYTES &&
                   plan.isInstanceOf[org.apache.spark.sql.catalyst.plans.logical.Aggregate]
-                )
+                ) {
                   sizes.add(op.invokedIndex().asInstanceOf[DeltaRangerLogIndex])
+                  DeltaRangerNativeProvenance.classify(plan) match {
+                    case _: DeltaRangerNativeProvenance.SealedNative => aggregates.add(plan.clone())
+                    case _                                           =>
+                  }
+                }
                 plan
               }
             }

@@ -398,6 +398,8 @@ private[ranger] object NativeSelectFixture {
       .config("spark.gravitino.deltaRanger.metadata.config", metadataConfig.toString)
       .config("spark.ui.enabled", "false")
       .config("spark.driver.host", "127.0.0.1")
+      // Installed user collection is qualified with AQE off. Dedicated native tests enable it.
+      .config("spark.sql.adaptive.enabled", "false")
       .config("spark.sql.shuffle.partitions", "2")
       .config("spark.databricks.delta.snapshotPartitions", "2")
       .config("spark.sql.warehouse.dir", directory.resolve("warehouse").toString)

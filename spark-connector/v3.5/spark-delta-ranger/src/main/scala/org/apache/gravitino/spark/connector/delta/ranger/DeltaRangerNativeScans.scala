@@ -82,13 +82,44 @@ private[ranger] final class DeltaRangerNativeScans private (
     frozen = true
     DeltaRangerNativeScans.attach(
       plan,
-      new DeltaRangerNativeScans.Prepared(this, operation, mapped, plan.output, emptyBinding)
+      new DeltaRangerNativeScans.Prepared(
+        this,
+        operation,
+        mapped,
+        plan.output,
+        emptyBinding,
+        new DeltaRangerPhysicalPlanning.LogicalWitness(plan, session)
+      )
     )
     plan
   }
   override def bindings(): java.util.List[DeltaRangerRegistrationBindings.BoundRegistrationScan] =
     obligations.map(_.binding).asJava
   override def requireLive(): Unit = obligations.foreach(_.binding.requireLive())
+
+  override def freezeCache(
+      actual: org.apache.spark.sql.execution.LogicalRDD
+  ): java.util.function.Predicate[org.apache.spark.sql.execution.LogicalRDD] = {
+    val frozen = DeltaRangerNativeProvenance.binding(actual)
+    candidate => {
+      requireLive()
+      if (DeltaRangerNativeProvenance.binding(actual) != frozen)
+        throw new SecurityException("Original native cache binding changed")
+      DeltaRangerNativeProvenance.binding(candidate) == frozen
+    }
+  }
+
+  override def sealReconstruction(
+      operation: DeltaRangerNativeOperation,
+      actual: LogicalPlan,
+      stats: Boolean
+  ): Runnable = {
+    if (!operation.ownedBy(this))
+      throw new SecurityException("Native reconstruction has a different scan owner")
+    val witness =
+      DeltaRangerNativeProvenance.returnedReconstruction(actual, operation, session, stats)
+    () => witness.requireValid(actual, session)
+  }
 
   def run[T](body: DeltaRangerNativeOperation => T): T = {
     val operation = DeltaRangerNativeOperation.prepare(this)
@@ -120,6 +151,8 @@ private[ranger] final class DeltaRangerNativeScans private (
     if (matched.isEmpty) throw new SecurityException("Native index has no original obligation")
     matched
   }
+  def validateAction(session: SparkSession): Unit = receipt.validateAction(session)
+
   override def toString: String = "Native Delta scan owner"
 }
 
@@ -137,7 +170,8 @@ private[ranger] object DeltaRangerNativeScans {
       private val preparation: DeltaRangerNativeOperation,
       val occurrences: Vector[Occurrence],
       private val output: Seq[Attribute],
-      private val emptyBinding: Option[Vector[Any]]
+      private val emptyBinding: Option[Vector[Any]],
+      private val executable: DeltaRangerPhysicalPlanning.LogicalWitness
   ) {
 
     /** Verifies occurrence bindings; the later physical gate must also verify executable behavior.
@@ -174,6 +208,14 @@ private[ranger] object DeltaRangerNativeScans {
       )
         throw new SecurityException("Empty native preparation changed")
     }
+    def recoverExecutable(session: SparkSession): LogicalPlan =
+      executable.replay(session, plan => verify(plan, session))
+
+    def verifyExecutable(plan: LogicalPlan, session: SparkSession): LogicalPlan = {
+      verify(plan, session)
+      executable.verify(plan, session)
+    }
+
     override def toString: String = "Prepared native occurrence evidence"
   }
 
@@ -188,6 +230,8 @@ private[ranger] object DeltaRangerNativeScans {
   private val tag = TreeNodeTag[Reference]("gravitino.delta.ranger.native-preparation")
   private def attach(plan: LogicalPlan, prepared: Prepared): Unit =
     plan.setTagValue(tag, new Reference(prepared))
+
+  def evidence(plan: LogicalPlan): Option[Prepared] = plan.getTagValue(tag).map(_.get)
 
   def prepared(plan: LogicalPlan): Prepared =
     plan.getTagValue(tag).getOrElse(throw new SecurityException("Missing native preparation")).get
@@ -273,7 +317,7 @@ private[ranger] object DeltaRangerPreparedIndex {
         throw new SecurityException("Native prepared continuation does not bind this index")
       preparation.requireEvidence(owner.session)
       owner.invoke(index, partitions, data) { operation =>
-        operation.capture(original, scan.scannedSnapshot)
+        operation.captureRetained(original, scan.scannedSnapshot, preparation)
         body
       }
     }

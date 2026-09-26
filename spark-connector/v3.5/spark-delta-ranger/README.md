@@ -20,11 +20,11 @@
 # Optional Spark Delta Ranger adapters
 
 This optional module supplies the native Delta catalog wrapper, separate metadata reader,
-policy engine and bounded fresh SELECT extension. The base/default Delta runtime has no
+policy engine and bounded SELECT collection extension. The base/default Delta runtime has no
 Ranger dependency. Spark 3.5.4/3.5.6, Delta 3.3.0/3.3.2 and Scala 2.12 remain deployment inputs.
 Packaged four-pair public Gravitino/Ranger acceptance is a separate qualification gate.
 
-## Fresh SELECT startup and boundary
+## SELECT startup and boundary
 
 Configure the Gravitino driver plugin before creating the first Spark session. Both
 `spark.gravitino.enableDeltaSupport=true` and
@@ -79,8 +79,8 @@ The binding retains the complete native schema, protocol, partition ordering and
 evidence, and checks the native logical schema against Gravitino columns. Partitioned tables
 and name-mapped columns have
 native fallback tests on all four supported version pairs. Schema forms where Delta drops
-`NullType` columns currently reject because the resulting schemas differ. These load checks do
-not install action-time validation for a retained Dataset; that enforcement remains incomplete.
+`NullType` columns currently reject because the resulting schemas differ. The installed collection guard rechecks the retained registration and original authorization
+obligations before each supported collection.
 
 Application discovery must already expose each catalog using the local-only
 `CATALOG/USE_CATALOG/ALLOW` visibility grant. A hidden catalog is absent from Spark registration;
@@ -112,10 +112,12 @@ request-generating authorization/filter/mask rules are not installed.
 Ordinary loading and native scan preparation use finite, owner-bearing operations. Loading
 carries the actual PUBLISHED observation through native loading and seals against the completed
 registration binding. Preparation consumes the complete original decision receipt. Actual state
-and statistics getters seal only their returned RDD identities and full outputs; reentrant cache
-candidates remain analysis-only until then. A successful close freezes issuance and preserves
+and statistics getters seal their exact returned cached RDD identities/full outputs or an owned
+uncached reconstruction recipe; reentrant candidates remain analysis-only until capture completes. A successful close freezes issuance and preserves
 sealed evidence, while failure invalidates that operation's evidence. Later cache use requires
-explicit rebinding through the current owner's actual snapshot getters. Empty encoder helpers
+explicit rebinding through the current owner's actual snapshot getters. After Delta uncaches a
+retained snapshot, a matching-files continuation may preserve the original successful preparation's
+exact state-cache evidence while completing both fresh getter observations. Empty encoder helpers
 remain analysis-only and cannot authorize execution.
 
 Prepared indexes retain their original scan occurrences and selected snapshot. A delayed
@@ -130,7 +132,7 @@ reads from the same owned table log. It binds actual function objects and preser
 function occurrence counts during reclassification, accounting for canonical-path projection
 pushdown by exact log leaf and path field. Delta's canonical-path and size-collector UDFs require
 their pinned origin, signature and argument lineage. Spark's typed `AddFile` select
-requires its exact encoder, field/filter structure and owned state RDD. Arbitrary same-schema
+requires its exact encoder, field/filter structure and owned returned state lineage. Arbitrary same-schema
 RDDs, substituted functions, mixed log roots, Python UDFs, subqueries and commands reject. The
 native private testing callback is neither called nor replaced; trusted launcher code must not
 inject callbacks or replace pinned classes. These finite routes do not cover every checkpoint or
@@ -143,7 +145,7 @@ masks. The complete batch uses one policy evaluation time. Registration publicat
 subject and SQL configuration changes observed during analysis reject the plan. Decisions are
 captured once and used for rewriting; analyzer reentry validates the receipt without remasking.
 
-The receipt also exposes a separate driver-only action validator for the later collection gate.
+The installed driver-only collection guard calls the original receipt's action validator.
 It reauthorizes every original occurrence before reevaluating any mask/filter, using one fresh
 policy time for the complete action. Changed decisions, including NONE/absent decisions, reject
 without rewriting the retained plan. Binding-owned native operations inspect each retained exact
@@ -154,8 +156,13 @@ changes, expiry, and changed subject/configuration/engine publications reject. F
 work precedes the final subject and engine checks. These are optimistic observations, not a write
 fence or a latest-rows promise.
 
-Component tests call this validator on actual captured named-table receipts. No physical guard
-invokes it yet, so this does not establish retained `collect`/`collectAsList` enforcement.
+For the qualified grammar, both first and repeated `collect`/`collectAsList` on the same Dataset
+enter one visible outer guard. It compares the actual physical child to its sealed binding before
+validation and again after metadata callbacks, before delegating collection. A defense-in-depth
+execution check also remains. The guard preserves Spark's visible child, stock cleanup traversal,
+code generation, row/columnar transitions and qualified exchange reuse. Copied or deserialized
+evidence cannot authorize changed executable sources, expressions or outputs. Canonicalized
+guards and deserialized driver references are inert.
 
 Before native preparation, the receipt compares the incoming plan with a replay of the approved
 plan through the qualified Spark optimizer prefix. Actual source identities, expressions,
@@ -168,9 +175,20 @@ unqualified transformations reject rather than acquire authority from a copied r
 The installed asymmetric self-join route uses the owned delayed callback, retaining both
 original scan obligations even when the same table is loaded twice. Empty-result optimization
 also retains every original obligation, including when Spark collapses a masked projection to
-an empty relation. Logical native evidence and index ownership are inputs to the later physical
-classifier; they do not install collection-time revocation checks on retained Datasets. Physical
-provenance, retained-action enforcement, deployment and full Delta-operation gates remain open.
+an empty relation. Physical bootstrap independently lowers the sealed complete prepared recipe through exact pinned
+optimizer/planner/preparation manifests. Custom optimizer, planner, columnar or adaptive rules
+reject before invocation. It compares the actual candidate directly; collection never replans or
+runs optimizer rules. Delayed native pre-CBO planning uses only a sealed successful native owner,
+with a finite structural correspondence for generated nested-field aliases.
+
+User AQE must be disabled (`spark.sql.adaptive.enabled=false`); enabling it rejects without changing
+the setting. Native AQE retains its existing enabled setting and independently binds input and
+initialized plans, exact hidden exchange stages and complete ordered coalesced reducer coverage.
+Partial/skew/local/unknown adaptive shuffle mappings are unqualified. User SQL cache substitution,
+including populated or nested caches carrying copied receipts, rejects; owned native persisted
+RDDs remain supported. These controls qualify Dataset collection, not arbitrary raw RDD/iterator
+or execute APIs, running-action cancellation, full native-index serialization, or every Delta route.
+Packaged deployment and full Delta-operation acceptance remain separate gates.
 
 ## Deployment
 

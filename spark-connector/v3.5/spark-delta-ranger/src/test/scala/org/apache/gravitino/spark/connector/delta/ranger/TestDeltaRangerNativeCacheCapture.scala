@@ -79,7 +79,8 @@ class TestDeltaRangerNativeCacheCapture {
         )
         writeEventInventory("standalone", spark, capture, Seq(state, stats))
       },
-      Some(extensions => installObservers(extensions, capture))
+      Some(extensions => installObservers(extensions, capture)),
+      startupOptions = Map("spark.sql.adaptive.enabled" -> "true")
     )
   }
 

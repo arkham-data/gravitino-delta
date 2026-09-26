@@ -22,6 +22,7 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRegistrationBindings.BoundRegistrationScan;
@@ -69,6 +70,17 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     List<BoundRegistrationScan> bindings();
 
     void requireLive();
+
+    /** Freezes the exact cached getter return for later scan continuation comparisons. */
+    default Predicate<LogicalRDD> freezeCache(LogicalRDD actual) {
+      throw denied();
+    }
+
+    /** Seals the exact uncached getter return under this scan owner, or fails closed. */
+    default Runnable sealReconstruction(
+        DeltaRangerNativeOperation operation, LogicalPlan actual, boolean stats) {
+      throw denied();
+    }
   }
 
   private final SparkSession session;
@@ -78,6 +90,8 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   @Nullable private final ScanOwner scanOwner;
   @Nullable private final BoundRegistrationScan retainedOwner;
   private final List<Lineage> lineages = new ArrayList<>();
+  @Nullable private DeltaRangerNativeOperation statePreparation;
+  @Nullable private Returned retainedState;
   private final List<Seq<Attribute>> aggregateOutputs = new ArrayList<>();
   @Nullable private BoundRegistrationScan completedLoad;
   @Nullable private Snapshot capturing;
@@ -227,6 +241,34 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     successful = true;
   }
 
+  void captureRetained(
+      TahoeLogFileIndex index, Snapshot snapshot, DeltaRangerNativeOperation preparation) {
+    requireActive();
+    if (scanOwner == null
+        || invokedIndex == null
+        || callback != Callback.MATCHING_FILES
+        || preparation == this
+        || !preparation.succeeded()
+        || preparation.callback != Callback.PREPARE
+        || preparation.scanOwner != scanOwner
+        || preparation.session != session
+        || statePreparation != null) throw denied();
+    preparation.requireEvidence(session);
+    Lineage original =
+        preparation.lineages.stream()
+            .filter(l -> l.index == index && l.snapshot == snapshot && l.complete())
+            .findFirst()
+            .orElseThrow(DeltaRangerNativeOperation::denied);
+    if (original.state == null
+        || original.state.cache == null
+        || original.state.cacheBinding == null) throw denied();
+    statePreparation = preparation;
+    retainedState = original.state;
+    // The original stats recipe retains this old state RDD after Snapshot.uncache().
+    // This evidence does not complete fresh capture or transfer the old stats cache.
+    capture(index, snapshot);
+  }
+
   void capture(TahoeLogFileIndex index, Snapshot snapshot) {
     requireActive();
     if (capturing != null || snapshot.deltaLog() != index.deltaLog()) throw denied();
@@ -267,12 +309,17 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   }
 
   boolean contains(LogicalRDD rdd, boolean stats) {
+    requireEvidence(session);
+    if (!stats && statePreparation != null) {
+      statePreparation.requireEvidence(session);
+      if (same(retainedState, rdd)) return true;
+    }
     return lineages.stream().anyMatch(l -> same(stats ? l.stats : l.state, rdd));
   }
 
   boolean contains(TahoeLogFileIndex index, Snapshot snapshot) {
     return lineages.stream()
-        .anyMatch(l -> l.index == index && l.snapshot == snapshot && l.stats != null);
+        .anyMatch(l -> l.index == index && l.snapshot == snapshot && l.complete());
   }
 
   void recordAggregate(Seq<Attribute> output) {
@@ -324,32 +371,70 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     }
   }
 
-  private static LogicalRDD returned(Supplier<LogicalPlan> getter) {
+  private Returned returned(Supplier<LogicalPlan> getter) {
     LogicalPlan result = getter.get();
-    if (!(result instanceof LogicalRDD) || result.isStreaming()) throw denied();
-    return (LogicalRDD) result;
+    if (result.isStreaming()) throw denied();
+    if (result.getClass() == LogicalRDD.class) {
+      LogicalRDD cache = (LogicalRDD) result;
+      return new Returned(
+          cache, scanOwner == null ? null : Objects.requireNonNull(scanOwner.freezeCache(cache)));
+    }
+    if (scanOwner == null) throw denied();
+    return new Returned(scanOwner.sealReconstruction(this, result, statsCapture));
   }
 
-  private static boolean same(@Nullable LogicalRDD captured, LogicalRDD candidate) {
+  private static boolean same(@Nullable Returned captured, LogicalRDD candidate) {
     return captured != null
-        && captured.rdd() == candidate.rdd()
-        && captured.output().equals(candidate.output())
-        && !candidate.isStreaming();
+        && captured.cache != null
+        && captured.cache.rdd() == candidate.rdd()
+        && captured.cache.output().equals(candidate.output())
+        && !candidate.isStreaming()
+        && (captured.cacheBinding == null || captured.cacheBinding.test(candidate));
   }
 
   private static SecurityException denied() {
     return new SecurityException("Native Delta operation ownership is unavailable");
   }
 
+  private static final class Returned {
+    @Nullable private final LogicalRDD cache;
+    @Nullable private final Runnable reconstruction;
+    @Nullable private final Predicate<LogicalRDD> cacheBinding;
+
+    private Returned(LogicalRDD cache, @Nullable Predicate<LogicalRDD> cacheBinding) {
+      this.cache = cache;
+      this.reconstruction = null;
+      this.cacheBinding = cacheBinding;
+    }
+
+    private Returned(Runnable reconstruction) {
+      this.cache = null;
+      this.cacheBinding = null;
+      this.reconstruction = Objects.requireNonNull(reconstruction);
+    }
+
+    private void requireValid() {
+      if (cacheBinding != null && !cacheBinding.test(Objects.requireNonNull(cache))) throw denied();
+      if (reconstruction != null) reconstruction.run();
+    }
+  }
+
   private static final class Lineage {
     private final TahoeLogFileIndex index;
     private final Snapshot snapshot;
-    @Nullable private LogicalRDD state;
-    @Nullable private LogicalRDD stats;
+    @Nullable private Returned state;
+    @Nullable private Returned stats;
 
     private Lineage(TahoeLogFileIndex index, Snapshot snapshot) {
       this.index = index;
       this.snapshot = snapshot;
+    }
+
+    private boolean complete() {
+      if (state == null || stats == null) return false;
+      state.requireValid();
+      stats.requireValid();
+      return true;
     }
   }
 }

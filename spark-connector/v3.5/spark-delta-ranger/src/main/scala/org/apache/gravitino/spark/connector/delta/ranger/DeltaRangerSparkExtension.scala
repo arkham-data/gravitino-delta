@@ -46,6 +46,7 @@ class DeltaRangerSparkExtension private[ranger] (
         DeltaRangerSparkExtension.validateExtensions(spark.conf.get("spark.sql.extensions", ""))
       new DeltaRangerReadRule(spark, scan => catalogs(spark, scan))
     })
+    extensions.injectColumnar(spark => new DeltaRangerColumnarRule(spark))
     extensions.injectPreCBORule(spark => new DeltaRangerPreCboRule(spark))
     extensions.injectCheckRule(spark => plan => DeltaRangerReadRule.check(plan, spark))
   }

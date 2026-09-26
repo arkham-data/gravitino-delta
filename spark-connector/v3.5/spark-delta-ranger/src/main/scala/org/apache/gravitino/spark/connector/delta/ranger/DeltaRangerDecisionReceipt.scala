@@ -191,6 +191,9 @@ private[ranger] object DeltaRangerDecisionReceipt {
 
   def qualifyNative(plan: LogicalPlan, spark: SparkSession): Unit = new Prefix(spark).qualify(plan)
 
+  private[ranger] def nativePrefix(plan: LogicalPlan, spark: SparkSession): LogicalPlan =
+    new Prefix(spark).expectedPlan(plan)
+
   def consumeOwned(
       plan: LogicalPlan,
       spark: SparkSession,
@@ -390,6 +393,7 @@ private[ranger] object DeltaRangerDecisionReceipt {
       super.defaultBatches.takeWhile(_.name != "Pre CBO Rules")
 
     def qualify(plan: LogicalPlan): Unit = {
+      DeltaRangerPhysicalPlanning.qualify(spark)
       val actual = spark.sessionState.optimizer.batches
       if (actual.count(_.name == "Pre CBO Rules") != 1) denied("optimizer boundary changed")
       val boundary = actual.find(_.name == "Pre CBO Rules").get

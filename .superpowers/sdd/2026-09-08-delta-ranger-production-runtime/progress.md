@@ -1022,3 +1022,689 @@ regression remains source-guarded, not forced through actual monotonic DeltaLog.
 Implementer released source/Gradle ownership; no builds/services remain owned.
 Physical guard still uninstalled; actual retained collection remains next gate.
 Safe local checkpoint follows14-path allowlist; no evidence/runtime/privatefiles.
+
+Action-validator checkpoint1dd224183fac4f47928ae1d9e88f838eecf826a9 committed
+locally:14safe files,1444insertions/14deletions,exact current/index hashes and
+known-credential scan clean. No private evidence/runtime staged, no push/PR.
+Tree clean at checkpoint; this ledger update follows it. Next implementation base
+is1dd224183. Author ownership will transfer to fresh physical-guard implementer;
+all services/live fixtures remain untouched.
+
+Task4 physical guard dispatched to /root/implement_physical_guard (gpt-6-astra,high,fresh context),base1dd224183. Sole source/Gradle owner; root retains docs/git/evidence/services. Existing physical-provenance design nine gates plus dependent brief are binding. Report task-4-physical-guard-report.md. No live/service/demo changes authorized in this increment.
+
+Physical implementer found concrete bootstrap gap: accepted Prepared.verify
+checks exact occurrence/backing/output only and explicitly delegates executable
+behavior validation to later physical gate. Copied Prepared tags on changed
+Filter/Project cannot authorize physical witness creation. Root verified actual
+source and confirmed no earlier ruling closes this gap. Author characterizes
+missing installed contract, then proposes finite suffix/lowering binding before
+authority changes. Guidance: seal full returned prepared logical binding at actual
+native completion; qualify finite suffix before replay, exact backings preserved;
+separately bind physical lowering and pre-columnar prefix. Unknown/custom rules
+must not be invoked before qualification. No general optimizer/planner replay
+or marker authority approved; root awaits bounded source-backed proposal.
+
+User requested quick stop and milestone summary. Root sent pause instruction and interrupted physical implementer. No new implementation/builds until explicit resume. Preserve current source/evidence; accepted action-validator checkpoint remains1dd224183.
+
+User resumed with Continue. Same physical implementer resumed via followup_task; sole source/Gradle ownership reinstated, same base1dd224183/brief. Both prior attempts completed exit1; original XML under root inspection before behavioral claims. No services/live/demo changes.
+
+Physical originalXML root verified: installed-red1test/1failure/0errors/0skips
+(actual production named query lacks outer guard); bootstrap-characterization
+1test/1failure/0errors/0skips (copiedPrepared authority accepts changed equality
+filter with same output/backing). Missing new physical contract, not a regression
+claim about accepted occurrence-only Prepared.verify. No setup-error relabeling.
+Author resumed bounded proposal; no complete physical authority established yet.
+
+## Physical bootstrap ruling (2026-09-23)
+
+Ruling: approve bounded suffix/planner/pre-columnar replay as a refinement of
+existing physical provenance design. Prepared occurrence/output evidence alone
+cannot mint executable physical authority. Seal actual successfully returned
+prepared/native logical output with complete executable binding; retain the
+original receipt and exact issued sources. Verify sealed original before/after
+replay and compare the actual final logical candidate directly to the expected
+result. Never optimize a supplied candidate into acceptance.
+
+Qualify exact class identities, order, strategy and configuration of every replayed
+suffix, planner and pre-columnar rule before invocation; custom rules/strategies
+must have zero-invocation rejection controls. A SparkOptimizer suffix subclass,
+standalone qualified stock SparkPlanner plus exact native strategy, public
+QueryExecution.createSparkPlan and protected preparations exposure are allowed.
+No reflection/private-package bridge, prepare/execute/toRdd or user execution for
+provenance discovery. User AQE remains explicitly unsupported, not disabled.
+
+Replay/lowering occurs at physical bootstrap. At collection compare the actual
+retained child to sealed complete physical binding, then validate the actual
+original action receipt; do not replan or execute user work to authorize it.
+Native bootstrap consumes already owned sealed evidence, never issues from a
+candidate or invokes complete user validation recursively. Hidden native AQE
+stage/reuse evidence remains exact and required exchange root categories survive.
+Generated ExprIds/functions and schema copies require finite explicit structural
+correspondence tied to exact source/function provenance; never omit them or use
+schema/path/class-name equivalence as authority.
+
+Why: copied Prepared tags already characterize an expression-substitution gap;
+existing public seams can independently derive expected physical behavior while
+preserving source ownership. Cost if wrong: replay complexity, additional planning
+work and explicit unsupported transformations. Characterize schema copies,
+aggregate ExprIds and native AQE rewrites before claiming acceptance. Preserve all
+nine integration gates and current native positives; no newly implied Delta
+feature support. Escalate concrete mismatches instead of broadening authority.
+
+Ruling sent to sole implementer; production implementation proceeds.
+
+Physical semantic preparation focused GREEN root parsed originalXML1/0/0/0,exit0 (physical-guard-semantic-green-3). Actual optimized named plan passes full semantic suffix replay; changed predicate with copied exact prepared evidence rejects. Prior green/green-2 compile-only attempts preserved, not behavioral evidence. Guard remains uninstalled; physical lowering and early planner/extension zero-invocation controls next.
+
+Root checked official Spark QueryExecution source on both tags:
+https://raw.githubusercontent.com/apache/spark/v3.5.4/sql/core/src/main/scala/org/apache/spark/sql/execution/QueryExecution.scala
+https://raw.githubusercontent.com/apache/spark/v3.5.6/sql/core/src/main/scala/org/apache/spark/sql/execution/QueryExecution.scala
+createSparkPlan delegates planner(ReturnAnswer).next; protected preparations
+exposes prefix. Full lazy analyzed/optimizedPlan/executedPlan/command paths are
+excluded from authority bootstrap. PlanDynamicPruningFilters/PlanSubqueries in
+prefix require no-subquery grammar qualification before invocation. QueryExecution
+is accessible by pinned Scala signatures, documented internal: no stable API
+promise. Sent source check to implementer; no scope/ruling change.
+
+Physical lowering GREEN root parsed2/0/0/0,exit0 (physical-guard-lowering-green): real physical projection/filter/transitions/codegen and normalclone pass independently lowered recipe; changed predicate rejects; unknown injected planner rejects before invocation. No installed-guard claim yet. Native sealed suffix ownership and callbacks next.
+
+First installed physical-guard attempt exit1,originalXML1test/1failure: native named-load bootstrap fails behind unchanged registration sanitizer before guard assertion. Author uses temporary new-callback SLF4J diagnostics to identify exact mismatch; no admission relaxation. Remove temporary diagnostics before final source freeze.
+
+Native bootstrap diagnostics report sole mismatch: scala.Tuple2 identity in
+expression-product fields; rest of recipes match sources/functions/outputs/lambda
+IDs. Existing NativeProvenance.value treats non-Expression product containers as
+opaque identity. Root accepts narrow exact-Tuple2 structural binding recursively
+of both fields, conditional on observed actual field types and real native positive
+plus changed nested-field negative. No generic Product, function/source identity,
+ID/schema/path relaxation. Author proceeds; diagnostics preserved and temporary
+output removed before final freeze. No installed GREEN claim yet.
+
+Author reports exact Tuple2 structural binding advanced installed native load past
+logical comparison to physical comparison. Subsequent implementation-order bug:
+Seq and StructType satisfy Function1, so earlier function identity case shadowed
+explicit container/type binding (compiler unreachable-Seq warning). Fixed case
+order: explicit known containers/types before actual function identity, without
+logical genericProduct admission. Actual installed retry running; tuple field
+classes and changed native CaseWhen condition control still required. No all-gate
+GREEN claim; diagnostics/failed attempts preserved.
+
+First installed positive GREEN root parsed physical-guard-native-containers-green
+originalXML1/0/0/0,exit0: actual named masked/filter Dataset retains same executed
+root with one outer production guard; collect then collectAsList return exact
+rows. Native loading/reconstruction/cache/aggregate traverses installed classifier.
+Iteration still includes diagnostics; not frozen or fullGate1/wholeTask acceptance.
+Entry reevaluation, first/repeated stale denials, nested-tuple negative and enabled
+native AQE characterization next; all nine gate acceptance remains pending.
+
+## Native AQE and final child verification rulings
+
+Ruling: AdaptiveSparkPlanExec.initialPlan is an allowed additional discovery seam.
+Root checked the public non-lazy transient val in both pinned official sources:
+https://raw.githubusercontent.com/apache/spark/v3.5.4/sql/core/src/main/scala/org/apache/spark/sql/execution/adaptive/AdaptiveSparkPlanExec.scala
+https://raw.githubusercontent.com/apache/spark/v3.5.6/sql/core/src/main/scala/org/apache/spark/sql/execution/adaptive/AdaptiveSparkPlanExec.scala
+Its constructor computes it with query-stage prep rules; reading it does not start
+execution. Qualify all adaptiveRulesHolder extensions and custom cost evaluator
+before Adaptive construction. Independently bind raw inputPlan and initialized
+initialPlan to sealed native ownership; its presence is not authority. Carry one
+plan-owned exact subtree inventory into native stage callbacks, inspect hidden
+QueryStageExec.plan/reuse edges, and preserve exchange root categories. Complete
+ordered nonoverlapping CoalescedPartitionSpec reducer coverage is a finite allowed
+native correspondence; partial/skew/local or unknown forms remain rejected until
+qualified. Never use finalPhysicalPlan/getFinalPhysicalPlan/materialize/execute for
+discovery. Actual native enabled positives, mixed/missing stage negatives and
+user-specific AQE denial with unchanged enabled setting are required. Cost if wrong:
+additional explicit native unsupported routes, not unverified admission.
+
+Ruling: perform a final pure physical-child witness verification after successful
+receipt.validateAction, in addition to the initial physical check. Current UserTicket
+validates physical child only before metadata I/O. Action validation rechecks
+original logical structure after that I/O, but a callback can mutate a physical-only
+folded literal/expression separately. The executable child needs the same observed
+post-I/O integrity check. Use the same retained witness, no replay/execute. Add an
+actual optimized physical-payload mutation in final metadata callback leaving
+original receipt structure unchanged; require guard rejection before child work.
+Cost is one bounded pure tree check per validation; no atomic change-and-revert or
+running-action cancellation promise. Root identified this while inspecting the
+new integration boundary; no root source edit.
+
+Native enabled-AQE focused GREEN root parsed physical-guard-native-aqe-binding
+1/0/0/0,exit0: genuine named load succeeds with enabled AQE and query reaches
+specific unsupported-user-AQE rejection, setting remains true. Initial/stage
+inventory binding implemented; explicit hidden-stage observations and mixed/missing
+stage negatives remain, so not completeGate7 or native matrix qualification.
+Non-AQE control retry before this was compile-only(undefined obsolete before
+metric variable), not behavioral failure. Final physical-only post-metadata
+mutation RED remains next. Counters must distinguish legitimate native metadata
+jobs from actual user-child work; scan metrics reset alone do not prove zero
+prepare calls. Sent this distinction to author.
+
+Approved test-only actual native-stage observation: register QueryExecutionListener
+before named load, retain successful native QueryExecution, then read initialized
+plans after success and Adaptive.executedPlan's plain currentPhysicalPlan getter.
+Root official-source check distinguishes this getter from executing finalPhysicalPlan.
+No production discovery change or lazy execution to fabricate evidence. Require
+actual nonempty captures and callback ordering/drain, then missing/mixed negatives
+using retained tickets on genuine completed hidden stages.
+
+## Installed child-work observability ruling
+
+Ruling: preserve zero user-child preparation/execution before stale collection
+rejection, but replace the demand for direct counters on every actual stock child
+with explicitly composed evidence where public seams cannot supply those counters.
+Actual Dataset executed root is retained; subclass/mock/wrapper instrumentation
+changes the physical tree/class that the witness is required to reject. Inline
+spy produces a replacement object. Do not add reflection/private-package bridges,
+bytecode instrumentation or production observer hooks for these assertions.
+
+Required composition: verify actual production guard executeCollect validates
+before super.executeCollect or any child work; rerun instrumented-child component
+tests on that same guard proving zero prepare/execute on denial; installed real
+same-Dataset tests assert exact collection-entry validation stack before guard
+doExecute, with actual user scan metrics and warm-case job evidence where valid.
+Native metadata jobs are distinct from user-child execution; Dataset resets scan
+metrics, so zero metrics alone do not prove zero prepare. Reports must label the
+composition and direct-count observability limit, never invent real-child counts.
+
+Why: testing an unauthorized replacement tree would establish the wrong boundary;
+composed runtime and source evidence tests the actual guard path without weakening
+physical matching. Cost: real stock child preparation is established compositionally,
+not measured by per-child callback counters. Independent reviewer must evaluate
+that evidence, and can raise a substantive gap. This supersedes direct-counter
+method wording in the older integration gate, not its required zero-work behavior.
+
+Current guard source SHA256 8a53473a76759878312ab36eeb08ee5b8e607ff9fbddd05044f2b88d2d30c5d1; compare accepted component baseline during final gate.
+
+Final physical post-metadata recheck RED root verified originalXML1/1/0/0:
+physical-guard-final-physical-check-red-2 fails exact collection-entry requirement
+because guard doExecute frame is present. GREEN root verified
+physical-guard-final-physical-check-green9/0/0/0,exit0. Original analyzed binding
+unchanged; final metadata callback mutates folded physical-only UTF8 payload;
+new final pureverify rejects in executeCollect before guard doExecute/user scan.
+Also covers unchanged row/vectorized collection, retained first/reused access
+denial, copied-expression/planner negatives and enabled native AQE to specific
+user rejection. Nine focused tests do not mean nine integration gates complete.
+Actual native-stage observations/negatives and broader native regression remain.
+
+Author native-stage observer captured completed real ShuffleQueryStageExec and
+verified ShuffleExchangeExec roots. First two-test attempt2/1: unchanged stage,
+missing evidence and adaptive extension zero-invocation assertions passed before
+fixture mutation; QueryStage.clone shares hidden plan, so clearing clone tags
+mutated original before mixed negative. Author fixes by explicitly cloning hidden
+plan and reruns. Do not claim entire stage gate passed from this partial attempt;
+no production fix for fixture sharing. Original attempt retained.
+
+Native stage controls retry root verified2/0/0/0,exit0 at
+physical-guard-native-stage-controls-2: actual successful hidden shuffle stages,
+exact exchange roots, unchanged/missing/mixed evidence controls, complete coalesced
+coverage and partial rejection; adaptive extension zero-invocation. Enabled test
+setting stays enabled. Author starts existing NativeOperations/NoSkipping/
+NativeSnapshotAdmission/NativeCacheCapture/CollectGuardExec regression. Shared
+supported-user fixture now explicitly configures AQE=false, while dedicated native
+AQE tests set true and verify unchanged. No production configuration mutation.
+
+## Complete authority recovery when stock preparation loses a root link
+
+Ruling: allow bootstrap from one complete sealed Prepared authority when stock
+physical preparation removes the complete root logicalLink. Never pick a logical
+candidate by output equality or candidates.head. Revalidate the actual completed
+sealed logical recipe, all original occurrence/index ownership and configuration
+before/after qualified suffix replay; independently lower that entire recipe and
+compare the complete actual physical tree, all sources/functions/expressions/
+outputs/edges. All recovered occurrence references must agree on the same parent;
+missing, mixed or ambiguous ownership rejects. Eliminated and duplicate original
+receipt obligations remain for action validation.
+
+Why: stock RemoveRedundantProjects can legitimately leave a file scan whose
+logical leaf output differs from its physically pruned output. Complete executable
+comparison derived from the captured authority is stronger than relying on a
+surviving root link. Cost: an additional explicit recovery path requiring unchanged
+simple-projection/no-skipping positives and altered source/expression/copied-tag
+negatives. Capture exact observed shape before changing; retain failed regression.
+An analogous native root recovery may consume one already sealed owned native
+witness only with the same complete independent proof; missing user authority
+never implies native, and no stage authority is minted from a candidate.
+
+Observed projection correction: the diagnostic retained the complete Project
+logicalLink, not a demonstrated disappearance. Physical FileSourceScanExec output
+qualifiers were empty while logical Project qualifiers were b/db/t; names, ExprIds
+and nullability agreed. Thus the output-equality candidate prefilter rejected a
+legitimate plan. Complete sealed-authority recovery remains the approved solution,
+without dropping qualifiers from binding. Root's earlier root-loss hypothesis is
+not the observed cause; report this distinction and preserve original diagnostic.
+
+Ruling: characterize qualified stock exchange-reuse tail by independently deriving
+its complete expected outcome at bootstrap, respecting transition/codegen/reuse
+order where relevant. Retain pre-tail and expected-reuse physical bindings and
+compare actual ReusedExchangeExec class/output/remapping/hidden referenced exchange
+directly. No collection-time rule replay, candidate canonicalization as authority,
+or generic equivalent-source exemption. Preserve duplicate original obligations.
+Require real three-way self-join reuse positive and changed reference/output
+negative; report exact finite tail coverage. Why: stock reuse can legitimately
+share execution while original authorization occurrences remain distinct. Cost:
+extra bounded bootstrap work and expected variant, not broader source matching.
+
+Root independently parsed broader native regression22/5/0/0: CollectGuardExec4/0,
+NoSkipping5/0, NativeOperations9/2, NativeSnapshotAdmission2/1,
+NativeCacheCapture2/2. Four failures are user-link candidate selection; standalone
+cache characterization additionally depended on native AQE=true and will set it
+explicitly. No full regression pass yet; counters component currently passes on
+unchanged guard hash8a53473a76759878312ab36eeb08ee5b8e607ff9fbddd05044f2b88d2d30c5d1.
+
+Complete-authority recovery GREEN root parsed physical-guard-root-recovery-green
+6/0/0/0,exit0: affected cache/native/no-skipping/unfiltered positives and actual
+retained simple projection pass; equal-but-distinct same-path prepared index with
+copied links and changed output reject. Qualifiers remain bound. Three-way actual
+exchange-reuse characterization running, original obligation count3 required.
+Broader full regression remains to rerun after changes; no matrix/source freeze.
+
+Real exchange reuse TDD root verified originalXML: physical-guard-reuse-red1/1/0/0
+fails unqualified ReusedExchangeExec at collection; reuse-green1/0/0/0,exit0
+passes same real three-way self-join with3original obligations retained. Bootstrap
+constructs exact stock transition/codegen/reuse expected variant (own callbacks
+excluded to avoid recursion), stores complete pre/tailbindings; no collection-time
+replay/candidate canonicalization. Altered referenced-source/output negatives still
+pending; author runs installed stale matrix next.
+
+Installed stale matrix iteration root independently verified: original XML in
+physical-guard-installed-stale-matrix-2, exit0, InstalledStaleness6 + actual
+three-way reuse1 =7/0/0/0. Fixture corrections isolated Mockito nested stubbing,
+Scala dangling else and Hadoop test-group mapping reuse; no production change
+was inferred from those three first-run failures. Tests include first/reused
+policy/role/subject/config/registration/lifetime denial, both owners of actual
+two-catalog broadcast, eliminated obligations, and altered reused-exchange hidden
+source/output controls. These are iterative cases, not frozen nine-gate acceptance.
+Remaining installed native/cache/copy/lifecycle coverage, regression, four-profile
+freeze and independent review stay open.
+
+Root parsed physical-guard-installed-observation-controls originalXML4/1/0/0,
+exit1: final metadata callback mutation, absent/NONE time-driven decisions, and
+folded physical mutation pass. Compatible native-head advance test fails actual
+PreparedIndex continuation capture, NativeOperation.returned requiring LogicalRDD.
+Pinned SnapshotManagement1219-1221 uncaches old snapshot on replacement;
+StateCache.getDF92-97 then returns original reconstruction via Dataset.ofRows.
+This is a compatibility failure pending bounded ownership remedy, not a successful
+stale-denial negative. Author asked to preserve exact owner proof, not broaden
+returned() to arbitrary LogicalPlan.
+
+Root also requested raw-bit float/double executable-binding characterization:
+new physical binding and reused NativeProvenance logical recipe binding currently
+use generic Number, while accepted DecisionReceipt binds raw float bits. Potential
+gap remains unconfirmed pending behavioral test. Review brief drafted but not
+dispatched against moving source; full frozen matrix remains pending.
+
+Root ruling: retained snapshot cache eviction
+
+Actual compatible-log-advance RED occurs when Delta uncaches the old snapshot and
+its owned public state getter returns reconstruction instead of LogicalRDD. Author
+may characterize and implement explicit cached-RDD versus sealed-reconstruction
+lineage for the exact actual returned state/stats getters. Only RDD lineage can
+satisfy contains(LogicalRDD); exact index/snapshot completion requires both actually
+returned validated lineages. Preserve successful preparation/index/snapshot/session
+ownership and failed/pending lifecycle checks. Reconstruction binds complete actual
+returned recipe under that operation, never schema/path identity, arbitrary logical
+plan, encoder-only evidence or self-validating cycle. Require unchanged retained
+first/reused compatible advance, forged/copied/wrong-owner/failed negatives and
+fallback regression. Preserve original RED and report broader authority changes
+before proceeding. This restores existing compatibility contract, not new scope.
+
+Root independently parsed numeric-red-and-uncache-diagnostic-2 originalXML3/3,
+exit1. Complete logical recipe signed-zero collision is confirmed behavioral RED.
+Physical-only signed-zero case has None.get fixture failure, not behavioral RED;
+author correcting subtree-ticket lookup. Decimal separated to avoid early assertion
+masking. Actual uncached getter root SerializeFromObject wraps exact Snapshot
+MapPartitions/DeserializeToObject/canonical projections/Sort/Repartition/JSON log
+relation, consistent with existing reconstruction grammar. Author implementing
+approved exact returned cached-vs-reconstruction lineage, preserving cached-only
+contains(LogicalRDD); no frozen acceptance yet.
+
+Root parsed numeric-red-and-reconstruction-lineage-4 originalXML4/4,exit1.
+Logical signed-zero, mutable Decimal, and actual physical-only signed-zero are
+now meaningful behavior REDs; physical case expected SecurityException but accepted
+the changed literal. Original logical receipt remained unchanged. Compatible advance
+passes the former LogicalRDD return restriction but rejects SerializeFromObject
+during actual analysis; diagnosis continues. Compile-only attempts3 and prior
+Java-to-Scala dependency/unused-field failures preserved separately. Current
+compile-order adaptation uses ScanOwner default-deny Runnable sealing callback;
+real owner retains exact returned plan/witness, cached-only contains unchanged.
+Potential next finite seam identified: existing nativeAddFileSelect requires
+LogicalRDD state beneath exact projection/filter/encoder. If observed failure is
+uncached reconstruction there, author may substitute explicit exact owned state-plan
+membership while preserving every existing function/encoder/field/filter condition;
+no general object-function admission. Final regression must include prior Java
+ownership/cache and action-validation suites because NativeOperation now changes.
+
+Root ruling: exact old state-cache continuity after native eviction
+
+Diagnostic confirms withStats retained original Project/SerializeFromObject(AddFile)/
+Dataset MapElements/DeserializeToObject(Tuple1)/Project(add)/Filter(IsNotNull(add))/
+LogicalRDD recipe; it does not replace this leaf with fresh reconstruction. Actual
+prepared-index continuation may adopt original successful preparation's exact STATE
+cache RDD/output for the same original index/snapshot and same scan owner/session,
+after succeeded and requireEvidence checks. Keep adopted state cache separate from
+fresh returned lineages: no skipping actual getters/early completion, no treating
+reconstruction as cached. Reject pending/failed/wrong owner,index,snapshot,session,
+changed RDD/output. Failure invalidates inherited use; all exact installed index/
+scan/preparation continuation checks remain. No generic prior-operation adoption,
+path/schema equivalence, global cache registry or old stats-cache transfer without
+a separately demonstrated need. Require actual compatible advance first/reused
+positive and adopted-old-RDD negative matrix. This preserves Delta's actual retained
+recipe rather than widening native grammar.
+
+Numeric-green-and-stats-diagnostic root originalXML: PhysicalAdmission4/0 includes
+Float/Double raw bits/NaNs, mutable logical Decimal, actual physical-only signed
+zero and folded physical Decimal, original analyzed receipt unchanged. Native
+advance remains1/1; combined5/1, not complete suite success.
+
+User steering / publication authorization (2026-09-23): "When you close the
+milestone, push to remote the branch up-to this point. We can continue working
+locally." Root will push the accepted milestone checkpoint after required validation
+and review close it, then keep subsequent work local until further authorization.
+This authorizes branch push at milestone closure, not a PR, shared deployment,
+premature milestone-completion claim or immediate push of current WIP. Existing
+source/Gradle ownership and full acceptance requirements remain unchanged.
+
+Root verified retained-state-continuity originalXML4/0/0/0,exit0: installed retained
+compatible native-head advance and schema/policy/metadata drift cases (8 loop
+scenarios), existing asymmetric broadcast fallback, copied/foreign snapshot/session
+and failed-operation controls. Exact state-only continuity remains separate from
+fresh cached/reconstruction observations; numeric4/0 is separate prior evidence.
+Explicit adoption negatives, delayed native/cache/lifecycle gates, full regression,
+frozen four-profile matrix and independent review remain pending. No milestone
+closure or branch push yet.
+
+Root ruling: delayed native pre-CBO continuation
+
+Real owned uncached state/stats planning after successful owner close reaches
+requireExecutable(analyzed) but stock qualified optimizer prefix changes recipe,
+so exact old tag cannot admit pre-CBO candidate. Retain full original admitted native
+logical recipe plus frozen binding/session/config in existing owned witness. At
+pre-CBO preparation only, recover one unambiguous sealed native parent, require
+successful/live owner, qualify existing exact Prefix before replay on sealed
+original clone, recheck original/source/config before and after, and compare actual
+candidate directly against expected prefix result. Then derive continued witness
+chained to original owner for physical bootstrap. No candidate replay, owner minting
+from absence, shape-only fallback, broad analyzer recovery, collection-time replay
+or mixed parents. Missing/pending/failed/foreign session/changed sources/functions/
+outputs/config deny. Require actual delayed execution without user guard, copied
+tag altered candidate negatives, unknown-prefix zero invocation. Any generated-ID
+or function mismatch needs concrete finite correspondence, never field omission.
+Preserve original behavioral RED.
+
+Shared-cache output mutation comparator ruling: if confirmed, freeze actual cache
+return binding at original capture through exact scan-owner pure callback; validate
+before adoption/inherited membership, no absent/no-op comparator fallback. Mutated
+source must reject even if candidate shares fields. Keep original Load/retained
+validation scope distinct; this continuation control is not their blanket proof.
+
+Original-cache-binding-green root independently parsed originalXML2/0/0/0,exit0:
+shared nested-schema mutation now rejects and full8-case installed native
+compatible/stale scenarios still pass. Actual scan-owner cache return gets frozen
+comparator; unsupported owner default-denies, adoption requires comparator and
+checks original lineage/adoption/inherited membership. Load/retained captures
+without ScanOwner keep prior scope, not a new whole-system immutability claim.
+Closed-owner qualified Prefix continuation still pending; no final freeze.
+
+Delayed-native-prefix root originalXML3/1,exit1: real delayed native planning now
+reaches exact prefix comparison; pending cache and failed-owner controls pass.
+Author diagnostic reports ten generated ExprIds differing consistently at four
+locations, no source/function/schema mismatch; identifying exact producer rule
+before any correspondence allowance. Root requires finite producer-specific
+bijective mapping, preserving every original ExprId/UUID and all attribute fields
+and producer/consumer edges; no blanket ID stripping/canonicalization.
+
+Root pending physical cross-session concern: inherited NativeTicket verify and
+fresh native recovery currently call captured-session native.requireLive/replay
+without the actual caller session. Author adding real inherited-ticket/recipe
+under another active session characterization, distinct from existing direct
+operation.requireEvidence(other) component controls. Gate5 remains pending.
+
+Root ruling: finite nested-column generated attribute correspondence
+
+Author identified actual generated _extract_path, partitionValues, size,
+modificationTime, dataChange, tags, deletionVector, baseRowId,
+defaultRowCommitVersion, clusteringProvider attributes defined by Project and used
+through Sort/Repartition. Official pinned Spark3.5.4/3.5.6 NestedColumnAliasing
+source137-142 creates Alias(GetStructField, _extract_name) with fresh ExprId;
+source URL/SHA evidence retained by author. Permit only independently expected
+exact Project Alias(GetStructField) producers absent ALL original definitions and
+references, paired by structural producer position and exact field expression.
+Keep exact classes/name/qualifier/type/nullability/metadata/UUID, injective
+bidirectional ID mapping at every definition/use, and every original ID unchanged.
+Pure comparison only, no candidate optimization/canonicalized/tree rewrite.
+Reject absent/extra/duplicate producers, merged/swapped uses, changed fields/
+children/UUIDs and maps into original IDs. Require real positive and representative
+negative controls before acceptance.
+
+Native-session-red-and-prefix-ids root originalXML2/2,exit1 confirms both inherited
+native physical ticket and fresh logical-link recovery accepted another active and
+supplied session (false,false vs expected true,true). Native-prefix-and-session-green
+root originalXML2/0/0/0,exit0: both session paths now deny; real delayed uncached
+state and stats physically plan/collect after successful owner close without user
+guard. Same completed method runs explicit original-state adoption negative matrix.
+Finite generated-alias comparator preserves original IDs/UUIDs and full remaining
+binding, seals proven candidate under parent proof chain. Representative bijection,
+copied-function and unknown-prefix negatives still pending; no final acceptance.
+
+Root verified native-continuation-negatives originalXML4/0/0/0,exit0: actual delayed
+native/adoption matrix completes, native inherited/recovered/post-columnar session
+entrypoints deny foreign active/supplied session, closed-native and existing
+unknown-prefix tests observe zero invocations. Author reports native-derived
+producer/consumer fragment negatives for absent/extra/duplicate producers,
+merged/swapped uses, changed field/class/name/qualifier/metadata/UUID and maps into
+original IDs, plus actual full pre-CBO copied-function denial. These fragments
+remain distinct from full delayed-query positive; independent review must assess
+full gate coverage. Cache/physical-spoof/lifecycle tests still in progress.
+
+Nested-target-schema-red root originalXML1/1,exit1 confirms full logical recipe
+missed an internal JsonToStructs nested target-schema mutation hidden by Boolean
+output (IsNotNull). StructType matched Seq before DataType, preserving nested
+StructField identity rather than a value snapshot. Author moved DataType/Metadata
+snapshot dispatch before Seq; focused green/float/Decimal regressions running.
+No broader datatype admission or final frozen qualification inferred.
+
+The green result completed during root check: nested-target-schema-green original
+XML3/0/0/0,exit0. Internal nested schema, raw Float/Double bits and mutable Decimal
+logical recipe regressions pass. The preceding "running" line is superseded by
+this archived result; full module/profile freeze remains pending.
+
+Root verified cache-and-delayed-controls-2 originalXML3/0/0/0,exit0. Real installed
+session InMemoryRelation public factory materializes cachedColumnBuffers count>0,
+loaded flag and rowCount3 before full/nested copied-receipt logical/physical cache
+denials; it is a materialized SQL-cache representation, not evidence of cache
+persistence across stopped fixture sessions. Pending actual getter physical QE
+attempt rejects; actual captured checkpoint/JSON/union/reconstruction recipes get
+fresh QueryExecution physical execution after owned close. First attempt compile
+failed because native SparkPlan.cleanupResources is private[sql]; test now uses
+the existing public guard override where applicable and no private access bridge.
+No whole nine-gate/frozen matrix acceptance yet.
+
+Root verified lifecycle-and-native-cache originalXML4/0/0/0,exit0: delayed persisted
+state/stats actual physical execution twice after owner close, wrong physical
+RDD/output denial; installed normal clone execution, canonicalized/inert serialized
+reference rejection; explicit guard cleanup after success/stale denial and admitted
+actual missing-data-file downstream failure; actual delayed no-skipping size
+aggregate execution. Cleanup proof must state stock visible-child traversal plus
+component counters and real installed public invocation; no direct real-stock-child
+cleanup counter was measured. Remaining physical source/function/encoder/aggregate
+spoof controls and full regression/freeze/review still pending.
+
+Root verified source-function-aggregate-spoofs originalXML3/0/0/0,exit0:
+ordinary Parquet source with same path/copied prepared links rejects; actual native
+MapPartitions/encoder function substitutions and aggregate result-expression
+changes reject physical binding, preserving native positives. Final-qualification-
+controls4/1,exit1: reuse, enabled native AQE and cache positives pass; unknown
+columnar fixture expected inner message instead of installed sanitized
+OptimizerRejected. Correct direct reason + installed wrapper + zero-invocation
+assertions pending, no production fix inferred. Actual stock Product inventory:
+TableIdentifier, BuildRight, Inner, HashedRelationBroadcastMode, UnknownPartitioning,
+REPARTITION_BY_NUM; full expected class/field bindings remain authority. Temporary
+inventory logging to be removed. Approved full companion module all four profiles
+for consistent exact test-case multisets; service/Docker/live tests remain off.
+
+Root verified final-format-and-columnar-2 original XML1/0/0/0, exit0.
+Source is frozen: module59 manifest c8e67ff6d6bbea778513fd72ec38254bb962c10c29377846e21d2122435c6c4e;
+composite87 manifest 9934bddcbe6da746185f903eec8e64e07a471a6bd6ebb93cb1e92ad37df11759.
+Review package1 diff aded00aff4dbbcb2401ffce9c4b99d8bdfd0f57fa1181e1ba3d913c682f2b394
+is prepared against1dd224183, not dispatched until first full frozen row and
+author handoff. All87 files match current, pre-run and archived source.
+Root fresh JDK17.0.16 executable-only observation is preserved separately;
+no process-role claims derive from executable-only output.
+
+First frozen full row has reported failure in TestDeltaRangerMaskRules.
+installedExtensionExecutesFreshNamedScansAndInternalNativeReconstruction at the
+old captured native-UDF rebind assertion (line208); final XML/exit still pending.
+Author preserves complete row and diagnoses capture/owner lifecycle read-only
+before proposing a fix. Freeze1/review package1 remain immutable; no independent
+review dispatched and no green qualification inferred. No source unfreeze yet.
+
+Ruling: after failed full row finishes and original XML/exit is archived, allow
+sole author test-only diagnostic assertion preserving the MaskRules positive,
+then a minimal evidence-backed correction. Capture exact original/current owner,
+plan/root/function and RDD-membership distinctions without query or credentials.
+Freeze1 and package1 remain preserved failed-row evidence. Other three matrix
+rows and independent review wait for corrected freeze2; no production authority
+relaxation is authorized by this ruling. Cost if fixture hypothesis is wrong:
+production root-cause work and a fresh complete four-profile matrix are needed.
+
+Root verified original frozen first full row XML334/1/0/0, exit1. Sole failure:
+MaskRules.installedExtensionExecutesFreshNamedScansAndInternalNativeReconstruction.
+Formatting passed; Javadoc not reached after test failure. Immutable root failure
+proof preserves XML hashes. Approved focused diagnostic proceeds; no review
+dispatch, acceptance, checkpoint or push.
+
+Mask diagnostic2 author result: original XML1/1, capture14 Filter->LogicalRDD
+unchanged, successful original PREPARE owner, same session, retained functions
+true, but RDD absent from current fresh owner state/stats. Final diagnostic
+compares exact returned RDD/output and capture lifecycle. Ruling: any fixture
+correction must retain successful-original-owner delayed positives, nonzero fresh
+current-owner rebind positives and explicit historical/foreign-cache negatives;
+never filter test inputs by admission result to obtain a pass. Original-owner
+failure would reopen production root-cause work. No authority relaxation.
+
+Diagnostic correction: capture14 uses the SAME currently returned stats RDD
+object, equal output/ExprIds/schema. Original successful-owner witness and
+requireExecutable positives pass. Prior historical-cache absence hypothesis is
+withdrawn: contains() also calls freezeCache comparator, so false membership alone
+did not establish RDD mismatch. Next targeted product-field comparison must
+identify exact opaque value mismatch. Root inspected freezeCache and native
+binding fallback; no generic Product widening or skipped fields authorized.
+
+Ruling: exact UnknownPartitioning class plus immutable numPartitions snapshot
+in NativeProvenance.value is authorized. Final diagnostic identifies field2:
+same actual current stats RDD/output/schema/order/streaming, separately allocated
+UnknownPartitioning equal by value but wrongly identity-bound. Both pinned source
+versions archived with hashes; no generic Product expansion. Add unchanged fresh
+wrapper RED/green and changed count/type negatives; retain original MaskRules
+positive and original-owner delayed positives, rerun shared mutable-schema denial.
+Remove diagnostics, freeze2; independent review may overlap four full corrected
+rows after focused green. Cost if wrong: review/regression failure blocks acceptance.
+Freeze1 failed evidence remains immutable and acceptance still needs all gates.
+
+Root verified partitioning RED1/1 and GREEN3/0 original XML/exits. Freeze2
+composite87 8fd4acdeae6528b77581b65a7e8cef61889963cf38197c9243ae792cfe1db6c4
+module59 1a347188cc3417fc677854d7010cc822ab986fe11afb45344fa4149ad8907274
+all current/pre-run/archived files match. Review-package2 diff 873729782fd6cb9c6aeaeaa97fb7742f8363eb2f832eadc17c16be4d63d79c80
+contains exact16 module changes from1dd224183. Author released source/README;
+retains sole sequential Gradle owner. Corrected four full rows pending; independent
+review will use frozen2 with final matrix evidence explicitly root-owned.
+
+Independent reviewer /root/review_physical_guard dispatched fresh context,
+gpt-6-astra/high, SPEC+QUALITY single seat against frozen2/package2. Read-only
+source/git/services, no Gradle/subagents, report task-4-physical-guard-review.md.
+Review overlaps four full corrected rows under sole author Gradle ownership;
+all acceptance remains conditional on those rows and clean review. No push yet.
+
+User-authorized milestone push preparation: read-only git ls-remote --heads
+origin refs/heads/codex/delta-spark-feasibility completed exit0 with no matching
+ref. Remote connectivity works; branch currently absent remotely. No remote
+write occurred. At accepted milestone closure use ordinary non-force branch
+push and verify published SHA; subsequent work remains local per user.
+
+Task4 physical increment review: SPEC compliant / QUALITY Approved conditional
+on four corrected freeze2 rows. Reviewer /root/review_physical_guard, report
+task-4-physical-guard-review.md; no Critical/Important, no new focused test request.
+Root closure still needs full matrix source/compiled/pins/XML/Javadoc/format,
+whole-worktree scope and unchanged default dependency isolation. Composed
+preparation/cleanup evidence accepted with explicitly documented observation
+limits; no direct real-stock-child counters or automatic cleanup claim.
+Task4: minor (deferred): qualification output hygiene: unattributed production
+Scala feature warning, prior fruitless Product test, Gradle deprecations and
+known Spark fixture group/plan warnings. Carry into whole-branch final review;
+do not mutate frozen source or rerun matrix for this minor. Expected missing-file
+negative ERROR and malformed-policy warnings remain preserved evidence.
+
+Root independently verified corrected freeze2 firstfull Spark3.5.4/Delta3.3.0:
+originalXML335/0/0/0, exit0; all87 source/current/pre-run/archive hashes,11
+compiled archives and entry hashes, exact Spark/Delta/Ranger2.8 pins match.
+Original command/log confirms spotlessCheck and Javadoc with BUILD SUCCESSFUL.
+Secondfull3.5.4/3.3.2 now running; no complete matrix/increment acceptance yet.
+
+2026-09-26 continuation classification: prior turn PROGRESS (corrected reviewed
+freeze2, firstfull335/0 and verified source/artifacts; secondrow launched). Agent
+credit interruption did not terminate the second build. Root inspected actual
+secondrow exit0/XML335/0/0/0/BUILD SUCCESSFUL16m38/Javadoc; verified87source and11
+compiled archives/pins. Both3.5.4 rows have identical335testcase multisets. No3.5.6
+row artifacts exist. Resumed SAME author /root/implement_physical_guard with sole
+Gradle ownership for only remaining two rows, no source edits or previous reruns.
+Independent review remains conditional on final matrix; no milestone closure/push.
+
+Current goal turn classified prior turn PROGRESS: verified secondfull335/0,
+resumed same author, thirdrow launched. Author polled existing session64282 live
+(no restart), worker CPU103percent and Spark3.5.6/JDK17 evidence. Root prepared
+exact22file prospective checkpoint allowlist and knowncredentialscan0; nothing
+staged. Root delegated bounded read-only live closure/harness gap map to
+/root/map_live_closure_gaps (gpt-6-sol/high), brief/report task-4-live-closure-gap-*.md.
+This is next-qualification planning, not a duplicate physical review or service
+action. Source freeze and sole author Gradle ownership remain unchanged.
+
+Read-only live closure gap map completed by /root/map_live_closure_gaps, report
+task-4-live-closure-gap-report.md. Root verified actual query loop always builds
+fresh spark.sql(...).collectAsList() and coordinator operation seams; existing
+208live checks concern old artifact, no retained Dataset, role-only or outage
+proof inferred. Next external step after physical acceptance remains fresh
+read-only process/registration/Admin/download/S3 continuity; historical56/81 and
+12object checkpoint are expectations, not current-state evidence.
+Ruling: bounded downloaded-policy retained named SELECT collect/collectAsList
+is a current-artifact milestone gate because installed physical enforcement is
+now part of that artifact. Add explicit unchanged-repeat and observed refreshed
+decision/role stale-denial cases on the pinned matrix, alongside required fresh
+SELECT/startup/cache/outage proof. This does not claim general cache/AQE/rawRDD
+or fullDelta coverage. Cost: a small test-driver retention protocol and new live
+qualification; accepting only old fresh-SQL evidence would leave the new boundary
+unqualified. Generic role/grant desired-state reconciliation and fullDelta
+operations/features/demo remain separately named subsequent rollout gates.
+
+Current goal turn: verified wait on author-owned session64282, then PROGRESS.
+Root cross-agent write_stdin returned Unknown process id because tool handles are
+owner-local; author polled64282 live directly, no restart. Third row then ended
+naturally exit0, originalXML335/0/0/0, BUILD SUCCESSFUL16m6/Javadoc. Root verified
+all87 source/current/pre-run/archive hashes,11compiled archives/entries and exact
+Spark3.5.6/Delta3.3.0/Ranger2.8 pins. All three completed rows have identical335
+testcase multisets and successful Javadoc/format. Fourth original owner session
+40779 started once for3.5.6/3.3.2; await final row, no acceptance/commit/push yet.
+
+Current continuation classifies prior turn PROGRESS: root verified third335/0
+with87source/11compiled/pins and identicalcaseinventory, fourth launched. Root
+using writing-plans for a bounded retained-query TEST harness elaboration within
+approved Task4; /root/map_live_closure_gaps follows up planning only, no source
+mutations/services/build/subagents. Target plan docs/superpowers/plans/2026-09-26-
+delta-retained-query-harness.md plus task-4-retained-query-harness-design.md.
+Existing subagent-driven execution authorization persists; root reviews concrete
+plan before dispatch after physical checkpoint. This does not replace current
+plan or waive final freeze2 row, independent review, live continuity or fullgoal.
+
+Task4 physical-guard increment: ACCEPTED, local checkpoint pending. Root final
+aggregate physical-guard-freeze2-final-matrix-root-verification.json SHA256
+74a24bb0d10417db9f1bac0241a95a4302e58d4c7ffb185ce2a4091948c9d997
+verifies four335/0/0/0 rows,1340total, identicaltestcaseCounters,87frozen sources
+each,11compiled archives/entry hashes each, exactSpark/Delta/Ranger2.8 pins,
+Scala2.12.21 library/reflect hashes and allJavadoc/BUILD SUCCESSFUL logs. Original
+Spark testXML from allfour rows recordsJava17.0.16 (separate XMLhash proof).
+Independent review conditions now resolved; no Critical/Important findings.
+71unchanged frozen build/runtime/authorization/common inputs matchacceptedbase;
+no core/API/server/client/storage-schema source changes. Author released source
+and Gradle ownership, all sessions terminal. Accepted scope remains finite
+installed namedSELECT collect/collectAsList with composed preparation/cleanup
+proof, not generalSparkexecution/liveRanger/S3/fullDelta or entireTask4 completion.
+Minor warning hygiene remains deferred to finalwholebranch review. All failed
+freeze1/diagnostic evidence preserved. Exact22file checkpoint excludes private
+evidence/runtime and nexttask draftplans; user milestonepush gate remains open.

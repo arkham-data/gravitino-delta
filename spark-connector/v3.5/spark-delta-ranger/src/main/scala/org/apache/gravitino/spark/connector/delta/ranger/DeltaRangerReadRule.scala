@@ -172,11 +172,17 @@ private[ranger] object DeltaRangerReadRule {
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
     nativeAdmission(plan, spark) match {
-      case _: DeltaRangerNativeProvenance.SealedNative => return plan
+      case native: DeltaRangerNativeProvenance.SealedNative =>
+        return DeltaRangerPhysicalPlanning.sealNative(plan, spark, native.witness)
       case DeltaRangerNativeProvenance.AnalysisOnlyNative =>
         throw new SecurityException("Pending native Delta analysis cannot execute")
       case DeltaRangerNativeProvenance.UserPlan =>
     }
+    DeltaRangerNativeProvenance.continueAtPreCbo(plan, spark).foreach { witness =>
+      return DeltaRangerPhysicalPlanning.sealNative(plan, spark, witness)
+    }
+    if (spark.sessionState.conf.adaptiveExecutionEnabled)
+      throw new SecurityException("Unsupported user AQE for Delta Ranger collection")
     val owner = DeltaRangerNativeScans.consume(plan, spark)
     owner.run { operation =>
       val prepared = new PrepareDeltaScan(spark) {
