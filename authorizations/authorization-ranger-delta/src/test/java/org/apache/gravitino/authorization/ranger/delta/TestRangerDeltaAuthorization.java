@@ -40,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.MetadataObjects;
@@ -56,6 +57,7 @@ import org.apache.gravitino.authorization.User;
 import org.apache.gravitino.authorization.ranger.RangerAuthorizationHadoopSQLPlugin;
 import org.apache.gravitino.authorization.ranger.RangerClientExtension;
 import org.apache.gravitino.authorization.ranger.RangerHelper;
+import org.apache.gravitino.authorization.ranger.RangerPrivileges;
 import org.apache.gravitino.authorization.ranger.reference.VXGroup;
 import org.apache.gravitino.authorization.ranger.reference.VXGroupList;
 import org.apache.gravitino.authorization.ranger.reference.VXUser;
@@ -245,6 +247,62 @@ class TestRangerDeltaAuthorization {
   }
 
   @Test
+  void modifyRoleChangesKeepSameNameTableInOtherCatalogUntouched() throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin pluginA = plugin();
+      Map<String, String> configB = new HashMap<>(config());
+      configB.put("authorization.ranger.delta.catalog", "delta_b");
+      configB.put("authorization.catalog.id", "21");
+      RangerAuthorizationHadoopSQLPlugin pluginB =
+          (RangerAuthorizationHadoopSQLPlugin)
+              provider().newPlugin("lake", "lakehouse-delta", configB);
+      SecurableObject modifyB =
+          table("delta_b.sales.orders", List.of(Privileges.ModifyTable.allow()));
+      SecurableObject mixedB =
+          table(
+              "delta_b.sales.orders",
+              List.of(Privileges.SelectTable.allow(), Privileges.ModifyTable.allow()));
+      SecurableObject selectB =
+          table("delta_b.sales.orders", List.of(Privileges.SelectTable.allow()));
+      pluginA.onOwnerSet(select(), null, owner("alice", Owner.Type.USER));
+      pluginB.onOwnerSet(modifyB, null, owner("bob", Owner.Type.USER));
+      pluginA.onRoleCreated(role("writer", modify()));
+      RangerPolicy policyA =
+          admin.clonePolicies().stream()
+              .filter(p -> p.getResources().get("catalog").getValues().equals(List.of("delta_a")))
+              .findFirst()
+              .orElseThrow();
+      RangerPolicy policyB =
+          admin.clonePolicies().stream()
+              .filter(p -> p.getResources().get("catalog").getValues().equals(List.of("delta_b")))
+              .findFirst()
+              .orElseThrow();
+      String unchangedA = admin.mapper.writeValueAsString(policyA);
+      String unchangedB = admin.mapper.writeValueAsString(policyB);
+      pluginB.onRoleUpdated(
+          role("writer", modify()), RoleChange.addSecurableObject("writer", modifyB));
+      assertEquals(List.of("update"), roleAccesses(admin.policies.get(policyB.getId()), "writer"));
+      assertEquals(
+          unchangedA, admin.mapper.writeValueAsString(admin.policies.get(policyA.getId())));
+      pluginB.onRoleUpdated(
+          role("writer", modify(), modifyB),
+          RoleChange.updateSecurableObject("writer", modifyB, mixedB));
+      assertEquals(
+          List.of("select", "update"), roleAccesses(admin.policies.get(policyB.getId()), "writer"));
+      pluginB.onRoleUpdated(
+          role("writer", modify(), mixedB),
+          RoleChange.updateSecurableObject("writer", mixedB, selectB));
+      assertEquals(List.of("select"), roleAccesses(admin.policies.get(policyB.getId()), "writer"));
+      pluginB.onRoleUpdated(
+          role("writer", modify(), selectB), RoleChange.removeSecurableObject("writer", selectB));
+      assertEquals(
+          unchangedB, admin.mapper.writeValueAsString(admin.policies.get(policyB.getId())));
+      assertEquals(
+          unchangedA, admin.mapper.writeValueAsString(admin.policies.get(policyA.getId())));
+    }
+  }
+
+  @Test
   void roleUpdateDoesNotTranslateForeignUnsupportedContext() throws Exception {
     try (Admin admin = new Admin()) {
       RangerAuthorizationHadoopSQLPlugin plugin = plugin();
@@ -252,7 +310,7 @@ class TestRangerDeltaAuthorization {
           SecurableObjects.parse(
               "other_provider.sales.orders",
               MetadataObject.Type.TABLE,
-              List.of(Privileges.ModifyTable.allow()));
+              List.of(Privileges.CreateTable.allow()));
       plugin.onRoleUpdated(
           role("reader", foreign), RoleChange.addSecurableObject("reader", select()));
       assertEquals(1, admin.policies.size());
@@ -275,7 +333,13 @@ class TestRangerDeltaAuthorization {
           SecurableObjects.parse(
               select().fullName(),
               MetadataObject.Type.TABLE,
-              List.of(Privileges.ModifyTable.allow()));
+              List.of(Privileges.CreateTable.allow()));
+      SecurableObject foreignModify =
+          table("delta_b.sales.orders", List.of(Privileges.ModifyTable.allow()));
+      SecurableObject deniedModify =
+          table(select().fullName(), List.of(Privileges.ModifyTable.deny()));
+      SecurableObject wrongType =
+          table(select().fullName(), List.of(Privileges.UseCatalog.allow()));
       SecurableObject denied =
           SecurableObjects.parse(
               select().fullName(),
@@ -292,13 +356,16 @@ class TestRangerDeltaAuthorization {
               MetadataObject.Type.TABLE,
               List.of(Privileges.SelectTable.allow()));
       List<Executable> rejected = new ArrayList<>();
-      for (SecurableObject object : List.of(foreign, unsupported, denied, wildcard)) {
-        rejected.add(
-            () ->
-                plugin.onRoleUpdated(
-                    role("reader"),
-                    RoleChange.addSecurableObject("reader", select()),
-                    RoleChange.addSecurableObject("reader", object)));
+      for (SecurableObject object :
+          List.of(foreign, foreignModify, unsupported, denied, deniedModify, wrongType, wildcard)) {
+        for (SecurableObject valid : List.of(select(), modify())) {
+          rejected.add(
+              () ->
+                  plugin.onRoleUpdated(
+                      role("reader"),
+                      RoleChange.addSecurableObject("reader", valid),
+                      RoleChange.addSecurableObject("reader", object)));
+        }
         rejected.add(
             () ->
                 plugin.onRoleUpdated(
@@ -422,6 +489,113 @@ class TestRangerDeltaAuthorization {
   }
 
   @Test
+  void modifyTranslationIsOnlyUpdateAndMixedAccessesAreUnique() throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin plugin = plugin();
+      assertTrue(plugin.allowPrivilegesRule().contains(Privilege.Name.MODIFY_TABLE));
+      assertEquals(
+          Set.of(RangerPrivileges.RangerHadoopSQLPrivilege.UPDATE),
+          plugin.privilegesMappingRule().get(Privilege.Name.MODIFY_TABLE));
+      SecurableObject modify = modify();
+      AuthorizationSecurableObject update = plugin.translatePrivilege(modify).get(0);
+      assertEquals(List.of("delta_a", "sales", "orders", "*"), update.names());
+      assertEquals(List.of("update"), accessNames(update));
+      assertEquals(Privilege.Condition.ALLOW, update.privileges().get(0).condition());
+      for (List<Privilege> privileges :
+          List.of(
+              List.<Privilege>of(Privileges.SelectTable.allow(), Privileges.ModifyTable.allow()),
+              List.<Privilege>of(Privileges.ModifyTable.allow(), Privileges.SelectTable.allow()),
+              List.<Privilege>of(
+                  Privileges.ModifyTable.allow(),
+                  Privileges.SelectTable.allow(),
+                  Privileges.ModifyTable.allow(),
+                  Privileges.SelectTable.allow()))) {
+        AuthorizationSecurableObject both =
+            plugin.translatePrivilege(table("delta_a.sales.orders", privileges)).get(0);
+        assertEquals(Set.of("select", "update"), Set.copyOf(accessNames(both)));
+        assertEquals(2, both.privileges().size());
+      }
+      assertTrue(plugin.translatePrivilege(table("delta_a.sales.orders", List.of())).isEmpty());
+      assertTrue(plugin.translatePrivilege(visibility()).isEmpty());
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              plugin.translatePrivilege(
+                  table(
+                      "delta_a.sales.orders",
+                      List.of(Privileges.ModifyTable.allow(), Privileges.SelectTable.deny()))));
+      assertTrue(admin.policies.isEmpty());
+    }
+  }
+
+  @Test
+  void modifyCallbacksPreserveOwnersOtherRolesAndForeignModels() throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin plugin = plugin();
+      plugin.onOwnerSet(select(), null, owner("alice", Owner.Type.USER));
+      plugin.onRoleCreated(role("other", select(), modify()));
+      RangerPolicy original = admin.clonePolicies().get(0);
+      RangerPolicy foreignAccess = admin.copy(original, RangerPolicy.class);
+      foreignAccess.setId(900L);
+      foreignAccess.setPolicyLabels(List.of());
+      foreignAccess.getPolicyItems().get(0).setUsers(List.of("foreign_user"));
+      admin.policies.put(900L, foreignAccess);
+      RangerPolicy foreignMask = admin.copy(original, RangerPolicy.class);
+      foreignMask.setId(901L);
+      foreignMask.setPolicyType(RangerPolicy.POLICY_TYPE_DATAMASK);
+      foreignMask.setPolicyLabels(List.of());
+      foreignMask.setPolicyItems(List.of());
+      RangerPolicy.RangerDataMaskPolicyItem maskItem = new RangerPolicy.RangerDataMaskPolicyItem();
+      maskItem.setUsers(List.of("foreign_user"));
+      maskItem.setAccesses(List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+      maskItem.setDataMaskInfo(
+          new RangerPolicy.RangerPolicyItemDataMaskInfo("CUSTOM", null, "'MASKED'"));
+      foreignMask.setDataMaskPolicyItems(List.of(maskItem));
+      admin.policies.put(901L, foreignMask);
+      RangerPolicy foreignFilter = admin.copy(original, RangerPolicy.class);
+      foreignFilter.setId(902L);
+      foreignFilter.setPolicyType(RangerPolicy.POLICY_TYPE_ROWFILTER);
+      foreignFilter.setPolicyLabels(List.of());
+      foreignFilter.setPolicyItems(List.of());
+      RangerPolicy.RangerRowFilterPolicyItem filterItem =
+          new RangerPolicy.RangerRowFilterPolicyItem();
+      filterItem.setGroups(List.of("foreign_group"));
+      filterItem.setAccesses(List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+      filterItem.setRowFilterInfo(new RangerPolicy.RangerPolicyItemRowFilterInfo("id = 1"));
+      foreignFilter.setRowFilterPolicyItems(List.of(filterItem));
+      admin.policies.put(902L, foreignFilter);
+      String untouched =
+          admin.mapper.writeValueAsString(
+              List.of(
+                  admin.policies.get(900L), admin.policies.get(901L), admin.policies.get(902L)));
+      String ownerAndOther = admin.mapper.writeValueAsString(admin.policies.get(original.getId()));
+
+      plugin.onRoleCreated(role("writer", modify()));
+      assertEquals(List.of("update"), roleAccesses(admin.policies.get(original.getId()), "writer"));
+      assertEquals(untouched, foreignModels(admin));
+      plugin.onRoleUpdated(
+          role("writer", modify()), RoleChange.updateSecurableObject("writer", modify(), mixed()));
+      assertEquals(
+          List.of("select", "update"),
+          roleAccesses(admin.policies.get(original.getId()), "writer"));
+      assertEquals(untouched, foreignModels(admin));
+      plugin.onRoleUpdated(
+          role("writer", mixed()), RoleChange.updateSecurableObject("writer", mixed(), select()));
+      assertEquals(List.of("select"), roleAccesses(admin.policies.get(original.getId()), "writer"));
+      assertEquals(untouched, foreignModels(admin));
+      plugin.onRoleUpdated(
+          role("writer", select()), RoleChange.updateSecurableObject("writer", select(), modify()));
+      assertEquals(List.of("update"), roleAccesses(admin.policies.get(original.getId()), "writer"));
+      assertEquals(untouched, foreignModels(admin));
+      plugin.onRoleUpdated(
+          role("writer", modify()), RoleChange.removeSecurableObject("writer", modify()));
+      assertEquals(
+          ownerAndOther, admin.mapper.writeValueAsString(admin.policies.get(original.getId())));
+      assertEquals(untouched, foreignModels(admin));
+    }
+  }
+
+  @Test
   void ownerReconciliationRepairsDesiredStateAndPreservesDistinctScopes() throws Exception {
     try (Admin admin = new Admin()) {
       RangerAuthorizationHadoopSQLPlugin plugin = plugin();
@@ -515,6 +689,40 @@ class TestRangerDeltaAuthorization {
   static SecurableObject select() {
     return SecurableObjects.parse(
         "delta_a.sales.orders", MetadataObject.Type.TABLE, List.of(Privileges.SelectTable.allow()));
+  }
+
+  static SecurableObject modify() {
+    return table("delta_a.sales.orders", List.of(Privileges.ModifyTable.allow()));
+  }
+
+  static SecurableObject mixed() {
+    return table(
+        "delta_a.sales.orders",
+        List.of(Privileges.SelectTable.allow(), Privileges.ModifyTable.allow()));
+  }
+
+  static SecurableObject table(String name, List<Privilege> privileges) {
+    return SecurableObjects.parse(name, MetadataObject.Type.TABLE, privileges);
+  }
+
+  static List<String> accessNames(AuthorizationSecurableObject object) {
+    return object.privileges().stream().map(p -> p.getName()).sorted().collect(Collectors.toList());
+  }
+
+  static List<String> roleAccesses(RangerPolicy policy, String role) {
+    String rangerRole = "GRAVITINO_METALAKE_10_ROLE_" + role;
+    return policy.getPolicyItems().stream()
+        .filter(item -> item.getRoles().contains(rangerRole))
+        .flatMap(item -> item.getAccesses().stream())
+        .map(RangerPolicy.RangerPolicyItemAccess::getType)
+        .distinct()
+        .sorted()
+        .collect(Collectors.toList());
+  }
+
+  static String foreignModels(Admin admin) throws Exception {
+    return admin.mapper.writeValueAsString(
+        List.of(admin.policies.get(900L), admin.policies.get(901L), admin.policies.get(902L)));
   }
 
   static SecurableObject visibility() {

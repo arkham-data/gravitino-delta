@@ -19,6 +19,7 @@
 package org.apache.gravitino.authorization.ranger.delta;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -90,6 +91,8 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
     return Map.of(
         Privilege.Name.SELECT_TABLE,
         Set.of(RangerPrivileges.RangerHadoopSQLPrivilege.SELECT),
+        Privilege.Name.MODIFY_TABLE,
+        Set.of(RangerPrivileges.RangerHadoopSQLPrivilege.UPDATE),
         Privilege.Name.USE_CATALOG,
         Set.of(),
         Privilege.Name.USE_SCHEMA,
@@ -99,7 +102,10 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
   @Override
   public Set<Privilege.Name> allowPrivilegesRule() {
     return Set.of(
-        Privilege.Name.SELECT_TABLE, Privilege.Name.USE_CATALOG, Privilege.Name.USE_SCHEMA);
+        Privilege.Name.SELECT_TABLE,
+        Privilege.Name.MODIFY_TABLE,
+        Privilege.Name.USE_CATALOG,
+        Privilege.Name.USE_SCHEMA);
   }
   /** {@inheritDoc} */
   @Override
@@ -111,19 +117,28 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
   @Override
   public List<AuthorizationSecurableObject> translatePrivilege(SecurableObject object) {
     List<String> names = literalNames(object);
+    EnumSet<RangerPrivileges.RangerHadoopSQLPrivilege> accesses =
+        EnumSet.noneOf(RangerPrivileges.RangerHadoopSQLPrivilege.class);
     if (object.type() != MetadataObject.Type.TABLE
         && object.type() != MetadataObject.Type.CATALOG
         && object.type() != MetadataObject.Type.SCHEMA) {
       throw new IllegalArgumentException("Unsupported Delta grant type");
     }
     for (Privilege privilege : object.privileges()) {
-      if (privilege == null
-          || privilege.condition() != Privilege.Condition.ALLOW
-          || (object.type() == MetadataObject.Type.TABLE
-              ? privilege.name() != Privilege.Name.SELECT_TABLE
-              : object.type() == MetadataObject.Type.SCHEMA
-                  ? privilege.name() != Privilege.Name.USE_SCHEMA
-                  : privilege.name() != Privilege.Name.USE_CATALOG)) {
+      if (privilege == null || privilege.condition() != Privilege.Condition.ALLOW) {
+        throw new IllegalArgumentException("Unsupported Delta privilege or condition");
+      }
+      if (object.type() == MetadataObject.Type.TABLE) {
+        if (privilege.name() == Privilege.Name.SELECT_TABLE) {
+          accesses.add(RangerPrivileges.RangerHadoopSQLPrivilege.SELECT);
+        } else if (privilege.name() == Privilege.Name.MODIFY_TABLE) {
+          accesses.add(RangerPrivileges.RangerHadoopSQLPrivilege.UPDATE);
+        } else {
+          throw new IllegalArgumentException("Unsupported Delta privilege or condition");
+        }
+      } else if (object.type() == MetadataObject.Type.SCHEMA
+          ? privilege.name() != Privilege.Name.USE_SCHEMA
+          : privilege.name() != Privilege.Name.USE_CATALOG) {
         throw new IllegalArgumentException("Unsupported Delta privilege or condition");
       }
     }
@@ -131,12 +146,12 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
       return List.of();
     }
     names.add("*");
-    return List.of(
-        new DeltaRangerResource(
-            names,
-            List.of(
-                new RangerPrivileges.RangerHivePrivilegeImpl(
-                    RangerPrivileges.RangerHadoopSQLPrivilege.SELECT, Privilege.Condition.ALLOW))));
+    List<AuthorizationPrivilege> privileges = new ArrayList<>();
+    for (RangerPrivileges.RangerHadoopSQLPrivilege access : accesses) {
+      privileges.add(
+          new RangerPrivileges.RangerHivePrivilegeImpl(access, Privilege.Condition.ALLOW));
+    }
+    return List.of(new DeltaRangerResource(names, privileges));
   }
   /** {@inheritDoc} */
   @Override
