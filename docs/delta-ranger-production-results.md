@@ -20,9 +20,9 @@
 # Delta Ranger production-chain qualification
 
 Task 4 remains in progress. Qualification on September 26–27, 2026 (UTC), passed
-the healthy SELECT, warm Admin outage, public Gravitino grant/revoke, and independent
-role-publication gates on all four Spark/Delta pairs with Ranger 2.8.0. Cold/cache
-startup, ordinary policy callback failures after persistence, and final branch
+the healthy SELECT, warm Admin outage, public Gravitino grant/revoke, independent
+role-publication, and cold/cached startup gates on all four Spark/Delta pairs with
+Ranger 2.8.0. Ordinary policy callback failures after persistence and final branch
 review remain open. The milestone checkpoint has not been pushed.
 
 These results qualify the finite named SELECT surface with user AQE explicitly
@@ -39,8 +39,9 @@ and a separate test application. The companion SHA-256 is
 `caed200d88440a0a0b45f6090d01513812bc5dcbdfdef7bb4a05d4233b36c856`;
 the application SHA-256 is
 `740907f388b06845203abeda10eda72c439799caeb6d5575ec049b61ad2bcb21`.
-Test helpers are excluded from production artifacts. These bytes, rather than
-unreviewed worktree changes, identify the following live results.
+Test helpers are excluded from production artifacts. These bytes identify the
+healthy, warm-outage, public-transition and role-publication results. The startup
+gate uses the separately identified test application below with the same companion.
 
 | Qualification | Spark 3.5.4 / Delta 3.3.0 | Spark 3.5.4 / Delta 3.3.2 | Spark 3.5.6 / Delta 3.3.0 | Spark 3.5.6 / Delta 3.3.2 |
 | --- | --- | --- | --- | --- |
@@ -48,7 +49,7 @@ unreviewed worktree changes, identify the following live results.
 | Warm Admin outage and reconnect | Passed | Passed | Passed | Passed |
 | Public privilege and membership grant/revoke | Passed | Passed | Passed | Passed |
 | Independent role-publication invalidation | Passed | Passed | Passed | Passed |
-| New JVM, empty or genuine prior cache, Admin unavailable | Pending | Pending | Pending | Pending |
+| New JVM, empty or genuine prior cache, Admin unavailable | Passed | Passed | Passed | Passed |
 
 All accepted runs used JDK 17, Scala 2.12, real Ranger 2.8.0 downloads, native Delta
 on the local S3-compatible fixture, and separate query and metadata subjects. The
@@ -88,6 +89,30 @@ all four drivers exited naturally. The original 19 roles and 33 authorization an
 metadata models were restored; the final observed generations were policy 64,
 tag 5 and role 86. Generations are observations, not constants for future runs.
 
+The startup gate uses test-application commit `c5cd68a204` and SHA-256
+`b480ebb0e6b1838ea1add21a10b614dfe448cff0891002807bd2b46d024dc648`.
+Each manifest retains the other 258 archives. Four new healthy default controls
+passed eight queries with matching policy/role HTTP 200 downloads and natural
+exits, then supplied genuine exited-driver cache snapshots. With the same Ranger
+Admin stopped, all four empty-cache JVMs remained not ready for the 60-second
+observation and executed no query. All four cached JVMs became ready at policy
+64/role 86 and returned the exact masked/filtered rows `[["ALPHA"],[null]]`.
+All eight exited naturally after cleanup. The 2,236 local gateway attempts had
+zero upstream HTTP responses or HTTP 200s; transport failures retain unresolved
+upstream-completion evidence. Cache success does not establish policy freshness
+or revocation propagation during an outage.
+
+The exact Admin was restored with all ten configuration hashes unchanged.
+Authorization contents, roles and registrations remained unchanged across 33
+readbacks; restart publication advanced resource policy to 65 and tag to 6, while
+role stayed 86. All 12 S3 objects remained unchanged. Independent review reconciled
+the original process, request, result, download and cache-provenance records. The
+final probe fix suite passed 106 tests at Spark 3.5.4/Delta 3.3.0, followed by final
+compilation, one boundary regression and formatting after an order-only method
+move. Earlier 71-per-pair offline results predate those fixes; the four live default
+controls and eight probes use the final exported application. A direct injected
+full-probe cleanup-failure test remains a documented harness coverage limit.
+
 Every accepted phase verified the original 12 S3 objects against their recorded
 keys, bytes, hashes and explicit restored modification-time baseline. Service
 recovery used a cloned database volume and preserved the original volume. Failed
@@ -103,9 +128,9 @@ The acceptance entry points are:
 - `root-warm-outage-matrix-acceptance-20260926.json`
 - `root-effective-transitions-acceptance-20260927.json`
 - `root-role-only-acceptance-20260927.json`
+- `root-startup-cache-acceptance-20260927.json`
 
-The next gates use fresh test applications and isolated runs. Startup observations
-must distinguish a completed not-ready observation from successful cached startup.
+The remaining callback gate uses a fresh test application and isolated runs.
 Callback-failure cases must retain local/Admin/downloaded divergence and completed
 HTTP evidence; identical grant/revoke replay and same-owner PUT are not ordinary
 grant reconciliation. After these gates and final review close the milestone, the

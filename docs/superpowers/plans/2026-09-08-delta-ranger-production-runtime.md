@@ -455,3 +455,7 @@ all four pinned Spark/Delta cells. Synthetic feature descriptors, preserved raw
 properties and reader compatibility must remain labeled separately from qualified
 feature behavior. This is required for the full Delta objective; Task4 fresh
 SELECT composition does not close these gaps.
+
+Startup/cache gate accepted on 2026-09-27 after independent review of the original evidence found no discrepancy. Source commit c5cd68a204 exports test application SHA-256 b480ebb0e6b1838ea1add21a10b614dfe448cff0891002807bd2b46d024dc648 with the unchanged production companion. Four default controls passed eight queries and 16 non-close commands. All eight outage JVMs exited naturally: four empty-cache drivers remained not ready and ran no query; four genuine cached drivers returned exact masked/filtered ALPHA/null rows at policy 64/role 86. All 2,236 local attempts reconcile, with no upstream responses or HTTP 200s; unresolved transport failures remain explicit.
+
+The same Admin is restored with ten unchanged configuration hashes. All 33 model contents/statuses and 12 S3 objects remain unchanged apart from restart publication counters; the observed baseline is now policy 65/tag 6/role 86. Task 4 evidence/root-startup-cache-acceptance-20260927.json binds source, report, review, queries, restoration and postflight. The callback author owns four separate test-source paths; source review and three live callback-failure cases remain, followed by whole-branch review and the authorized normal milestone push. Full Delta support remains open. No remote push has occurred.
