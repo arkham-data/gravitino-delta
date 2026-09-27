@@ -19,17 +19,98 @@
 
 # Delta Ranger production-chain qualification
 
-Task 4 is in progress. As of September 21, 2026, Docker has been stopped by the
-user and work has resumed offline only. No service readiness or current Ranger
-policy/role generation is asserted. The recorded policy 40 / role 63 floor is
-historical; live qualification requires independently re-established service and
-fixture continuity before any query or public mutation resumes.
+Task 4 remains in progress. Qualification on September 26–27, 2026 (UTC), passed
+the healthy SELECT, warm Admin outage, public Gravitino grant/revoke, and independent
+role-publication gates on all four Spark/Delta pairs with Ranger 2.8.0. Cold/cache
+startup, ordinary policy callback failures after persistence, and final branch
+review remain open. The milestone checkpoint has not been pushed.
 
-Public callbacks, authenticated downloads, and three masked/filtered native
-queries have historical passing evidence. The complete four-pair native SELECT
-matrix and remaining refresh/failure gates are still incomplete. The following
-initial packaging checkpoint is retained as history; later sections supersede its
-statements about unexecuted public callbacks and queries.
+These results qualify the finite named SELECT surface with user AQE explicitly
+disabled. They do not establish full Delta support, general user caching/AQE, or
+deployment readiness. Historical checkpoints below remain evidence for their
+original artifacts; the current checkpoint supersedes their pending-query status.
+
+## Current packaged SELECT checkpoint
+
+The accepted production guard is commit `55d8b746a`; the retained-query test
+application is commit `82343db02`. Each of the four runtime manifests contains
+259 verified archives with one base Delta runtime, one production Ranger companion,
+and a separate test application. The companion SHA-256 is
+`caed200d88440a0a0b45f6090d01513812bc5dcbdfdef7bb4a05d4233b36c856`;
+the application SHA-256 is
+`740907f388b06845203abeda10eda72c439799caeb6d5575ec049b61ad2bcb21`.
+Test helpers are excluded from production artifacts. These bytes, rather than
+unreviewed worktree changes, identify the following live results.
+
+| Qualification | Spark 3.5.4 / Delta 3.3.0 | Spark 3.5.4 / Delta 3.3.2 | Spark 3.5.6 / Delta 3.3.0 | Spark 3.5.6 / Delta 3.3.2 |
+| --- | --- | --- | --- | --- |
+| Healthy fresh and retained SELECT | Passed | Passed | Passed | Passed |
+| Warm Admin outage and reconnect | Passed | Passed | Passed | Passed |
+| Public privilege and membership grant/revoke | Passed | Passed | Passed | Passed |
+| Independent role-publication invalidation | Passed | Passed | Passed | Passed |
+| New JVM, empty or genuine prior cache, Admin unavailable | Pending | Pending | Pending | Pending |
+
+All accepted runs used JDK 17, Scala 2.12, real Ranger 2.8.0 downloads, native Delta
+on the local S3-compatible fixture, and separate query and metadata subjects. The
+healthy matrix executed 72 query actions: 40 fresh and 32 retained actions. It
+covered Ranger column access, masks and row filters, cross-catalog queries, and
+the declared negative cases. All four drivers exited naturally with zero status.
+The production guard's preceding offline matrix passed 335 tests per pair; the
+retained harness's focused matrix passed 23 per pair. These distinct test scopes
+are not a claim that every Delta operation or Spark action has been qualified.
+
+The warm-outage matrix qualified 20 query actions. Already loaded policies allowed
+the expected masked/filtered rows while Admin was stopped and download attempts
+failed. After the same Admin restarted, an observed policy publication change
+invalidated each held Dataset at collection entry before any user scan; fresh
+reanalysis returned the expected rows. One early first-pair action was dispatched
+before stop verification and remains excluded from outage evidence. This result
+does not promise immediate revocation while Admin is unavailable or prove a new
+JVM can recover from cache.
+
+Six public Gravitino membership/SELECT grant, revoke and repetition requests drove
+44 query actions, including eight stale-plan entry denials. Independent local,
+Admin and downloaded readbacks proved the intended policy and membership changes
+while preserving other managed items and foreign policies. Fresh queries changed
+between allowed and denied as expected. Repeating a converged SELECT grant produced
+no callbacks; repeating an absent membership revoke advanced publications without
+changing access semantics. That is observed idempotence, not recovery from a failed
+callback. All four drivers exited naturally with zero status.
+
+The independent role-publication gate executed 12 query actions. Creating one
+empty, unreferenced test role advanced only the role generation. Each held Dataset
+and physical root then failed at the collection guard with no jobs or named scan
+rows; each fresh reanalysis returned the unchanged masked/filtered rows. All four
+selected completed role-download body hashes exactly matched the independently
+saved role response. This proves publication invalidation with unchanged access
+semantics, not an effective role-only revoke. The owned role was deleted once after
+all four drivers exited naturally. The original 19 roles and 33 authorization and
+metadata models were restored; the final observed generations were policy 64,
+tag 5 and role 86. Generations are observations, not constants for future runs.
+
+Every accepted phase verified the original 12 S3 objects against their recorded
+keys, bytes, hashes and explicit restored modification-time baseline. Service
+recovery used a cloned database volume and preserved the original volume. Failed
+setup attempts, the initial default-AQE rejection, the corrected RELEASE command
+encoding failure, and the excluded outage action remain separate evidence. None
+was converted into a successful query or replayed into its original evidence path.
+
+The ignored private evidence directory named below contains the original controls,
+HTTP records, query results, exit records, model readbacks and independent reviews.
+The acceptance entry points are:
+
+- `root-current-retained-healthy-verification-20260926.json`
+- `root-warm-outage-matrix-acceptance-20260926.json`
+- `root-effective-transitions-acceptance-20260927.json`
+- `root-role-only-acceptance-20260927.json`
+
+The next gates use fresh test applications and isolated runs. Startup observations
+must distinguish a completed not-ready observation from successful cached startup.
+Callback-failure cases must retain local/Admin/downloaded divergence and completed
+HTTP evidence; identical grant/revoke replay and same-owner PUT are not ordinary
+grant reconciliation. After these gates and final review close the milestone, the
+accepted branch checkpoint will be pushed normally and its remote SHA verified;
+subsequent full-Delta work continues locally.
 
 ## Initial verified packaging checkpoint
 
