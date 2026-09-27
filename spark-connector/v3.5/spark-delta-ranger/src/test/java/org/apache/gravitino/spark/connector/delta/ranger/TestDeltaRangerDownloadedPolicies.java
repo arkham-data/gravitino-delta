@@ -46,6 +46,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -66,6 +67,7 @@ import org.apache.gravitino.client.GravitinoAdminClient.AdminClientBuilder;
 import org.apache.gravitino.client.GravitinoMetalake;
 import org.apache.gravitino.exceptions.ForbiddenException;
 import org.apache.gravitino.exceptions.NoSuchRoleException;
+import org.apache.gravitino.exceptions.NoSuchUserException;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.TableChange;
@@ -96,12 +98,15 @@ public class TestDeltaRangerDownloadedPolicies {
   private DeltaRangerCallbackGateway gateway;
   private DeltaRangerCallbackGateway publicGateway;
   private boolean postLifecycleResume;
+  private boolean policyCallbackFailure;
+  private DeltaRangerPolicyCallbackCase policyCase;
+  private DeltaRangerPolicyCallbackCase.Selection policySelection;
 
   /**
    * Executes one explicit public-chain checkpoint from immutable test-application inputs.
    *
    * @param args one checkpoint: bootstrap, resume-catalog-bootstrap, fresh-principal, matrix, or
-   *     matrix-resume, or post-role-lifecycle-resume
+   *     matrix-resume, post-role-lifecycle-resume, or policy-callback-failure
    * @throws Exception if setup or an acceptance assertion fails
    */
   public static void main(String[] args) throws Exception {
@@ -109,6 +114,7 @@ public class TestDeltaRangerDownloadedPolicies {
     try {
       harness.postLifecycleResume =
           args.length == 1 && "post-role-lifecycle-resume".equals(args[0]);
+      harness.policyCallbackFailure = args.length == 1 && "policy-callback-failure".equals(args[0]);
       harness.start();
       if (args.length != 1) {
         throw new IllegalArgumentException("One checkpoint is required");
@@ -129,6 +135,11 @@ public class TestDeltaRangerDownloadedPolicies {
         harness.matrixControlLoop();
       } else if ("matrix-resume".equals(args[0])) {
         harness.resumeMatrixIdentities();
+        harness.matrixControlLoop();
+      } else if ("policy-callback-failure".equals(args[0])) {
+        harness.policyCase =
+            DeltaRangerPolicyCallbackCase.parse(harness.fixture.path("policyCallbackCase"));
+        harness.lake = harness.client.loadMetalake(harness.required("metalake"));
         harness.matrixControlLoop();
       } else if ("post-role-lifecycle-resume".equals(args[0])) {
         harness.resumePostRoleLifecycle();
@@ -156,16 +167,31 @@ public class TestDeltaRangerDownloadedPolicies {
     Path gatewayAddress = evidence.resolve("callback-gateway-address.txt");
     int port =
         Files.exists(gatewayAddress) ? URI.create(Files.readString(gatewayAddress)).getPort() : 0;
+    if (policyCallbackFailure) {
+      if (!Files.exists(gatewayAddress) || port <= 0)
+        throw new IllegalArgumentException("Verified fixed callback address required");
+      URI address = URI.create(Files.readString(gatewayAddress));
+      if (!"http".equals(address.getScheme())
+          || !"127.0.0.1".equals(address.getHost())
+          || address.getUserInfo() != null
+          || address.getQuery() != null
+          || address.getFragment() != null
+          || !address.getPath().isEmpty())
+        throw new IllegalArgumentException("Exact loopback callback address required");
+    }
     gateway =
         new DeltaRangerCallbackGateway(
-            adminUrl, evidence.resolve("callback-attempts.jsonl"), port, postLifecycleResume);
+            adminUrl,
+            evidence.resolve("callback-attempts.jsonl"),
+            port,
+            postLifecycleResume || policyCallbackFailure);
     Files.writeString(gatewayAddress, gateway.uri().toString());
     publicGateway =
         new DeltaRangerCallbackGateway(
             URI.create(requiredProperty("gravitinoUrl")),
             evidence.resolve("public-attempts.jsonl"),
             0,
-            postLifecycleResume);
+            postLifecycleResume || policyCallbackFailure);
     AdminClientBuilder builder = GravitinoAdminClient.builder(publicGateway.uri().toString());
     builder.withSimpleAuth(required("gravitinoAdminPrincipal"));
     if (postLifecycleResume) {
@@ -860,7 +886,9 @@ public class TestDeltaRangerDownloadedPolicies {
       }
       JsonNode command = JSON.readTree(privateFile(commandFile.toString()).toFile());
       String operation = command.path("operation").asText();
+      if (policyCallbackFailure) policyCase.begin(command);
       if ("close".equals(operation)) {
+        if (policyCallbackFailure) policyCase.finish(true);
         event("matrix-closed", Map.of("quarantined", quarantined));
         return;
       }
@@ -872,15 +900,55 @@ public class TestDeltaRangerDownloadedPolicies {
       result.put("started", Instant.now().toString());
       long publicBefore = publicGateway.completed();
       long callbackBefore = gateway.completed();
+      int callbackOffset = policyCallbackFailure ? gateway.recordedEvents().size() : 0;
+      int publicOffset = policyCallbackFailure ? publicGateway.recordedEvents().size() : 0;
+      if (policyCallbackFailure) {
+        result.put("command", command);
+        event("policy-command-intent-" + id, Map.of("command", command));
+      }
       try {
         matrixOperation(operation, command);
         result.put("completed", true);
-      } catch (Exception failure) {
+      } catch (Exception | AssertionError failure) {
+        if (!policyCallbackFailure && failure instanceof AssertionError)
+          throw (AssertionError) failure;
         quarantined = true;
         result.put("completed", false);
         result.put("failureClass", failure.getClass().getName());
       }
-      result.put("gatewayDrained", gateway.awaitDrained() && publicGateway.awaitDrained());
+      boolean drained = gateway.awaitDrained() && publicGateway.awaitDrained();
+      result.put("gatewayDrained", drained);
+      if (policyCallbackFailure) {
+        List<JsonNode> callbacks = policyCaseEvents(gateway, callbackOffset);
+        List<JsonNode> publicEvents = policyCaseEvents(publicGateway, publicOffset);
+        result.put("callbackEvents", callbacks);
+        result.put("publicEvents", publicEvents);
+        if (operation.equals(policyCase.mutation())) {
+          try {
+            if (!drained || policySelection == null)
+              throw new IllegalStateException("Mutation completion unresolved");
+            DeltaRangerPolicyCallbackCase.verifyMutationEvidence(
+                callbacks,
+                publicEvents,
+                policySelection.method,
+                policySelection.path,
+                "/api/metalakes/"
+                    + required("metalake")
+                    + "/permissions/roles/"
+                    + policyCase.role
+                    + "/table/"
+                    + DeltaRangerPolicyCallbackCase.fullName(policyCase.target())
+                    + ("grant-select".equals(operation) ? "/grant" : "/revoke"));
+            result.put("mutationEvidenceQualified", true);
+          } catch (Exception failure) {
+            result.put("mutationEvidenceQualified", false);
+            result.put("evidenceFailureClass", failure.getClass().getName());
+          }
+        }
+        policyCase.finish(Boolean.TRUE.equals(result.get("completed")) && drained);
+        quarantined = policyCase.quarantined();
+        result.put("quarantined", quarantined);
+      }
       result.put("publicCompletions", publicGateway.completed() - publicBefore);
       result.put("callbackCompletions", gateway.completed() - callbackBefore);
       result.put("finished", Instant.now().toString());
@@ -889,6 +957,10 @@ public class TestDeltaRangerDownloadedPolicies {
   }
 
   private void matrixOperation(String operation, JsonNode command) throws Exception {
+    if (policyCallbackFailure) {
+      policyCaseOperation(operation, command);
+      return;
+    }
     if ("snapshot".equals(operation)) {
       Map<String, Object> snapshot = new LinkedHashMap<>();
       snapshot.put("roles", adminGet("/service/roles/roles"));
@@ -962,6 +1034,217 @@ public class TestDeltaRangerDownloadedPolicies {
       default:
         throw new IllegalArgumentException("Unknown matrix operation");
     }
+  }
+
+  private static List<JsonNode> policyCaseEvents(DeltaRangerCallbackGateway recorder, int offset)
+      throws Exception {
+    List<String> lines = recorder.recordedEvents();
+    if (offset > lines.size()) throw new IllegalStateException("Recorder history truncated");
+    List<JsonNode> result = new ArrayList<>();
+    for (String line : lines.subList(offset, lines.size())) result.add(JSON.readTree(line));
+    return result;
+  }
+
+  private void policyCaseOperation(String operation, JsonNode command) throws Exception {
+    switch (operation) {
+      case "prepare-policy-case":
+        preparePolicyCase();
+        break;
+      case "fault-policy-write":
+        Map<String, Object> before = policyCaseSnapshot();
+        policySelection = selectPolicyCase(before);
+        event(
+            "policy-case-arm",
+            Map.of(
+                "command",
+                command,
+                "method",
+                policySelection.method,
+                "path",
+                policySelection.path,
+                "snapshot",
+                before,
+                "simulatedPolicy",
+                policySelection.after));
+        gateway.failNext(policySelection.method, policySelection.path, 503);
+        break;
+      case "grant-select":
+      case "revoke-select":
+        if (policySelection == null)
+          throw new IllegalStateException("Verified policy fault required");
+        event(
+            "policy-case-mutation-intent",
+            Map.of(
+                "command",
+                command,
+                "role",
+                policyCase.role,
+                "table",
+                DeltaRangerPolicyCallbackCase.fullName(policyCase.target()),
+                "privileges",
+                List.of("SELECT_TABLE:ALLOW"),
+                "callbackMethod",
+                policySelection.method,
+                "callbackPath",
+                policySelection.path));
+        if ("grant-select".equals(operation)) {
+          lake.grantPrivilegesToRole(
+              policyCase.role,
+              tableObject(policyCase.target()),
+              Set.of(Privileges.SelectTable.allow()));
+        } else {
+          lake.revokePrivilegesFromRole(
+              policyCase.role,
+              tableObject(policyCase.target()),
+              Set.of(Privileges.SelectTable.allow()));
+        }
+        break;
+      case "snapshot":
+        event("matrix-snapshot-" + command.path("id").asText(), policyCaseSnapshot());
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown policy-case operation");
+    }
+  }
+
+  private void preparePolicyCase() throws Exception {
+    for (JsonNode table : List.of(policyCase.tableA, policyCase.tableB)) {
+      long matches = 0;
+      for (JsonNode catalog : fixture.path("catalogs")) {
+        if (DeltaRangerPolicyCallbackCase.fullName(table)
+            .equals(DeltaRangerPolicyCallbackCase.fullName(catalog))) matches++;
+      }
+      assertEquals(1, matches, "Exact registered fixture table required");
+      lake.loadCatalog(table.path("name").asText())
+          .asTableCatalog()
+          .loadTable(
+              NameIdentifier.of(table.path("database").asText(), table.path("table").asText()));
+    }
+    assertThrows(NoSuchRoleException.class, () -> lake.getRole(policyCase.role));
+    assertThrows(NoSuchRoleException.class, () -> lake.getRole(policyCase.visibilityRole));
+    assertThrows(NoSuchUserException.class, () -> lake.getUser(policyCase.subject));
+    JsonNode rolesBefore = completeAdminRoles();
+    assertRoleAbsent(rolesBefore, policyCaseCanonicalRole(policyCase.role));
+    assertRoleAbsent(rolesBefore, policyCaseCanonicalRole(policyCase.visibilityRole));
+    JsonNode policiesBefore =
+        adminGet("/service/plugins/policies?serviceName=" + encoded(required("resourceService")));
+    event(
+        "policy-case-before-setup",
+        Map.of(
+            "roles",
+            rolesBefore,
+            "policies",
+            policiesBefore,
+            "fixture",
+            fixture.path("policyCallbackCase")));
+    event("policy-case-add-user-intent", Map.of("subject", policyCase.subject));
+    lake.addUser(policyCase.subject);
+    List<SecurableObject> visibility = new ArrayList<>();
+    Set<String> catalogs = new HashSet<>();
+    Set<String> schemas = new HashSet<>();
+    for (JsonNode table : List.of(policyCase.tableA, policyCase.tableB)) {
+      String catalog = table.path("name").asText();
+      String schema = catalog + "." + table.path("database").asText();
+      if (catalogs.add(catalog))
+        visibility.add(SecurableObjects.ofCatalog(catalog, List.of(Privileges.UseCatalog.allow())));
+      if (schemas.add(schema))
+        visibility.add(
+            SecurableObjects.parse(
+                schema, MetadataObject.Type.SCHEMA, List.of(Privileges.UseSchema.allow())));
+    }
+    event(
+        "policy-case-create-visibility-intent",
+        Map.of("role", policyCase.visibilityRole, "grants", grantSignatures(visibility)));
+    lake.createRole(policyCase.visibilityRole, Map.of(), visibility);
+    event(
+        "policy-case-visibility-member-intent",
+        Map.of("role", policyCase.visibilityRole, "subject", policyCase.subject));
+    lake.grantRolesToUser(List.of(policyCase.visibilityRole), policyCase.subject);
+    JsonNode afterVisibility =
+        adminGet("/service/plugins/policies?serviceName=" + encoded(required("resourceService")));
+    assertEquals(
+        policiesBefore.path("policies"),
+        afterVisibility.path("policies"),
+        "Local-only visibility changed Ranger policy items");
+    List<SecurableObject> initial =
+        policyCase.kind == DeltaRangerPolicyCallbackCase.Kind.FIRST_GRANT
+            ? List.of()
+            : List.of(tableObject(policyCase.tableA));
+    event(
+        "policy-case-create-role-intent",
+        Map.of("role", policyCase.role, "grants", grantSignatures(initial)));
+    lake.createRole(policyCase.role, Map.of(), initial);
+    event(
+        "policy-case-member-intent",
+        Map.of("role", policyCase.role, "subject", policyCase.subject));
+    lake.grantRolesToUser(List.of(policyCase.role), policyCase.subject);
+    assertTrue(gateway.awaitDrained() && publicGateway.awaitDrained());
+    Map<String, Object> snapshot = policyCaseSnapshot();
+    DeltaRangerPolicyCallbackCase.Selection selection = selectPolicyCase(snapshot);
+    event(
+        "policy-case-prepared",
+        Map.of(
+            "snapshot",
+            snapshot,
+            "method",
+            selection.method,
+            "path",
+            selection.path,
+            "simulatedPolicy",
+            selection.after));
+  }
+
+  private String policyCaseCanonicalRole(String name) {
+    return "GRAVITINO_METALAKE_" + required("expectedMetalakeId") + "_ROLE_" + name;
+  }
+
+  private JsonNode completeAdminRoles() throws Exception {
+    JsonNode roles = adminGet("/service/roles/roles");
+    assertTrue(roles.path("roles").isArray(), "Complete Admin role response required");
+    assertTrue(roles.path("totalCount").isIntegralNumber(), "Role total count required");
+    assertEquals(
+        roles.path("totalCount").longValue(), roles.path("roles").size(), "Truncated Admin roles");
+    return roles;
+  }
+
+  private Map<String, Object> policyCaseSnapshot() throws Exception {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("roles", completeAdminRoles());
+    snapshot.put(
+        "policies",
+        adminGet("/service/plugins/policies?serviceName=" + encoded(required("resourceService"))));
+    snapshot.put(
+        "service",
+        adminGet("/service/public/v2/api/service/name/" + encoded(required("resourceService"))));
+    snapshot.put("role", policyCase.role);
+    snapshot.put("canonicalRole", policyCaseCanonicalRole(policyCase.role));
+    snapshot.put("subject", policyCase.subject);
+    try {
+      snapshot.put(
+          "localGrants", grantSignatures(lake.getRole(policyCase.role).securableObjects()));
+    } catch (NoSuchRoleException absent) {
+      snapshot.put("localRoleAbsent", true);
+    }
+    try {
+      snapshot.put("localMemberships", lake.getUser(policyCase.subject).roles());
+    } catch (NoSuchUserException absent) {
+      snapshot.put("localUserAbsent", true);
+    }
+    snapshot.put("callbackCompletions", gateway.completed());
+    snapshot.put("publicCompletions", publicGateway.completed());
+    snapshot.put("quarantined", policyCase.quarantined());
+    return snapshot;
+  }
+
+  private DeltaRangerPolicyCallbackCase.Selection selectPolicyCase(Map<String, Object> snapshot) {
+    return policyCase.select(
+        required("resourceService"),
+        required("expectedMetalakeId"),
+        policyCaseCanonicalRole(policyCase.role),
+        lake.getRole(policyCase.role).securableObjects(),
+        lake.getUser(policyCase.subject).roles(),
+        ((JsonNode) snapshot.get("policies")).path("policies"),
+        ((JsonNode) snapshot.get("roles")).path("roles"));
   }
 
   private String matrixPrincipal(String key) {

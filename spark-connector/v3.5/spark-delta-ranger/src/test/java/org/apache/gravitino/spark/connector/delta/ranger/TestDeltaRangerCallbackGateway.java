@@ -42,7 +42,9 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.ranger.plugin.util.RangerRESTUtils;
 import org.junit.jupiter.api.Test;
@@ -198,6 +200,22 @@ class TestDeltaRangerCallbackGateway {
       assertEquals(3, requests.get());
       assertTrue(gateway.awaitDrained());
       assertEquals(4, gateway.completed());
+      List<JsonNode> completed = new ArrayList<>();
+      for (String line : Files.readAllLines(directory.resolve("events.jsonl"))) {
+        JsonNode event = new ObjectMapper().readTree(line);
+        if (event.has("finished")) completed.add(event);
+      }
+      assertEquals(4, completed.size());
+      JsonNode fault = completed.get(2);
+      assertEquals(503, fault.path("faultStatus").intValue());
+      assertEquals(false, fault.path("upstreamAttempted").booleanValue());
+      assertEquals("PUT", fault.path("method").textValue());
+      assertEquals("/owned/policy/1", fault.path("path").textValue());
+      assertTrue(fault.path("downstreamResponseCompleted").booleanValue());
+      JsonNode forwarded = completed.get(3);
+      assertTrue(forwarded.path("upstreamAttempted").booleanValue());
+      assertEquals(200, forwarded.path("upstreamStatus").intValue());
+      assertTrue(forwarded.path("downstreamResponseCompleted").booleanValue());
     } finally {
       upstream.stop(0);
     }
