@@ -345,3 +345,24 @@ with Package 0, review its evidence, then expand the downstream code-level plans
 without reducing the acceptance contract. Use inline execution unless the user
 chooses delegation. Each production package ends with focused verification and a
 reviewable commit; no issue or PR is submitted without the required preview.
+
+## Current implementation checkpoint — September 27, 2026
+
+The finite SELECT milestone is accepted and pushed at `84172dd45`. Its exact
+runtime scope, evidence and remaining limitations are recorded in
+[the production qualification results](../../delta-ranger-production-results.md).
+This closes neither the packages above nor the full-support requirements.
+
+Subsequent local work added the reviewed TABLE/MODIFY_TABLE/ALLOW to Ranger
+`update` mapping. The next implementation gate is
+[native append characterization](2026-09-27-delta-native-append-characterization.md),
+under the [governed append design](../specs/2026-09-27-delta-governed-append-design.md).
+The native tests must qualify the split transaction path before production
+command authority and source-policy enforcement are implemented. Native-only
+append results do not establish Ranger enforcement or deployed S3 writes.
+
+The remaining acceptance scope still includes the full command and table-feature
+inventory, governed DML/DDL, history and change data feed, streaming and restart,
+maintenance, recovery and policy reconciliation, and isolated catalog-demo and
+migration qualification. Keep each later package tied to the requirement coverage
+table above; an intermediate passing suite does not replace those requirements.

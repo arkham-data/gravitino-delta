@@ -14,7 +14,7 @@
 
 - Spark 3.5.4 and 3.5.6 × Delta 3.3.0 and 3.3.2; Scala 2.12; JDK 17 qualification.
 - No Gravitino core/API/server/client/storage-schema changes; no Spark or Delta fork.
-- Test sources only; keep current production source, deployed services, existing SELECT evidence and quarantined cases unchanged.
+- Implementation is limited to test sources and the explicit compiler-isolation build correction; keep production Java/Scala, deployed services, existing SELECT evidence and quarantined cases unchanged.
 - One source/build owner; root owns Git. No remote push or runtime packaging/replacement.
 
 ## Review focus
@@ -29,12 +29,13 @@
 
 ## Scope and file ownership
 
-Exactly two test files are proposed:
+The task owns two test files and one narrowly scoped build correction:
 
 1. Modify `spark-connector/v3.5/spark-delta/src/test/java/org/apache/gravitino/spark/connector/delta/TestDeltaNativeAdapter.java`.
 2. Create `spark-connector/v3.5/spark-delta/src/test/scala/org/apache/gravitino/spark/connector/delta/NativeAppendProbe.scala`, containing the test-only extension, probe scope/report and split helper.
+3. Modify `spark-connector/v3.5/spark-delta/build.gradle.kts` only to scope the existing Spark/Scala resolution pins to compileClasspath, runtimeClasspath, testCompileClasspath and testRuntimeClasspath, matching the optional Ranger module. Keep dependency versions unchanged.
 
-No production, build, dependency, core/API/server/client or runtime/archive changes. The implementing agent does not perform Git operations; root commits reviewed source/results. Do not modify `NativeTestCatalog.java`. Do not create a second mock registry implementation or a general fault framework. Private evidence/report are permitted under `.superpowers/sdd/2026-09-27-delta-native-append-characterization/evidence/`, owner-only.
+No production Java/Scala, dependency-version, core/API/server/client or runtime/archive changes. The only build change is the compiler-isolation correction above. The implementing agent does not perform Git operations; root commits reviewed source/results. Do not modify `NativeTestCatalog.java`. Do not create a second mock registry implementation or a general fault framework. Private evidence/report are permitted under `.superpowers/sdd/2026-09-27-delta-native-append-characterization/evidence/`, owner-only.
 
 `TestDeltaNativeAdapter` already owns `spark`, `adapter`, `receipts`, `locations`, `entries`, `nativeTable(name)`, `id(name)`, the mocked public catalog APIs and registration callbacks. They are private, so put the new JUnit cases and small setup/comparison helpers **inside that class**, rather than promising another class can access them. Existing `NativeTestCatalog` exposes the injected transport and journal. No extraction is necessary. Use unique table names per test/control; do not change the original tests' tables or receipts.
 
@@ -221,7 +222,7 @@ For a concrete native postcommit hook check, use independently created owned tab
 - [ ] Add entry/precommit fault modes and retain RED/GREEN assertions against native storage state. Add options/metadata and metrics/postcommit comparisons; classify every mismatch rather than normalizing it away.
 - [ ] Format only spark-delta, run the complete existing TestDeltaNativeAdapter class at the first pair; inspect failures and existing baseline tests.
 - [ ] Once the source is stable, run the same exact class on the other three pairs, archiving each pair before another build overwrites classes/XML. No production coordinator or widened companion admission follows automatically.
-- [ ] Freeze two test sources, commands/exit codes, effective runtime manifests, compiled probe classes and four-pair XML/log/artifact results; report unresolved native semantics and evidence limits for root review.
+- [ ] Freeze the two test sources and scoped build correction, commands/exit codes, effective runtime manifests, compiled probe classes and four-pair XML/log/artifact results; report unresolved native semantics and evidence limits for root review.
 
 One source/build owner only; the server MODIFY mapping task has completed and released the lane at local source commit651e669fa; its accepted closeout is9438e9e59.
 
@@ -241,3 +242,15 @@ Formatting: `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents
 ## Completion meaning
 
 A passing report establishes native orchestration and available observation boundaries on the four pins. It does not establish Ranger UPDATE enforcement, atomic registration/policy fencing, S3 orphan cleanup, full Delta feature support, or safety of arbitrary jobs. Any native-control-vs-split mismatch is a design gate, not a reason to relax expected Delta behavior.
+
+## Compiler-isolation correction discovered during the first gate
+
+The first normal Gradle compile reached compileTestScala and failed because
+`configurations.configureEach` forced scala-library2.12.21 onto Zinc1.6.1's own
+Scala2.13 compiler dependencies. This is a preserved setup failure, not a native
+behavior failure. The optional spark-delta-ranger module already pins only the
+four application compile/runtime configurations. Apply that exact scoping here
+without changing dependency versions or compilation ordering. Capture the resolved
+Zinc Scala library and the application testRuntimeClasspath Scala2.12.21 after
+the fix, then use normal Gradle compilation/tests. A manual compiler bypass is
+not an accepted build path.
