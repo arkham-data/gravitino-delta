@@ -22,8 +22,10 @@
 Task 4 remains in progress. Qualification on September 26–27, 2026 (UTC), passed
 the healthy SELECT, warm Admin outage, public Gravitino grant/revoke, independent
 role-publication, and cold/cached startup gates on all four Spark/Delta pairs with
-Ranger 2.8.0. Ordinary policy callback failures after persistence and final branch
-review remain open. The milestone checkpoint has not been pushed.
+Ranger 2.8.0. First-grant and final-revoke callback failures are also qualified on
+Spark 3.5.4/Delta 3.3.0. The additional-grant case exposed a cross-catalog role-update
+defect in the Delta authorization plugin; its fix, live qualification and final
+branch review remain open. The milestone checkpoint has not been pushed.
 
 These results qualify the finite named SELECT surface with user AQE explicitly
 disabled. They do not establish full Delta support, general user caching/AQE, or
@@ -130,12 +132,43 @@ The acceptance entry points are:
 - `root-role-only-acceptance-20260927.json`
 - `root-startup-cache-acceptance-20260927.json`
 
-The remaining callback gate uses a fresh test application and isolated runs.
-Callback-failure cases must retain local/Admin/downloaded divergence and completed
-HTTP evidence; identical grant/revoke replay and same-owner PUT are not ordinary
-grant reconciliation. After these gates and final review close the milestone, the
-accepted branch checkpoint will be pushed normally and its remote SHA verified;
-subsequent full-Delta work continues locally.
+The callback gate uses isolated roles and fresh query JVMs. Two cases passed on
+Spark 3.5.4/Delta 3.3.0 with Ranger 2.8.0: an injected pre-forwarding policy PUT 503
+produced a completed public Gravitino 500 after local persistence. First grant
+persisted local SELECT while Ranger retained no matching policy grant and created
+an empty remote role; fresh SELECT remained denied. Final revoke removed local
+SELECT while Ranger retained the policy and membership; fresh SELECT remained
+allowed. Complete Admin policy models, owner items and preexisting roles stayed
+unchanged. All four query JVMs downloaded policies and roles over completed HTTP
+200 responses, matched saved response hashes and cache models, and exited naturally.
+The coordinators also exited naturally and the normal callback recorder was restored.
+
+The first case used coordinator SHA-256
+`58365e640920ae6d620468d6d115be0715a57b8026fa253cfadf2a8bae3cc214`;
+final revoke used
+`19ef4d4d726f317821a465e513e043a7f30d17b40f13ebbc1782b9b8f549721e`.
+Both used the accepted startup query application and unchanged production runtime.
+Harness fixes at `a7d4af244` align resource keys with actual Ranger policies and
+compare deserialized privileges by name and condition. Their final focused suite
+passed 23 tests with original failing regressions and formatting evidence preserved.
+An earlier additional-grant setup rejected DTO equality before fault arming; it
+remains quarantined separately.
+
+The subsequent additional-grant request persisted local A+B SELECT but returned
+HTTP 400 with `Canonical Delta catalog/resource mismatch`. Catalog B's plugin
+received the old role containing A and incorrectly validated that context against
+B. No Ranger callback occurred; the armed 503 was unused. Fresh queries still
+allowed A and denied B at policy 69/role 100. This is a reproduced production defect,
+not a passed callback-failure case. Its fix must preserve strict validation of every
+explicit changed resource and leave Gravitino core unchanged. The failed identities
+remain unreconciled and must not be replayed for qualification.
+
+Private independent reviews are `first-grant-live-review.md` and
+`last-revoke-live-review.md` beneath the callback task evidence directory. Ordinary
+grant reconciliation remains a separate rollout requirement. After the additional
+case and final review close the milestone, the accepted branch checkpoint will be
+pushed normally and its remote SHA verified; subsequent full-Delta work continues
+locally.
 
 ## Initial verified packaging checkpoint
 
