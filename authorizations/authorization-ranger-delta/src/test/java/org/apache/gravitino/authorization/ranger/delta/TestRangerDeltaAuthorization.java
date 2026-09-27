@@ -177,6 +177,162 @@ class TestRangerDeltaAuthorization {
   }
 
   @Test
+  void roleUpdatesChangeOnlyTheirCatalogWhenOldRoleSpansCatalogs() throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin pluginA = plugin();
+      Map<String, String> configB = new HashMap<>(config());
+      configB.put("authorization.ranger.delta.catalog", "delta_b");
+      configB.put("authorization.catalog.id", "21");
+      RangerAuthorizationHadoopSQLPlugin pluginB =
+          (RangerAuthorizationHadoopSQLPlugin)
+              provider().newPlugin("lake", "lakehouse-delta", configB);
+      SecurableObject selectB =
+          SecurableObjects.parse(
+              "delta_b.sales.orders",
+              MetadataObject.Type.TABLE,
+              List.of(Privileges.SelectTable.allow()));
+      pluginA.onOwnerSet(select(), null, owner("alice", Owner.Type.USER));
+      pluginB.onOwnerSet(selectB, null, owner("bob", Owner.Type.USER));
+      pluginA.onRoleCreated(role("reader", select()));
+      pluginB.onRoleCreated(role("foreign_reader", selectB));
+      String baseline = admin.mapper.writeValueAsString(admin.policies);
+      RangerPolicy policyA =
+          admin.clonePolicies().stream()
+              .filter(p -> p.getResources().get("catalog").getValues().equals(List.of("delta_a")))
+              .findFirst()
+              .orElseThrow();
+      RangerPolicy policyB =
+          admin.clonePolicies().stream()
+              .filter(p -> p.getResources().get("catalog").getValues().equals(List.of("delta_b")))
+              .findFirst()
+              .orElseThrow();
+      String rolesBefore = admin.mapper.writeValueAsString(admin.roles);
+      String reader = "GRAVITINO_METALAKE_10_ROLE_reader";
+      pluginB.onRoleUpdated(
+          role("reader", select()), RoleChange.addSecurableObject("reader", selectB));
+      assertEquals(
+          admin.mapper.writeValueAsString(policyA),
+          admin.mapper.writeValueAsString(admin.policies.get(policyA.getId())));
+      List<RangerPolicy.RangerPolicyItem> added =
+          admin.policies.get(policyB.getId()).getPolicyItems();
+      assertTrue(added.stream().anyMatch(i -> i.getRoles().contains(reader)));
+      assertTrue(
+          added.stream()
+              .anyMatch(i -> i.getRoles().contains("GRAVITINO_METALAKE_10_ROLE_foreign_reader")));
+      assertEquals(
+          admin.mapper.writeValueAsString(
+              policyB.getPolicyItems().stream()
+                  .filter(i -> i.getUsers().contains("bob"))
+                  .collect(Collectors.toList())),
+          admin.mapper.writeValueAsString(
+              added.stream()
+                  .filter(i -> i.getUsers().contains("bob"))
+                  .collect(Collectors.toList())));
+      pluginB.onRoleUpdated(
+          role("reader", select(), selectB), RoleChange.removeSecurableObject("reader", selectB));
+      assertEquals(baseline, admin.mapper.writeValueAsString(admin.policies));
+      pluginB.onRoleUpdated(
+          role("reader", select()), RoleChange.addSecurableObject("reader", selectB));
+      pluginB.onRoleUpdated(
+          role("reader", select(), selectB),
+          RoleChange.updateSecurableObject(
+              "reader",
+              selectB,
+              SecurableObjects.parse(selectB.fullName(), MetadataObject.Type.TABLE, List.of())));
+      assertEquals(baseline, admin.mapper.writeValueAsString(admin.policies));
+      assertEquals(rolesBefore, admin.mapper.writeValueAsString(admin.roles));
+    }
+  }
+
+  @Test
+  void roleUpdateDoesNotTranslateForeignUnsupportedContext() throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin plugin = plugin();
+      SecurableObject foreign =
+          SecurableObjects.parse(
+              "other_provider.sales.orders",
+              MetadataObject.Type.TABLE,
+              List.of(Privileges.ModifyTable.allow()));
+      plugin.onRoleUpdated(
+          role("reader", foreign), RoleChange.addSecurableObject("reader", select()));
+      assertEquals(1, admin.policies.size());
+      assertTrue(
+          admin.policies.values().iterator().next().getPolicyItems().stream()
+              .anyMatch(i -> i.getRoles().contains("GRAVITINO_METALAKE_10_ROLE_reader")));
+    }
+  }
+
+  @Test
+  void explicitRoleChangesStillRejectBeforeAnyAdminInteraction() throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin plugin = plugin();
+      SecurableObject foreign =
+          SecurableObjects.parse(
+              "delta_b.sales.orders",
+              MetadataObject.Type.TABLE,
+              List.of(Privileges.SelectTable.allow()));
+      SecurableObject unsupported =
+          SecurableObjects.parse(
+              select().fullName(),
+              MetadataObject.Type.TABLE,
+              List.of(Privileges.ModifyTable.allow()));
+      SecurableObject denied =
+          SecurableObjects.parse(
+              select().fullName(),
+              MetadataObject.Type.TABLE,
+              List.of(Privileges.SelectTable.deny()));
+      SecurableObject wildcard =
+          SecurableObjects.parse(
+              "delta_a.sales.o*",
+              MetadataObject.Type.TABLE,
+              List.of(Privileges.SelectTable.allow()));
+      SecurableObject renamed =
+          SecurableObjects.parse(
+              "delta_a.sales.renamed",
+              MetadataObject.Type.TABLE,
+              List.of(Privileges.SelectTable.allow()));
+      List<Executable> rejected = new ArrayList<>();
+      for (SecurableObject object : List.of(foreign, unsupported, denied, wildcard)) {
+        rejected.add(
+            () ->
+                plugin.onRoleUpdated(
+                    role("reader"),
+                    RoleChange.addSecurableObject("reader", select()),
+                    RoleChange.addSecurableObject("reader", object)));
+        rejected.add(
+            () ->
+                plugin.onRoleUpdated(
+                    role("reader"), RoleChange.removeSecurableObject("reader", object)));
+        rejected.add(
+            () ->
+                plugin.onRoleUpdated(
+                    role("reader"), RoleChange.updateSecurableObject("reader", select(), object)));
+      }
+      rejected.add(
+          () ->
+              plugin.onRoleUpdated(
+                  role("reader"), RoleChange.updateSecurableObject("reader", select(), renamed)));
+      rejected.add(
+          () ->
+              plugin.onRoleUpdated(
+                  role("GRAVITINO_reserved"),
+                  RoleChange.addSecurableObject("GRAVITINO_reserved", select())));
+      rejected.add(() -> plugin.onRoleCreated(role("reader", foreign)));
+      rejected.add(() -> plugin.onRoleAcquired(role("reader", foreign)));
+      rejected.add(() -> plugin.onRoleDeleted(role("reader", foreign)));
+      for (Executable operation : rejected) {
+        admin.construction.constructed().forEach(client -> clearInvocations(client));
+        admin.baseConstruction.constructed().forEach(client -> clearInvocations(client));
+        assertThrows(IllegalArgumentException.class, operation);
+        admin.construction.constructed().forEach(client -> verifyNoInteractions(client));
+        admin.baseConstruction.constructed().forEach(client -> verifyNoInteractions(client));
+      }
+      assertTrue(admin.roles.isEmpty());
+      assertTrue(admin.policies.isEmpty());
+    }
+  }
+
+  @Test
   void ranger28DecoderCannotReadLegacyUserModel() throws Exception {
     String json = "{\"vXUsers\":[{\"id\":1,\"name\":\"alice\"}],\"resultSize\":1,\"totalCount\":1}";
     Exception failure =

@@ -204,7 +204,8 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
   /** {@inheritDoc} */
   @Override
   public Boolean onRoleUpdated(Role role, RoleChange... changes) {
-    validateRole(role);
+    // Core supplies the unfiltered old role; explicit changes define this catalog's scope.
+    validateRoleIdentity(role);
     for (RoleChange change : changes) {
       if (change instanceof RoleChange.AddSecurableObject) {
         translatePrivilege(((RoleChange.AddSecurableObject) change).getSecurableObject());
@@ -425,6 +426,11 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
   }
 
   private void validateRole(Role role) {
+    validateRoleIdentity(role);
+    validAuthorizationOperation(role.securableObjects());
+  }
+
+  private void validateRoleIdentity(Role role) {
     DeltaRangerAuthorizationConfig.require(
         !role.name().toUpperCase(Locale.ROOT).startsWith("GRAVITINO_"),
         "Raw reserved role prefix is not admitted");
@@ -434,7 +440,6 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
             && !name.toUpperCase(Locale.ROOT).startsWith(RangerHelper.GRAVITINO_CATALOG_OWNER_ROLE)
             && !name.equalsIgnoreCase(RangerHelper.GRAVITINO_OWNER_ROLE),
         "Reserved owner role");
-    validAuthorizationOperation(role.securableObjects());
   }
 
   private List<String> literalNames(MetadataObject object) {

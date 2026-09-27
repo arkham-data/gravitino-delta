@@ -24,8 +24,9 @@ the healthy SELECT, warm Admin outage, public Gravitino grant/revoke, independen
 role-publication, and cold/cached startup gates on all four Spark/Delta pairs with
 Ranger 2.8.0. First-grant and final-revoke callback failures are also qualified on
 Spark 3.5.4/Delta 3.3.0. The additional-grant case exposed a cross-catalog role-update
-defect in the Delta authorization plugin; its fix, live qualification and final
-branch review remain open. The milestone checkpoint has not been pushed.
+defect in the Delta authorization plugin. Its fix passed 50 offline module tests
+and independent review; runtime replacement, live qualification and final branch
+review remain open. The milestone checkpoint has not been pushed.
 
 These results qualify the finite named SELECT surface with user AQE explicitly
 disabled. They do not establish full Delta support, general user caching/AQE, or
@@ -159,9 +160,14 @@ HTTP 400 with `Canonical Delta catalog/resource mismatch`. Catalog B's plugin
 received the old role containing A and incorrectly validated that context against
 B. No Ranger callback occurred; the armed 503 was unused. Fresh queries still
 allowed A and denied B at policy 69/role 100. This is a reproduced production defect,
-not a passed callback-failure case. Its fix must preserve strict validation of every
-explicit changed resource and leave Gravitino core unchanged. The failed identities
-remain unreconciled and must not be replayed for qualification.
+not a passed callback-failure case. The reviewed fix validates role identity and
+every explicit changed resource, without treating the old role's foreign grants
+as this callback's scope. Full lifecycle and membership validation remains intact;
+Gravitino core is unchanged. All 50 offline module tests passed, including a real
+REST regression spanning two catalogs. Docker and native-fixture gates were excluded
+from that suite. The running server still needs the new plugin and a fresh live
+additional-grant qualification. Failed identities remain unreconciled and must not
+be replayed for qualification.
 
 Private independent reviews are `first-grant-live-review.md` and
 `last-revoke-live-review.md` beneath the callback task evidence directory. Ordinary

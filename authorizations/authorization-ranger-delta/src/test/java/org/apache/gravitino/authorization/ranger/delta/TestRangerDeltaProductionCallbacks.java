@@ -194,6 +194,50 @@ class TestRangerDeltaProductionCallbacks {
   }
 
   @Test
+  void publicRoleUpdatesRouteAcrossCatalogsWithoutTranslatingOldContext() throws Exception {
+    String secondCatalog = "delta_role_update_b";
+    String roleName = "cross_catalog_visible";
+    createCatalog(secondCatalog);
+    String policiesBefore = endpoint.mapper.writeValueAsString(endpoint.policies);
+    lake.createRole(
+        roleName,
+        Map.of(),
+        List.of(SecurableObjects.ofCatalog(CATALOG, List.of(Privileges.UseCatalog.allow()))));
+    lake.grantPrivilegesToRole(
+        roleName,
+        MetadataObjects.parse(secondCatalog, MetadataObject.Type.CATALOG),
+        Set.of(Privileges.UseCatalog.allow()));
+    assertEquals(
+        Set.of(CATALOG, secondCatalog),
+        lake.getRole(roleName).securableObjects().stream()
+            .map(object -> object.fullName())
+            .collect(Collectors.toSet()));
+    assertEquals(
+        1,
+        endpoint.roles.values().stream()
+            .filter(role -> role.getName().endsWith("_ROLE_" + roleName))
+            .count());
+    lake.grantRolesToUser(List.of(roleName), "alice");
+    assertEquals(
+        List.of("alice"),
+        endpoint.roleEnding(roleName).getUsers().stream()
+            .map(RangerRole.RoleMember::getName)
+            .collect(Collectors.toList()));
+    lake.revokeRolesFromUser(List.of(roleName), "alice");
+    assertTrue(endpoint.roleEnding(roleName).getUsers().isEmpty());
+    lake.revokePrivilegesFromRole(
+        roleName,
+        MetadataObjects.parse(secondCatalog, MetadataObject.Type.CATALOG),
+        Set.of(Privileges.UseCatalog.allow()));
+    assertEquals(
+        List.of(CATALOG),
+        lake.getRole(roleName).securableObjects().stream()
+            .map(object -> object.fullName())
+            .collect(Collectors.toList()));
+    assertEquals(policiesBefore, endpoint.mapper.writeValueAsString(endpoint.policies));
+  }
+
+  @Test
   void globalAdminRoleDeleteRejectionPreservesLocalRoleAndMembership() {
     lake.createRole(
         "delete_rejected",
@@ -485,7 +529,8 @@ class TestRangerDeltaProductionCallbacks {
             Map<?, ?> request = mapper.readValue(exchange.getRequestBody(), Map.class);
             String name = (String) request.get("name");
             users.add(name);
-            response = Map.of("id", 1, "name", name);
+            status = path.endsWith("/external") ? 204 : 200;
+            response = status == 204 ? null : Map.of("id", 1, "name", name);
           } else if (method.equals("DELETE")) {
             status = 204;
             response = null;
