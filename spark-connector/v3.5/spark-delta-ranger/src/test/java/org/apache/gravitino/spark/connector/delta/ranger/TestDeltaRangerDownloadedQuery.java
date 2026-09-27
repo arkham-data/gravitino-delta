@@ -21,9 +21,12 @@ package org.apache.gravitino.spark.connector.delta.ranger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Constructor;
@@ -36,11 +39,47 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.ranger.plugin.policyengine.RangerAccessRequest;
+import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class TestDeltaRangerDownloadedQuery {
   @TempDir Path directory;
+
+  @Test
+  void absentProbeEntersDefaultRouteAndPresentNullFailsBeforeSetup() throws Exception {
+    Path root = directory.toRealPath();
+    Path absent = Files.writeString(root.resolve("absent.json"), "{}");
+    Path defaultOutput = root.resolve("default-output");
+    assertThrows(
+        Exception.class,
+        () ->
+            DeltaRangerDownloadedQuery.main(
+                new String[] {absent.toString(), defaultOutput.toString()}));
+    assertTrue(Files.isDirectory(defaultOutput));
+    Path invalid = Files.writeString(root.resolve("null.json"), "{\"startupProbe\":null}");
+    Path invalidOutput = root.resolve("invalid-output");
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            DeltaRangerDownloadedQuery.main(
+                new String[] {invalid.toString(), invalidOutput.toString()}));
+    assertFalse(Files.exists(invalidOutput));
+  }
+
+  @Test
+  void probeCleanupFailurePreservesPrimaryCause() {
+    SparkSession spark = mock(SparkSession.class);
+    IllegalStateException cleanup = new IllegalStateException("stop failed");
+    doThrow(cleanup).when(spark).stop();
+    IllegalArgumentException primary = new IllegalArgumentException("query failed");
+    DeltaRangerDownloadedQuery.stopSpark(spark, primary);
+    assertSame(cleanup, primary.getSuppressed()[0]);
+    assertSame(
+        cleanup,
+        assertThrows(
+            IllegalStateException.class, () -> DeltaRangerDownloadedQuery.stopSpark(spark, null)));
+  }
 
   @Test
   void retainedCommandLimitRejectsBeforeTheNextFilename() {

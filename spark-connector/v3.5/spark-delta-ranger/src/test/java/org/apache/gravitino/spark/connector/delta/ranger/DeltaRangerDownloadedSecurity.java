@@ -28,6 +28,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import javax.xml.XMLConstants;
@@ -107,6 +108,19 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
 
   DeltaRangerDownloadedSecurity(Path source, Path target, Path evidence, String service)
       throws Exception {
+    this(source, target, evidence, service, Optional.empty());
+  }
+
+  DeltaRangerDownloadedSecurity(
+      Path source,
+      Path target,
+      Path evidence,
+      String service,
+      Optional<DeltaRangerStartupCache.Snapshot> snapshot)
+      throws Exception {
+    if (Files.isSymbolicLink(target) || !Files.isDirectory(target)) {
+      throw new IllegalArgumentException("Driver security directory must be a real directory");
+    }
     try (var files = Files.list(target)) {
       if (files.findAny().isPresent()) {
         throw new IllegalArgumentException("Driver security directory must start empty");
@@ -124,6 +138,10 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
         Files.createDirectory(
             target.resolve("cache"),
             PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+    Map<String, Object> copiedCache =
+        snapshot.isPresent()
+            ? DeltaRangerStartupCache.copy(snapshot.orElseThrow(), cache)
+            : Map.of("files", List.of());
     gateway =
         new DeltaRangerCallbackGateway(
             URI.create(original.get(URL)), evidence.resolve("downloads.jsonl"), service);
@@ -163,9 +181,16 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
       manifest.put("originalLoggingSha256", digest(source.resolve("log4j2.xml")));
       manifest.put("copiedLoggingSha256", digest(logging));
       manifest.put("changedPropertyNames", new String[] {URL, CACHE});
-      manifest.put("freshEmptyCache", true);
+      manifest.put("freshEmptyCache", snapshot.isEmpty());
+      manifest.put("mode", snapshot.isPresent() ? "snapshot" : "empty");
+      manifest.put("cacheInput", copiedCache);
       manifest.put("gateway", gateway.uri().toString());
       write(evidence.resolve("security-manifest.json"), manifest);
+      if (snapshot.isPresent()) {
+        write(evidence.resolve("startup-cache-manifest.json"), snapshot.orElseThrow().manifest());
+        write(
+            evidence.resolve("startup-cache-provenance.json"), snapshot.orElseThrow().provenance());
+      }
     } catch (Throwable failure) {
       try {
         gateway.close();
@@ -178,6 +203,10 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
 
   URI uri() {
     return gateway.uri();
+  }
+
+  List<String> startupEvents() throws IOException {
+    return gateway.recordedEvents();
   }
 
   boolean awaitDrained() throws InterruptedException {

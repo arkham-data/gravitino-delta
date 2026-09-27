@@ -19,6 +19,8 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.BufferedReader;
@@ -30,13 +32,16 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
+import javax.annotation.Nullable;
 import org.apache.gravitino.spark.connector.plugin.GravitinoDriverPlugin;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -52,7 +57,10 @@ import scala.reflect.ClassTag$;
 
 /** Test application for actual archived Spark distributions; never installed in a plugin JAR. */
 public final class DeltaRangerDownloadedQuery {
-  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final ObjectMapper JSON =
+      new ObjectMapper()
+          .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   private final String helperField = "nonpublic-value";
 
   /**
@@ -62,61 +70,26 @@ public final class DeltaRangerDownloadedQuery {
    * @throws Exception if deployment setup or an executed acceptance assertion fails
    */
   public static void main(String[] args) throws Exception {
-    JsonNode input = JSON.readTree(Path.of(args[0]).toFile());
+    Path requestFile = Path.of(args[0]);
+    JsonNode input = JSON.readTree(Files.readAllBytes(requestFile));
+    Optional<DeltaRangerStartupProbe.Request> probe = DeltaRangerStartupProbe.parse(input);
     Path output = Path.of(args[1]);
     Files.createDirectory(
         output, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+    if (probe.isPresent()) {
+      runStartupProbe(requestFile, input, output, probe.orElseThrow());
+      return;
+    }
     try (DeltaRangerDownloadedSecurity security =
         new DeltaRangerDownloadedSecurity(
             Path.of(input.path("sourceSecurityDirectory").asText()),
             Path.of(input.path("driverSecurityDirectory").asText()),
             output,
             input.path("resourceService").asText())) {
-      Properties properties = new Properties();
-      try (InputStream stream =
-          Files.newInputStream(Path.of(input.path("sparkConfigurationFile").asText()))) {
-        properties.load(stream);
-      }
-      SparkConf conf =
-          new SparkConf(false)
-              .setMaster("local[2]")
-              .setAppName("delta-ranger-production-qualification");
-      for (String key : properties.stringPropertyNames()) {
-        conf.set(key, properties.getProperty(key));
-      }
-      Configuration hadoop = new Configuration();
-      for (String key : properties.stringPropertyNames()) {
-        if (key.startsWith("spark.hadoop.")) {
-          hadoop.set(key.substring("spark.hadoop.".length()), properties.getProperty(key));
-        }
-      }
-      UserGroupInformation.setConfiguration(hadoop);
       SparkSession spark = null;
       try {
-        spark = SparkSession.builder().config(conf).getOrCreate();
-        DeltaRangerQuerySubject subject = DeltaRangerQuerySubject.current(spark);
-        check(
-            subject.user().equals(input.path("subject").asText()),
-            "Actual UGI differs from expected query subject");
-        check(
-            spark.sparkContext().sparkUser().equals(subject.user()),
-            "Application discovery identity differs from actual UGI");
-        check(
-            !subject.user().equals(input.path("metadataPrincipal").asText()),
-            "Metadata identity became the query identity");
-        Map<String, Object> startup = new LinkedHashMap<>();
-        startup.put("spark", spark.version());
-        startup.put("user", subject.user());
-        startup.put("groups", subject.groups());
-        startup.put("applicationUser", spark.sparkContext().sparkUser());
-        startup.put("origins", origins());
-        startup.put("helpers", helpers());
-        Map<String, Boolean> visible = new LinkedHashMap<>();
-        for (JsonNode catalog : input.path("catalogs")) {
-          visible.put(
-              catalog.asText(), spark.conf().contains("spark.sql.catalog." + catalog.asText()));
-        }
-        startup.put("visibleCatalogs", visible);
+        spark = openSpark(input);
+        Map<String, Object> startup = startup(spark, input);
         DeltaRangerConfig config =
             DeltaRangerConfig.fromClasspath(
                 input.path("resourceService").asText(),
@@ -156,6 +129,163 @@ public final class DeltaRangerDownloadedQuery {
         if (spark != null) {
           spark.stop();
         }
+      }
+    }
+  }
+
+  private static SparkSession openSpark(JsonNode input) throws Exception {
+    Properties properties = new Properties();
+    try (InputStream stream =
+        Files.newInputStream(Path.of(input.path("sparkConfigurationFile").asText()))) {
+      properties.load(stream);
+    }
+    SparkConf conf =
+        new SparkConf(false)
+            .setMaster("local[2]")
+            .setAppName("delta-ranger-production-qualification");
+    for (String key : properties.stringPropertyNames()) {
+      conf.set(key, properties.getProperty(key));
+    }
+    Configuration hadoop = new Configuration();
+    for (String key : properties.stringPropertyNames()) {
+      if (key.startsWith("spark.hadoop.")) {
+        hadoop.set(key.substring("spark.hadoop.".length()), properties.getProperty(key));
+      }
+    }
+    UserGroupInformation.setConfiguration(hadoop);
+    return SparkSession.builder().config(conf).getOrCreate();
+  }
+
+  private static Map<String, Object> startup(SparkSession spark, JsonNode input) throws Exception {
+    DeltaRangerQuerySubject subject = DeltaRangerQuerySubject.current(spark);
+    check(
+        subject.user().equals(input.path("subject").asText()),
+        "Actual UGI differs from expected query subject");
+    check(
+        spark.sparkContext().sparkUser().equals(subject.user()),
+        "Application discovery identity differs from actual UGI");
+    check(
+        !subject.user().equals(input.path("metadataPrincipal").asText()),
+        "Metadata identity became the query identity");
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("spark", spark.version());
+    result.put("user", subject.user());
+    result.put("groups", subject.groups());
+    result.put("applicationUser", spark.sparkContext().sparkUser());
+    result.put("origins", origins());
+    result.put("helpers", helpers());
+    Map<String, Boolean> visible = new LinkedHashMap<>();
+    for (JsonNode catalog : input.path("catalogs")) {
+      visible.put(catalog.asText(), spark.conf().contains("spark.sql.catalog." + catalog.asText()));
+    }
+    result.put("visibleCatalogs", visible);
+    return result;
+  }
+
+  private static void runStartupProbe(
+      Path requestFile, JsonNode input, Path output, DeltaRangerStartupProbe.Request request)
+      throws Exception {
+    Map<String, Object> context = new LinkedHashMap<>();
+    context.put("mode", request.mode());
+    context.put("pid", ProcessHandle.current().pid());
+    context.put("started", Instant.now().toString());
+    DeltaRangerDownloadedSecurity security = null;
+    DeltaRangerStartupProbe.Observation observation = null;
+    try {
+      context.put("requestSha256", DeltaRangerStartupProbe.sha256(Files.readAllBytes(requestFile)));
+      context.put(
+          "profileSha256",
+          DeltaRangerStartupProbe.sha256(
+              Files.readAllBytes(Path.of(input.path("sparkConfigurationFile").asText()))));
+      Path source = Path.of(input.path("sourceSecurityDirectory").asText());
+      context.put(
+          "sourceSecuritySha256",
+          DeltaRangerStartupProbe.sha256(
+              Files.readAllBytes(source.resolve("ranger-spark-security.xml"))));
+      context.put(
+          "sourceLoggingSha256",
+          DeltaRangerStartupProbe.sha256(Files.readAllBytes(source.resolve("log4j2.xml"))));
+      context.put("resourceService", input.path("resourceService").asText());
+      context.put("resourceDefinition", input.path("resourceDefinition").asText());
+      context.put("metalake", input.path("metalake").asText());
+      write(output.resolve("startup-input.json"), context);
+      Path target = Path.of(input.path("driverSecurityDirectory").asText());
+      DeltaRangerStartupCache.validateProbeTarget(requestFile, target);
+      Optional<DeltaRangerStartupCache.Snapshot> snapshot =
+          DeltaRangerStartupCache.load(requestFile, input, request);
+      context.put(
+          "manifestSha256",
+          snapshot.map(DeltaRangerStartupCache.Snapshot::manifestSha256).orElse(null));
+      try (DeltaRangerDownloadedSecurity owned =
+          new DeltaRangerDownloadedSecurity(
+              source, target, output, input.path("resourceService").asText(), snapshot)) {
+        security = owned;
+        context.put(
+            "cacheCopied",
+            snapshot.isPresent()
+                ? DeltaRangerStartupCache.inventory(target.resolve("cache"))
+                : List.of());
+        SparkSession spark = null;
+        Throwable pending = null;
+        try {
+          spark = openSpark(input);
+          Map<String, Object> actualStartup = startup(spark, input);
+          if (snapshot.isPresent()
+              && !spark
+                  .version()
+                  .equals(snapshot.orElseThrow().manifest().path("spark").asText())) {
+            throw new IllegalArgumentException("Snapshot Spark version differs from runtime");
+          }
+          context.put("startup", actualStartup);
+          DeltaRangerConfig config =
+              DeltaRangerConfig.fromClasspath(
+                  input.path("resourceService").asText(),
+                  input.path("resourceDefinition").asText(),
+                  input.path("metalake").asText());
+          try (DeltaRangerPolicyEngine engine = DeltaRangerPolicyEngine.acquire(config)) {
+            observation = DeltaRangerStartupProbe.observe(spark, engine, request);
+            write(output.resolve("startup-observation.json"), observation.evidence());
+          }
+        } catch (Throwable failure) {
+          pending = failure;
+          throw failure;
+        } finally {
+          if (spark != null) {
+            stopSpark(spark, pending);
+          }
+        }
+      }
+      context.put("cacheFinal", DeltaRangerStartupCache.inventory(target.resolve("cache")));
+      context.put("finished", Instant.now().toString());
+      Map<String, Object> downloadSummary =
+          DeltaRangerStartupProbe.downloads(
+              security.startupEvents(), input.path("resourceService").asText());
+      if (observation.ready() && !observation.exactRows()) {
+        throw new AssertionError(
+            "Startup probe SELECT differed from expected rows", observation.failure().orElse(null));
+      }
+      DeltaRangerStartupProbe.finish(output, observation, downloadSummary, context);
+    } catch (Throwable failure) {
+      Map<String, Object> error = new LinkedHashMap<>();
+      error.put("failureDetails", failureDetails(failure));
+      List<List<Map<String, Object>>> suppressed = new ArrayList<>();
+      for (Throwable item : failure.getSuppressed()) {
+        suppressed.add(failureDetails(item));
+      }
+      error.put("suppressed", suppressed);
+      write(output.resolve("failure.json"), error);
+      throw failure;
+    }
+  }
+
+  static void stopSpark(SparkSession spark, @Nullable Throwable pending) {
+    try {
+      spark.stop();
+    } catch (Throwable cleanup) {
+      if (pending != null) {
+        pending.addSuppressed(cleanup);
+      } else {
+        throw cleanup;
       }
     }
   }

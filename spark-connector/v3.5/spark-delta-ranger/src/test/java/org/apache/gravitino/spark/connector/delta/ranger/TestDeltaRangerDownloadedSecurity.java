@@ -25,9 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -238,6 +240,9 @@ class TestDeltaRangerDownloadedSecurity {
       security.recordInitialDownloads(7, 9, 7, 9);
       String manifest = Files.readString(evidence.resolve("security-manifest.json"));
       assertFalse(manifest.contains("test-only-secret"));
+      JsonNode preparation = new ObjectMapper().readTree(manifest);
+      assertTrue(preparation.path("freshEmptyCache").asBoolean());
+      assertEquals("empty", preparation.path("mode").asText());
       String events = Files.readString(evidence.resolve("downloads.jsonl"));
       assertFalse(events.contains("test-only-token"));
       assertFalse(events.contains("policyVersion"));
@@ -250,6 +255,39 @@ class TestDeltaRangerDownloadedSecurity {
       assertEquals(2, accepted.path("roleAttempt").asLong());
     } finally {
       upstream.stop(0);
+    }
+  }
+
+  @Test
+  void oldConstructorRetainsEmptyTargetAndPostCloseLogAccess() throws Exception {
+    Path root = directory.toRealPath();
+    Path original = source("http://127.0.0.1:1");
+    Path target = Files.createDirectory(root.resolve("driver"));
+    Path evidence = Files.createDirectory(root.resolve("evidence"));
+    DeltaRangerDownloadedSecurity security =
+        new DeltaRangerDownloadedSecurity(original, target, evidence, "owned");
+    security.close();
+    assertTrue(security.startupEvents().isEmpty());
+    try (var entries = Files.list(target.resolve("cache"))) {
+      assertEquals(0, entries.count());
+    }
+    Path seeded = Files.createDirectory(root.resolve("seeded"));
+    Files.writeString(seeded.resolve("policy"), "old cache");
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new DeltaRangerDownloadedSecurity(original, seeded, evidence, "owned"));
+  }
+
+  @Test
+  void missingRecorderFileInvalidatesStartupEventAudit() throws Exception {
+    Path root = directory.toRealPath();
+    Path original = source("http://127.0.0.1:1");
+    Path target = Files.createDirectory(root.resolve("driver"));
+    Path evidence = Files.createDirectory(root.resolve("evidence"));
+    try (DeltaRangerDownloadedSecurity security =
+        new DeltaRangerDownloadedSecurity(original, target, evidence, "owned")) {
+      Files.delete(evidence.resolve("downloads.jsonl"));
+      assertThrows(IOException.class, security::startupEvents);
     }
   }
 
