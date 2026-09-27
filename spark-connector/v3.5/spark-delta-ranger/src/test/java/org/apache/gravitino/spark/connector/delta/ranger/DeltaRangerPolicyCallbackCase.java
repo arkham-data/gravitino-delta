@@ -29,7 +29,7 @@ import java.util.List;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.gravitino.MetadataObject;
-import org.apache.gravitino.authorization.Privileges;
+import org.apache.gravitino.authorization.Privilege;
 import org.apache.gravitino.authorization.SecurableObject;
 
 /** Closed test-only protocol for one failed ordinary-policy callback. */
@@ -139,7 +139,9 @@ final class DeltaRangerPolicyCallbackCase {
     for (SecurableObject object : local) {
       require(
           object.type() == MetadataObject.Type.TABLE
-              && object.privileges().equals(List.of(Privileges.SelectTable.allow())),
+              && object.privileges().size() == 1
+              && object.privileges().get(0).name() == Privilege.Name.SELECT_TABLE
+              && object.privileges().get(0).condition() == Privilege.Condition.ALLOW,
           "Only exact table SELECT allowed");
       localNames.add(object.fullName());
     }
@@ -300,8 +302,8 @@ final class DeltaRangerPolicyCallbackCase {
       p.path("policyLabels").forEach(l -> actual.add(l.asText()));
       if (!actual.containsAll(labels)) continue;
       JsonNode resources = p.path("resources");
-      if (!fields(resources).equals(Set.of("catalog", "schema", "table", "column"))) continue;
-      String[] keys = {"catalog", "schema", "table", "column"};
+      if (!fields(resources).equals(Set.of("catalog", "database", "table", "column"))) continue;
+      String[] keys = {"catalog", "database", "table", "column"};
       String[] values = {text(table, "name"), text(table, "database"), text(table, "table"), "*"};
       boolean exact = true;
       for (int i = 0; i < keys.length; i++) {

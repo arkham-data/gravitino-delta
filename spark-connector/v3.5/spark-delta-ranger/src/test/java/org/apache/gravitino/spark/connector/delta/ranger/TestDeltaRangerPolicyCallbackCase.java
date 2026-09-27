@@ -32,6 +32,8 @@ import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.authorization.Privileges;
 import org.apache.gravitino.authorization.SecurableObject;
 import org.apache.gravitino.authorization.SecurableObjects;
+import org.apache.gravitino.client.ObjectMapperProvider;
+import org.apache.gravitino.dto.responses.RoleResponse;
 import org.junit.jupiter.api.Test;
 
 /** Offline contracts for the finite ordinary-policy callback fault checkpoint. */
@@ -399,6 +401,304 @@ public class TestDeltaRangerPolicyCallbackCase {
     }
   }
 
+  @Test
+  void rejectsSchemaAliasEvenWhenEveryOtherOwnedPolicyFieldMatches() throws Exception {
+    ArrayNode candidates = policies(false, false);
+    ObjectNode resources = (ObjectNode) candidates.get(0).path("resources");
+    resources.set("schema", resources.remove("database"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> select(fixture("FIRST_GRANT"), List.of(), candidates, roles(false)));
+  }
+
+  @Test
+  void actualOwnedPolicyWireShapeUsesDatabaseAndPreservesProtectedModels() throws Exception {
+    // Sanitized recorded Ranger 2.8.0 owned policies 37/40: preserve wire keys and omitted fields.
+    ArrayNode candidates = recordedOwnedPolicies();
+    JsonNode original = candidates.deepCopy();
+    DeltaRangerPolicyCallbackCase.Selection first =
+        select(fixture("FIRST_GRANT"), List.of(), candidates, roles(false));
+    assertEquals("/service/public/v2/api/policy/37", first.path);
+    assertEquals(original, candidates);
+    assertEquals(
+        original.get(0).path("policyItems").get(0), first.after.path("policyItems").get(0));
+    ((ArrayNode) candidates.get(0).path("policyItems").get(1).path("roles")).add(ROLE);
+    DeltaRangerPolicyCallbackCase.Selection additional =
+        select(
+            fixture("ADDITIONAL_GRANT"), List.of(grant("a.sales.orders")), candidates, roles(true));
+    assertEquals("/service/public/v2/api/policy/40", additional.path);
+    assertEquals(
+        original.get(1).path("policyItems").get(0), additional.after.path("policyItems").get(0));
+    DeltaRangerPolicyCallbackCase.Selection revoke =
+        select(fixture("LAST_REVOKE"), List.of(grant("a.sales.orders")), candidates, roles(true));
+    assertEquals("/service/public/v2/api/policy/37", revoke.path);
+    assertEquals(original.get(0), revoke.after);
+  }
+
+  @Test
+  void deserializedPublicRoleSelectsAdditionalAndLastWithRecordedSharedPolicyAndRole()
+      throws Exception {
+    ArrayNode policies = recordedOwnedPolicies();
+    JsonNode originalA = policies.get(0).deepCopy();
+    ((ArrayNode) policies.get(0).path("policyItems").get(1).path("roles")).add(ROLE);
+    List<SecurableObject> local = recordedLocalGrants("select_table", "allow", false);
+    DeltaRangerPolicyCallbackCase.Selection additional =
+        select(fixture("ADDITIONAL_GRANT"), local, policies, recordedRemoteRole());
+    assertEquals("/service/public/v2/api/policy/40", additional.path);
+    DeltaRangerPolicyCallbackCase.Selection revoke =
+        select(fixture("LAST_REVOKE"), local, policies, recordedRemoteRole());
+    assertEquals("/service/public/v2/api/policy/37", revoke.path);
+    assertEquals(originalA, revoke.after);
+  }
+
+  @Test
+  void deserializedPublicRoleRejectsWrongPrivilegeDenyAndMixedPrivileges() throws Exception {
+    ArrayNode policies = recordedOwnedPolicies();
+    ((ArrayNode) policies.get(0).path("policyItems").get(1).path("roles")).add(ROLE);
+    for (String kind : List.of("ADDITIONAL_GRANT", "LAST_REVOKE")) {
+      for (List<SecurableObject> local :
+          List.of(
+              recordedLocalGrants("modify_table", "allow", false),
+              recordedLocalGrants("select_table", "deny", false),
+              recordedLocalGrants("select_table", "allow", true))) {
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> select(fixture(kind), local, policies, recordedRemoteRole()));
+      }
+    }
+  }
+
+  private static ArrayNode recordedOwnedPolicies() throws Exception {
+    return (ArrayNode)
+        JSON.readTree(
+            """
+        [
+          {
+            "id": 37,
+            "guid": "00000000-0000-0000-0000-00000000001",
+            "isEnabled": true,
+            "version": 12,
+            "service": "svc",
+            "name": "sanitized_managed_37",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "a"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "sanitized_owner"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_7_ROLE_foreign0",
+                  "GRAVITINO_METALAKE_7_ROLE_foreign1",
+                  "GRAVITINO_METALAKE_7_ROLE_foreign2",
+                  "GRAVITINO_METALAKE_7_ROLE_foreign3",
+                  "GRAVITINO_METALAKE_7_ROLE_foreign4"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "sanitized_delta_definition",
+            "policyLabels": [
+              "gravitino-catalog-id:11",
+              "gravitino-managed",
+              "gravitino-metalake-id:7"
+            ],
+            "isDenyAllElse": false
+          },
+          {
+            "id": 40,
+            "guid": "00000000-0000-0000-0000-00000000002",
+            "isEnabled": true,
+            "version": 2,
+            "service": "svc",
+            "name": "sanitized_managed_40",
+            "policyType": 0,
+            "policyPriority": 0,
+            "isAuditEnabled": true,
+            "resources": {
+              "column": {
+                "values": [
+                  "*"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "database": {
+                "values": [
+                  "sales"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "catalog": {
+                "values": [
+                  "b"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              },
+              "table": {
+                "values": [
+                  "orders"
+                ],
+                "isExcludes": false,
+                "isRecursive": false
+              }
+            },
+            "policyItems": [
+              {
+                "accesses": [
+                  {
+                    "type": "all",
+                    "isAllowed": true
+                  }
+                ],
+                "users": [
+                  "sanitized_owner"
+                ],
+                "roles": [
+                  "GRAVITINO_OWNER_ROLE"
+                ],
+                "delegateAdmin": false
+              },
+              {
+                "accesses": [
+                  {
+                    "type": "select",
+                    "isAllowed": true
+                  }
+                ],
+                "roles": [
+                  "GRAVITINO_METALAKE_7_ROLE_foreign0"
+                ],
+                "delegateAdmin": false
+              }
+            ],
+            "serviceType": "sanitized_delta_definition",
+            "policyLabels": [
+              "gravitino-catalog-id:12",
+              "gravitino-managed",
+              "gravitino-metalake-id:7"
+            ],
+            "isDenyAllElse": false
+          }
+        ]
+        """);
+  }
+
+  private static List<SecurableObject> recordedLocalGrants(
+      String name, String condition, boolean mixed) throws Exception {
+    ObjectNode response =
+        (ObjectNode)
+            JSON.readTree(
+                """
+        {
+          "code": 0,
+          "role": {
+            "name": "case_role",
+            "audit": {
+              "creator": "sanitized_admin",
+              "createTime": "2026-09-27T14:49:07.144364Z"
+            },
+            "properties": {},
+            "securableObjects": [
+              {
+                "type": "table",
+                "privileges": [
+                  {
+                    "name": "select_table",
+                    "condition": "allow"
+                  }
+                ],
+                "fullName": "a.sales.orders"
+              }
+            ]
+          }
+        }
+        """);
+    ArrayNode privileges =
+        (ArrayNode) response.path("role").path("securableObjects").get(0).path("privileges");
+    ((ObjectNode) privileges.get(0)).put("name", name).put("condition", condition);
+    if (mixed) privileges.addObject().put("name", "modify_table").put("condition", "allow");
+    RoleResponse decoded =
+        ObjectMapperProvider.objectMapper().treeToValue(response, RoleResponse.class);
+    decoded.validate();
+    return decoded.getRole().securableObjects();
+  }
+
+  private static ArrayNode recordedRemoteRole() throws Exception {
+    return JSON.createArrayNode()
+        .add(
+            JSON.readTree(
+                """
+        {
+          "id": 30,
+          "isEnabled": true,
+          "createdBy": "sanitized_admin",
+          "updatedBy": "sanitized_admin",
+          "createTime": 1790520547196,
+          "updateTime": 1790520547609,
+          "name": "GRAVITINO_METALAKE_7_ROLE_case_role",
+          "description": "MANAGED_BY_GRAVITINO",
+          "users": [
+            {
+              "name": "reader",
+              "isAdmin": false
+            }
+          ]
+        }
+        """));
+  }
+
   private static DeltaRangerPolicyCallbackCase fixture(String kind) throws Exception {
     ObjectNode f =
         JSON.createObjectNode()
@@ -462,7 +762,7 @@ public class TestDeltaRangerPolicyCallbackCase {
           .add("gravitino-metalake-id:7")
           .add("gravitino-catalog-id:" + (11 + i));
       ObjectNode resources = p.putObject("resources");
-      String[] keys = {"catalog", "schema", "table", "column"};
+      String[] keys = {"catalog", "database", "table", "column"};
       String[] values = {i == 0 ? "a" : "b", "sales", "orders", "*"};
       for (int k = 0; k < keys.length; k++) {
         ObjectNode resource =
