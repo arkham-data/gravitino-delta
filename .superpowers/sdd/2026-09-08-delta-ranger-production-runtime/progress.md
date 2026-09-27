@@ -1708,3 +1708,37 @@ proof, not generalSparkexecution/liveRanger/S3/fullDelta or entireTask4 completi
 Minor warning hygiene remains deferred to finalwholebranch review. All failed
 freeze1/diagnostic evidence preserved. Exact22file checkpoint excludes private
 evidence/runtime and nexttask draftplans; user milestonepush gate remains open.
+
+Task4 physical-guard increment: complete (commit55d8b746a2f31c1b185684e42c6c43ef8b1372b7,
+parent1dd224183fac4f47928ae1d9e88f838eecf826a9; independent SPEC/QUALITY and all
+qualification conditions closed). Exact22safe paths, staged/current/commit blob
+hashes checked, knowncredentialscan0, cached diff check passed. Private evidence
+and next-task draftplans excluded. No remote push; entireTask4/live/fullgoal open.
+Next authorized root step: fresh read-only owned service/fixture inventory before
+any reuse or publication. Retained harness plan under root review needs shared
+actual action executor/native tests, response-generation matching and explicit
+shutdown protocol; planner revising docs only.
+
+Post-physical fresh read-only runtime inventory: Docker daemon responds, zero
+running containers; exact old Ranger project and restoredMinIO name searches
+find no stopped containers either. RangerDB volume [private retained RangerDB volume]
+and MinIO volume delta-ranger-restored-20260921-data still exist. lsof over all
+six recorded local ports returnsno listeners. Inventory JSON archived; no volume
+content/GravitinoH2/model/version/S3 integrity claims. Next inspect saved owned
+configuration/images/persistence, reconstruct only owned fixture, then independently
+verify current56/81/foreign models/registrations/12objects before any queries or
+mutations. Old servers/relays/PIDs must not be reused as live assumptions.
+
+2026-09-26 continuation: physical checkpoint unchanged. Retained harness preflight complete and /root/implement_retained_harness dispatched under its own plan workspace. /root/recover_fixture_startup read-only startup reconstruction research; no DB startup/bootstrap authorized to worker. Root recreated only owned MinIO at localhost53655 from exact previous image and retained volume; all12object keys/bytes/restoredmtime baseline verified in post-physical-20260926-continuity.json. Gravitino361archives/145classpath/config reverified; H2 file exists, contents still unverified, server not started. Milestone/push gate remains open.
+
+2026-09-26 runtime recovery progress: original RangerDB volume preserved detached; verified offline clone1845files manifest04a50e2f912ef657b5a02054c8f88b33217b818a516a9fbda70ed0518b22f179 now in owned internal network. Clone service16/definition217/policy56/global-role81 confirmed. Private pg_dump and77table snapshots4089rows captured before Admin. Regenerated exact-image Admin config using reviewed1709line function-prefix + local-only call sequence under networknone; ALL77tables unchanged afterward. Fresh ranger DB-role password set ONLY in clone, no Ranger policy/user password change. OriginalAdminAPIcredentials accepted, exact2.8.0 version read. Direct services start excludes stockDBsetup/bootstrap/defaultservice creation. Additional owned bridge enables localhost54619 mapping; DB remains unexposed. MinIO53655 objectcontinuity already verified. Normalgateway63748 PID99941 root-session92449 uses verified259archived artifacts and exact previous entrypoint. Gravitino coldH2backup created with noopenhandles; new PID1196/session18959 launchpost-physical-20260926, exactarguments and readiness200 verified. Allnew runtime evidence under restart-20260926; historical active-server/checkpoints remain untouched. /root/recover_fixture_startup now independently checking latest56/81 public state (GET-only), no grant/revoke/testquery mutation yet. Milestone still open.
+
+Post-Admin recovery snapshot:73of77tables byte-canonical identical; only authentication-session row, publicationchange logs, servicepublicationcounter tables differ. ALL7services policy/tag generation advancedexactly1duringstartup, version+2/timestamps; fixture policy56->57, globalrole81unchanged. x_policy/x_role/x_service/definitions and remainingsemantictables unchanged. Explicit restart-publication-transition.json binds before/after snapshots; old56/81 checkpoint remains historical and no repair/replay. Independent public/downloadcontinuity agent informed to prove restored57/81baseline.
+
+Restored APIcontinuity: independent23Gravitinoobservations exact and downloaded18policy/19role semanticmodels exact at57/tag3/81. First independentAdminattempt decoded private Java-properties incorrectly (literal escapedpassword), fivebadrequests20:16:53triggered configured300secondlock; subsequentcorrectattempts still401. Logs privatelypreserved and cause verified without exposingsecrets. Correctedverifier stopsafterfirstAdmin401. Root waitednaturalwindow; onecorrectprobe20:22:30returned200, no Admincredential/securitysettingchange. Newadmin-onlybatch8requestsall200:5exact,3services differ only recordedpolicy/tagversion/timestamps. Agent independently aggregatingfinalbaseline with restarttransition and preservedforeign/globalguard; privatefailedrequests retained.
+
+Restoredfixture READ-ONLY CONTINUITY GATE accepted: baseline restart-20260926/restored-fixture-baseline-20260926.json SHA7a6359c14f9f131079ea3d5e8c7db39aeb68a478386510762cf6c4024a1e1896. Independent semantic comparison33models(23Grv,8Admin,2downloads),19Adminpolicies inclforeign48/side53,18downloadedpolicies,19roles, protectedglobalguarddivergence preserved. Rootrehash33originalresponsebodies+checkpoint/freshrecords/DBtransition/S3script/result bindings confirmscounts57/tag3/81. OriginalDBpreserved and12S3objects unchanged againstexplicitrestoredmtimebaseline. No currentartifactliveSpark claim; callbackfailure/role-only/outage/finalreview/push remainopen.
+
+User authorization persists: when currentmilestone actually closes, push codex/delta-spark-feasibility through that accepted checkpoint to origin using ordinary nonforce push, verifyremoteSHA, then continuefurtherwork locally. This supersedes plan historical no-push language for that one milestone checkpoint only; no PR/merge/shareddeployment authorization inferred. No pushbefore live/failure/package/reviewgatesclose.
+
+Retained harness accepted: current fix1 ten test files, independent SPEC compliant/QUALITY approved with all4findings addressed. Four pinned focused runs23/0/0/0 each,92total; originalXML/inventory/source/artifact checks and Spotless/Javadoc/companion pass. No production changes in increment. Root checkpoint pending. Next current-artifact live preparation requires replacing companion+testapp in259entry distribution manifests and adapting historical runner for numbered retained events; assembly map task-4-current-runtime-assembly-map.md. Fresh Docker inventory confirmsownedAdmin/DBclone/MinIO running. Milestone push remains authorized at closure only.

@@ -19,6 +19,9 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -32,6 +35,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -45,6 +50,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import org.apache.ranger.plugin.util.RangerRESTUtils;
 
 /** Test-only callback recorder; never installed in a provider or Spark plugin. */
 final class DeltaRangerCallbackGateway implements AutoCloseable {
@@ -73,6 +79,7 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
   private final URI upstream;
   private final Path evidence;
   private final boolean retainResponseBodies;
+  private final String downloadService;
   private final String run = UUID.randomUUID().toString();
   private final AtomicInteger active = new AtomicInteger();
   private final AtomicLong attempts = new AtomicLong();
@@ -84,11 +91,23 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
     this(upstream, evidence, 0);
   }
 
+  DeltaRangerCallbackGateway(URI upstream, Path evidence, String downloadService)
+      throws IOException {
+    this(upstream, evidence, 0, false, downloadService);
+  }
+
   DeltaRangerCallbackGateway(URI upstream, Path evidence, int port, boolean retainResponseBodies)
+      throws IOException {
+    this(upstream, evidence, port, retainResponseBodies, null);
+  }
+
+  private DeltaRangerCallbackGateway(
+      URI upstream, Path evidence, int port, boolean retainResponseBodies, String downloadService)
       throws IOException {
     this.upstream = upstream;
     this.evidence = evidence;
     this.retainResponseBodies = retainResponseBodies;
+    this.downloadService = downloadService;
     if (!Files.exists(evidence)) {
       Files.createFile(
           evidence,
@@ -203,6 +222,7 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
             client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
         event.put("upstreamStatus", response.statusCode());
         event.put("upstreamResponseCompleted", Instant.now().toString());
+        recordDownloadMetadata(exchange, response, event);
         if (retainResponseBodies) {
           Path body =
               evidence.resolveSibling(evidence.getFileName() + "." + run + "." + attempt + ".body");
@@ -265,6 +285,57 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
     } catch (IOException e) {
       evidenceFailure.compareAndSet(null, e);
       throw e;
+    }
+  }
+
+  private void recordDownloadMetadata(
+      HttpExchange exchange, HttpResponse<byte[]> response, Map<String, Object> event) {
+    if (downloadService == null
+        || !"GET".equals(exchange.getRequestMethod())
+        || response.statusCode() != 200) {
+      return;
+    }
+    String path = exchange.getRequestURI().getPath();
+    String kind;
+    String versionField;
+    if (path.equals(
+        RangerRESTUtils.REST_URL_POLICY_GET_FOR_SECURE_SERVICE_IF_UPDATED + downloadService)) {
+      kind = "policy";
+      versionField = "policyVersion";
+    } else if (path.equals(
+        RangerRESTUtils.REST_URL_SERVICE_SERCURE_GET_USER_GROUP_ROLES + downloadService)) {
+      kind = "role";
+      versionField = "roleVersion";
+    } else {
+      return;
+    }
+    event.put("downloadKind", kind);
+    try {
+      ObjectMapper strict =
+          new ObjectMapper()
+              .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+              .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+      JsonNode body = strict.readTree(response.body());
+      if (body == null
+          || !body.isObject()
+          || !body.path("serviceName").isTextual()
+          || !downloadService.equals(body.path("serviceName").textValue())
+          || !body.path(versionField).isIntegralNumber()
+          || !body.path(versionField).canConvertToLong()
+          || body.path(versionField).longValue() < 0) {
+        event.put("downloadMetadataInvalid", "service-or-version");
+        return;
+      }
+      event.put("downloadService", downloadService);
+      event.put("downloadVersion", body.path(versionField).longValue());
+      byte[] digest = MessageDigest.getInstance("SHA-256").digest(response.body());
+      StringBuilder hex = new StringBuilder();
+      for (byte b : digest) {
+        hex.append(String.format("%02x", b));
+      }
+      event.put("responseSha256", hex.toString());
+    } catch (IOException | NoSuchAlgorithmException invalid) {
+      event.put("downloadMetadataInvalid", "malformed-response");
     }
   }
 

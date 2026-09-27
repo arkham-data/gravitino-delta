@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import org.apache.gravitino.spark.connector.plugin.GravitinoDriverPlugin;
@@ -131,61 +132,14 @@ public final class DeltaRangerDownloadedQuery {
               input.path("minPolicy").asLong(0), input.path("minRole").asLong(0));
           startup.put("versions", versions(engine));
           write(output.resolve("ready.json"), startup);
-          String line;
-          while ((line = commands.readLine()) != null) {
-            JsonNode command = JSON.readTree(line);
-            if (command.path("close").asBoolean()) {
-              break;
-            }
-            SparkRangerAdminPlugin.refreshPoliciesAndTags();
-            await(engine, command.path("minPolicy").asLong(0), command.path("minRole").asLong(0));
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("versionsBefore", versions(engine));
-            result.put("subject", DeltaRangerQuerySubject.current(spark).user());
-            result.put("sql", command.path("sql").asText());
-            List<List<Object>> rows = new ArrayList<>();
-            Throwable queryFailure = null;
-            try {
-              for (Row row : spark.sql(command.path("sql").asText()).collectAsList()) {
-                List<Object> values = new ArrayList<>();
-                for (int i = 0; i < row.size(); i++) {
-                  values.add(row.isNullAt(i) ? null : row.get(i));
-                }
-                rows.add(values);
-              }
-            } catch (Exception failure) {
-              queryFailure = failure;
-            }
-            result.put(
-                "failureClass", queryFailure == null ? null : queryFailure.getClass().getName());
-            result.put("authorizationDenied", isSecurityFailure(queryFailure));
-            result.put("failureDetails", failureDetails(queryFailure));
-            result.put("rows", rows);
-            result.put("versionsAfter", versions(engine));
-            write(output.resolve(command.path("id").asText() + ".json"), result);
-            if (command.path("denied").asBoolean()) {
-              check(
-                  isSecurityFailure(queryFailure),
-                  "Expected an authorization denial, not a setup or execution failure");
-            } else if (command.path("hidden").asBoolean()) {
-              check(queryFailure != null, "Hidden catalog unexpectedly resolved");
-              check(
-                  !spark.conf().contains("spark.sql.catalog." + command.path("catalog").asText()),
-                  "Hidden catalog was registered by discovery");
-            } else {
-              if (queryFailure != null) {
-                throw new AssertionError(
-                    "Fresh native SELECT failed; private evidence retained", queryFailure);
-              }
-              check(
-                  normalized(JSON.valueToTree(rows))
-                      .equals(normalized(command.path("expectedRows"))),
-                  "Executed native rows differ from independent expected rows");
-            }
-            write(
-                output.resolve(command.path("id").asText() + "-passed.json"),
-                Collections.singletonMap("passed", true));
-          }
+          runCommands(
+              spark,
+              engine,
+              security,
+              output,
+              commands,
+              new DeltaRangerRetainedQueries(spark),
+              SparkRangerAdminPlugin::refreshPoliciesAndTags);
         }
         write(output.resolve("completed.json"), Collections.singletonMap("completed", true));
       } catch (Throwable failure) {
@@ -206,11 +160,274 @@ public final class DeltaRangerDownloadedQuery {
     }
   }
 
+  static void runCommands(
+      SparkSession spark,
+      DeltaRangerPolicyEngine engine,
+      DeltaRangerDownloadedSecurity security,
+      Path output,
+      BufferedReader commands,
+      DeltaRangerRetainedQueries retained,
+      Runnable refresh)
+      throws Exception {
+    runCommands(spark, engine, security, output, commands, retained, refresh, 0);
+  }
+
+  static void runCommands(
+      SparkSession spark,
+      DeltaRangerPolicyEngine engine,
+      DeltaRangerDownloadedSecurity security,
+      Path output,
+      BufferedReader commands,
+      DeltaRangerRetainedQueries retained,
+      Runnable refresh,
+      int initialSequence)
+      throws Exception {
+    DeltaRangerDownloadedCommand.Ledger ledger = new DeltaRangerDownloadedCommand.Ledger();
+    Path retainedEvents =
+        Files.createDirectory(
+            output.resolve("retained-events"),
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+    try {
+      String line;
+      int sequence = initialSequence;
+      while ((line = commands.readLine()) != null) {
+        DeltaRangerDownloadedCommand.Parsed command =
+            DeltaRangerDownloadedCommand.parse(line, ledger);
+        if (command.kind() == DeltaRangerDownloadedCommand.Kind.CLOSE) {
+          break;
+        }
+        if (command.kind() == DeltaRangerDownloadedCommand.Kind.RELEASE) {
+          sequence = nextSequence(sequence);
+          retained.release(command.retentionId());
+          Map<String, Object> result = retainedRecord(sequence, command);
+          result.put("released", true);
+          retainedWrite(retainedEvents, sequence, result, command);
+          continue;
+        }
+        Map<String, Object> versionsBeforeRefresh = versionRecord(engine.versions());
+        refresh.run();
+        await(engine, command.minPolicy(), command.minRole());
+        if (command.kind() == DeltaRangerDownloadedCommand.Kind.PREPARE) {
+          sequence = nextSequence(sequence);
+          check(security.awaitDrained(), "Prepare download completion is unresolved");
+          DeltaRangerPolicyEngine.Versions applied = engine.versions();
+          DeltaRangerRetainedQueries.Slot slot =
+              retained.prepare(
+                  command.retentionId(), command.sql(), security.completedCursor(), applied);
+          Map<String, Object> result = retainedRecord(sequence, command);
+          result.put("sql", command.sql());
+          result.put("versionsBefore", versionsBeforeRefresh);
+          result.put("versionsAfter", versionRecord(engine.versions()));
+          result.put("completedCursor", slot.cursor());
+          result.put("prepared", true);
+          retainedWrite(retainedEvents, sequence, result, command);
+          continue;
+        }
+        if (command.kind() == DeltaRangerDownloadedCommand.Kind.COLLECT) {
+          sequence = nextSequence(sequence);
+          check(security.awaitDrained(), "Collect download completion is unresolved");
+          DeltaRangerRetainedQueries.Slot slot = retained.require(command.retentionId());
+          DeltaRangerPolicyEngine.Versions applied = engine.versions();
+          DeltaRangerDownloadedSecurity.DownloadRequirement effective =
+              effective(command.requiredDownloads(), slot.versions(), applied);
+          DeltaRangerDownloadedSecurity.DownloadEvidence downloads =
+              security.completedAfter(slot.cursor(), effective, applied);
+          DeltaRangerRetainedAction.Result action =
+              DeltaRangerRetainedAction.execute(spark, slot, command);
+          Map<String, Object> result = retainedRecord(sequence, command);
+          result.put("versionsBefore", versionRecord(slot.versions()));
+          result.put("versionsAfter", versionRecord(applied));
+          result.put(
+              "downloads",
+              downloadRecord(downloads, command.requiredDownloads(), effective, slot.cursor()));
+          result.put(
+              "refreshQualified",
+              effective != DeltaRangerDownloadedSecurity.DownloadRequirement.NONE);
+          result.put("actionResult", action.evidence());
+          completeCollect(
+              retainedEvents, sequence, result, command, action, slot, downloads.cursor(), applied);
+          continue;
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("versionsBefore", versions(engine));
+        result.put("subject", DeltaRangerQuerySubject.current(spark).user());
+        result.put("sql", command.sql());
+        List<List<Object>> rows = new ArrayList<>();
+        Throwable queryFailure = null;
+        try {
+          for (Row row : spark.sql(command.sql()).collectAsList()) {
+            List<Object> values = new ArrayList<>();
+            for (int i = 0; i < row.size(); i++) {
+              values.add(row.isNullAt(i) ? null : row.get(i));
+            }
+            rows.add(values);
+          }
+        } catch (Exception failure) {
+          queryFailure = failure;
+        }
+        result.put("failureClass", queryFailure == null ? null : queryFailure.getClass().getName());
+        result.put("authorizationDenied", isSecurityFailure(queryFailure));
+        result.put("failureDetails", failureDetails(queryFailure));
+        result.put("rows", rows);
+        result.put("versionsAfter", versions(engine));
+        write(output.resolve(command.id() + ".json"), result);
+        if (command.denied()) {
+          check(
+              isSecurityFailure(queryFailure),
+              "Expected an authorization denial, not a setup or execution failure");
+        } else if (command.hidden()) {
+          check(queryFailure != null, "Hidden catalog unexpectedly resolved");
+          check(
+              !spark.conf().contains("spark.sql.catalog." + command.catalog()),
+              "Hidden catalog was registered by discovery");
+        } else {
+          if (queryFailure != null) {
+            throw new AssertionError(
+                "Fresh native SELECT failed; private evidence retained", queryFailure);
+          }
+          check(
+              normalized(JSON.valueToTree(rows))
+                  .equals(normalized(command.expectedRows().orElseThrow())),
+              "Executed native rows differ from independent expected rows");
+        }
+        write(
+            output.resolve(command.id() + "-passed.json"),
+            Collections.singletonMap("passed", true));
+      }
+    } finally {
+      retained.close();
+    }
+  }
+
   /**
    * @return fixed value for the executed pinned reflection helper probe
    */
   public String helperMethod() {
     return "method-value";
+  }
+
+  static int nextSequence(int previous) {
+    if (previous >= 4096) {
+      throw new IllegalStateException("Retained command limit exceeded");
+    }
+    return previous + 1;
+  }
+
+  private static Map<String, Object> retainedRecord(
+      int sequence, DeltaRangerDownloadedCommand.Parsed command) {
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("schemaVersion", 1);
+    result.put("sequence", sequence);
+    result.put("id", command.id());
+    result.put("operation", command.kind().name().toLowerCase(Locale.ROOT));
+    result.put("retentionId", command.retentionId());
+    return result;
+  }
+
+  private static void retainedWrite(
+      Path directory,
+      int sequence,
+      Map<String, Object> result,
+      DeltaRangerDownloadedCommand.Parsed command)
+      throws Exception {
+    write(directory.resolve(String.format("%06d.json", sequence)), result);
+    retainedMarker(directory, sequence, command);
+  }
+
+  static void completeCollect(
+      Path directory,
+      int sequence,
+      Map<String, Object> result,
+      DeltaRangerDownloadedCommand.Parsed command,
+      DeltaRangerRetainedAction.Result action,
+      DeltaRangerRetainedQueries.Slot slot,
+      long cursor,
+      DeltaRangerPolicyEngine.Versions applied)
+      throws Exception {
+    write(directory.resolve(String.format("%06d.json", sequence)), result);
+    if (!action.passed()) {
+      throw new AssertionError(
+          "Retained collection failed; private result preserved", action.failure());
+    }
+    retainedMarker(directory, sequence, command);
+    slot.advance(cursor, applied);
+  }
+
+  private static void retainedMarker(
+      Path directory, int sequence, DeltaRangerDownloadedCommand.Parsed command) throws Exception {
+    Map<String, Object> marker = new LinkedHashMap<>();
+    marker.put("schemaVersion", 1);
+    marker.put("sequence", sequence);
+    marker.put("id", command.id());
+    marker.put("retentionId", command.retentionId());
+    marker.put("passed", true);
+    write(directory.resolve(String.format("%06d-passed.json", sequence)), marker);
+  }
+
+  static DeltaRangerDownloadedSecurity.DownloadRequirement effective(
+      DeltaRangerDownloadedSecurity.DownloadRequirement requested,
+      DeltaRangerPolicyEngine.Versions before,
+      DeltaRangerPolicyEngine.Versions after) {
+    boolean policy = after.policy() > before.policy();
+    boolean role = after.role() > before.role();
+    if (after.policy() < before.policy() || after.role() < before.role()) {
+      throw new IllegalStateException("Applied generation regressed");
+    }
+    if (requested == DeltaRangerDownloadedSecurity.DownloadRequirement.NONE && (policy || role)) {
+      throw new IllegalStateException("NONE requires unchanged applied generations");
+    }
+    if ((requested == DeltaRangerDownloadedSecurity.DownloadRequirement.POLICY
+            || requested == DeltaRangerDownloadedSecurity.DownloadRequirement.BOTH)
+        && !policy) {
+      throw new IllegalStateException("Requested policy generation did not advance");
+    }
+    if ((requested == DeltaRangerDownloadedSecurity.DownloadRequirement.ROLE
+            || requested == DeltaRangerDownloadedSecurity.DownloadRequirement.BOTH)
+        && !role) {
+      throw new IllegalStateException("Requested role generation did not advance");
+    }
+    return policy && role
+        ? DeltaRangerDownloadedSecurity.DownloadRequirement.BOTH
+        : policy
+            ? DeltaRangerDownloadedSecurity.DownloadRequirement.POLICY
+            : role
+                ? DeltaRangerDownloadedSecurity.DownloadRequirement.ROLE
+                : DeltaRangerDownloadedSecurity.DownloadRequirement.NONE;
+  }
+
+  private static Map<String, Object> versionRecord(DeltaRangerPolicyEngine.Versions value) {
+    Map<String, Object> record = new LinkedHashMap<>();
+    record.put("service", value.service());
+    record.put("definition", value.definition());
+    record.put("policy", value.policy());
+    record.put("role", value.role());
+    return record;
+  }
+
+  private static Map<String, Object> downloadRecord(
+      DeltaRangerDownloadedSecurity.DownloadEvidence downloads,
+      DeltaRangerDownloadedSecurity.DownloadRequirement requested,
+      DeltaRangerDownloadedSecurity.DownloadRequirement effective,
+      long cursorBefore) {
+    Map<String, Object> record = new LinkedHashMap<>();
+    record.put("requested", requested.name().toLowerCase(Locale.ROOT));
+    record.put("effective", effective.name().toLowerCase(Locale.ROOT));
+    record.put("cursorBefore", cursorBefore);
+    record.put("cursorAfter", downloads.cursor());
+    record.put(
+        "policy", downloads.policy().map(DeltaRangerDownloadedQuery::downloadEntry).orElse(null));
+    record.put(
+        "role", downloads.role().map(DeltaRangerDownloadedQuery::downloadEntry).orElse(null));
+    return record;
+  }
+
+  private static Map<String, Object> downloadEntry(
+      DeltaRangerDownloadedSecurity.CompletedDownload download) {
+    Map<String, Object> record = new LinkedHashMap<>();
+    record.put("attempt", download.attempt());
+    record.put("version", download.version());
+    record.put("responseSha256", download.responseSha256());
+    return record;
   }
 
   private static Map<String, String> origins() throws Exception {
@@ -314,7 +531,7 @@ public final class DeltaRangerDownloadedQuery {
     return false;
   }
 
-  private static List<Map<String, Object>> failureDetails(Throwable failure) {
+  static List<Map<String, Object>> failureDetails(Throwable failure) {
     List<Map<String, Object>> details = new ArrayList<>();
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       Map<String, Object> value = new LinkedHashMap<>();

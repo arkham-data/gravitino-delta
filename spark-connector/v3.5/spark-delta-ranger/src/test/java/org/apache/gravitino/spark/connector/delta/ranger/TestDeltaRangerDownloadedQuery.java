@@ -26,10 +26,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.ranger.plugin.policyengine.RangerAccessRequest;
@@ -38,6 +41,133 @@ import org.junit.jupiter.api.io.TempDir;
 
 class TestDeltaRangerDownloadedQuery {
   @TempDir Path directory;
+
+  @Test
+  void retainedCommandLimitRejectsBeforeTheNextFilename() {
+    assertEquals(4096, DeltaRangerDownloadedQuery.nextSequence(4095));
+    assertThrows(IllegalStateException.class, () -> DeltaRangerDownloadedQuery.nextSequence(4096));
+  }
+
+  @Test
+  void retainedActionEvidenceRecursivelyFreezesNestedCollections() {
+    List<Object> row = new ArrayList<>();
+    row.add("value");
+    List<Object> rows = new ArrayList<>();
+    rows.add(row);
+    Map<String, Object> cause = new LinkedHashMap<>();
+    cause.put("stack", new ArrayList<>(List.of("frame")));
+    Map<String, Object> evidence = new LinkedHashMap<>();
+    evidence.put("rows", rows);
+    evidence.put("failureDetails", new ArrayList<>(List.of(cause)));
+    evidence.put("userScanOutputRows", new ArrayList<>(List.of(1L)));
+    DeltaRangerRetainedAction.Result result =
+        new DeltaRangerRetainedAction.Result(true, evidence, null);
+    row.add("late");
+    cause.put("message", "late");
+    assertEquals(1, ((List<?>) ((List<?>) result.evidence().get("rows")).get(0)).size());
+    assertFalse(
+        ((Map<?, ?>) ((List<?>) result.evidence().get("failureDetails")).get(0))
+            .containsKey("message"));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> ((List<Object>) result.evidence().get("userScanOutputRows")).add(2L));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> ((List<Object>) result.evidence().get("rows")).clear());
+  }
+
+  @Test
+  void effectiveRequirementIncludesEveryAdvancedGeneration() throws Exception {
+    Constructor<DeltaRangerPolicyEngine.Versions> constructor =
+        DeltaRangerPolicyEngine.Versions.class.getDeclaredConstructor(
+            String.class, String.class, long.class, long.class);
+    constructor.setAccessible(true);
+    DeltaRangerPolicyEngine.Versions before =
+        constructor.newInstance("owned", "definition", 1L, 1L);
+    DeltaRangerPolicyEngine.Versions policy =
+        constructor.newInstance("owned", "definition", 2L, 1L);
+    DeltaRangerPolicyEngine.Versions both = constructor.newInstance("owned", "definition", 2L, 2L);
+    assertEquals(
+        DeltaRangerDownloadedSecurity.DownloadRequirement.NONE,
+        DeltaRangerDownloadedQuery.effective(
+            DeltaRangerDownloadedSecurity.DownloadRequirement.NONE, before, before));
+    assertEquals(
+        DeltaRangerDownloadedSecurity.DownloadRequirement.POLICY,
+        DeltaRangerDownloadedQuery.effective(
+            DeltaRangerDownloadedSecurity.DownloadRequirement.POLICY, before, policy));
+    assertEquals(
+        DeltaRangerDownloadedSecurity.DownloadRequirement.BOTH,
+        DeltaRangerDownloadedQuery.effective(
+            DeltaRangerDownloadedSecurity.DownloadRequirement.POLICY, before, both));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            DeltaRangerDownloadedQuery.effective(
+                DeltaRangerDownloadedSecurity.DownloadRequirement.NONE, before, policy));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            DeltaRangerDownloadedQuery.effective(
+                DeltaRangerDownloadedSecurity.DownloadRequirement.ROLE, before, policy));
+  }
+
+  @Test
+  void strictCommandsPreserveCloseAndReserveSafeOutputNames() {
+    DeltaRangerDownloadedCommand.Ledger ledger = new DeltaRangerDownloadedCommand.Ledger();
+    DeltaRangerDownloadedCommand.Parsed close =
+        DeltaRangerDownloadedCommand.parse("{\"close\":true}", ledger);
+    assertEquals(DeltaRangerDownloadedCommand.Kind.CLOSE, close.kind());
+    assertEquals(null, close.id());
+    assertThrows(IllegalStateException.class, close::retentionId);
+    assertEquals(
+        DeltaRangerDownloadedCommand.Kind.PREPARE,
+        DeltaRangerDownloadedCommand.parse(
+                "{\"id\":\"p1\",\"operation\":\"prepare\",\"retentionId\":\"held\",\"sql\":\"SELECT secret FROM a.db.t\",\"minPolicy\":1,\"minRole\":1}",
+                ledger)
+            .kind());
+    assertEquals(
+        DeltaRangerDownloadedCommand.Kind.COLLECT,
+        DeltaRangerDownloadedCommand.parse(
+                "{\"id\":\"c1\",\"operation\":\"collect\",\"retentionId\":\"held\",\"action\":\"collectAsList\",\"deniedAtEntry\":true,\"expectedFailureContains\":\"denied\",\"minPolicy\":1,\"minRole\":1,\"requiredDownloads\":\"both\"}",
+                ledger)
+            .kind());
+    for (String invalid :
+        List.of(
+            "{\"close\":false}",
+            "{\"close\":true,\"id\":\"x\"}",
+            "{\"close\":true,\"close\":true}",
+            "{\"close\":true} {}",
+            "{\"id\":\"../bad\",\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"expectedRows\":[]}",
+            "{\"id\":\"ready\",\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"expectedRows\":[]}",
+            "{\"id\":\"x-passed\",\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"expectedRows\":[]}",
+            "{\"id\":null,\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"expectedRows\":[]}",
+            "{\"id\":\"missing\",\"sql\":\"select 1\",\"minPolicy\":1,\"expectedRows\":[]}",
+            "{\"id\":\"extra\",\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"expectedRows\":[],\"surprise\":1}",
+            "{\"id\":\"dupe\",\"id\":\"dupe\",\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"expectedRows\":[]}",
+            "{\"id\":\"bad\",\"operation\":\"collect\",\"retentionId\":\"held\",\"action\":\"count\",\"expectedRows\":[],\"minPolicy\":1,\"minRole\":1,\"requiredDownloads\":\"none\"}")) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> DeltaRangerDownloadedCommand.parse(invalid, ledger));
+    }
+    assertEquals(
+        DeltaRangerDownloadedCommand.Kind.FRESH,
+        DeltaRangerDownloadedCommand.parse(
+                "{\"id\":\"x\",\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"expectedRows\":[]}",
+                ledger)
+            .kind());
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            DeltaRangerDownloadedCommand.parse(
+                "{\"id\":\"x\",\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"denied\":true}",
+                ledger));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            DeltaRangerDownloadedCommand.parse(
+                "{\"id\":\"x-passed\",\"sql\":\"select 1\",\"minPolicy\":1,\"minRole\":1,\"expectedRows\":[]}",
+                ledger));
+  }
 
   @Test
   void acceptsOnlyActualAuthorizeDenialIncludingWrappedFailure() throws Exception {

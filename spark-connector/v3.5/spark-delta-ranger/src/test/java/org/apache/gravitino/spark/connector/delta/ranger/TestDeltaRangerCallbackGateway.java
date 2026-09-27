@@ -40,13 +40,55 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.MessageDigest;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.apache.ranger.plugin.util.RangerRESTUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class TestDeltaRangerCallbackGateway {
   @TempDir Path directory;
+
+  @Test
+  void scopedSecureResponseRecordsOnlyMatchingGenerationAndDigest() throws Exception {
+    byte[] body =
+        "{\"serviceName\":\"owned\",\"policyVersion\":7}".getBytes(StandardCharsets.UTF_8);
+    HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    upstream.createContext(
+        "/",
+        exchange -> {
+          exchange.sendResponseHeaders(200, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
+    upstream.start();
+    try (DeltaRangerCallbackGateway gateway =
+        new DeltaRangerCallbackGateway(
+            URI.create("http://127.0.0.1:" + upstream.getAddress().getPort()),
+            directory.resolve("scoped.jsonl"),
+            "owned")) {
+      String path = RangerRESTUtils.REST_URL_POLICY_GET_FOR_SECURE_SERVICE_IF_UPDATED + "owned";
+      HttpResponse<byte[]> response =
+          HttpClient.newHttpClient()
+              .send(
+                  HttpRequest.newBuilder(gateway.uri().resolve(path)).GET().build(),
+                  HttpResponse.BodyHandlers.ofByteArray());
+      assertArrayEquals(body, response.body());
+      assertTrue(gateway.awaitDrained());
+      JsonNode event = new ObjectMapper().readTree(gateway.recordedEvents().get(1));
+      assertEquals("policy", event.path("downloadKind").asText());
+      assertEquals("owned", event.path("downloadService").asText());
+      assertEquals(7, event.path("downloadVersion").asLong());
+      assertEquals(
+          HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body)),
+          event.path("responseSha256").asText());
+      assertTrue(!Files.readString(directory.resolve("scoped.jsonl")).contains("policyVersion"));
+    } finally {
+      upstream.stop(0);
+    }
+  }
 
   @Test
   void privatelyRetainsExactCompletedResponseBytesWhenExplicitlyRequested() throws Exception {

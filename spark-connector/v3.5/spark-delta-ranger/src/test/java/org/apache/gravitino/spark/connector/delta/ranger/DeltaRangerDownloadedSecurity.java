@@ -29,6 +29,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.transform.OutputKeys;
@@ -41,6 +42,62 @@ import org.w3c.dom.Element;
 
 /** Private fresh-cache setup and transport evidence for the test-only Spark application. */
 final class DeltaRangerDownloadedSecurity implements AutoCloseable {
+  enum DownloadRequirement {
+    NONE,
+    POLICY,
+    ROLE,
+    BOTH
+  }
+
+  static final class CompletedDownload {
+    private final long attempt;
+    private final long version;
+    private final String responseSha256;
+
+    CompletedDownload(long attempt, long version, String responseSha256) {
+      this.attempt = attempt;
+      this.version = version;
+      this.responseSha256 = responseSha256;
+    }
+
+    long attempt() {
+      return attempt;
+    }
+
+    long version() {
+      return version;
+    }
+
+    String responseSha256() {
+      return responseSha256;
+    }
+  }
+
+  static final class DownloadEvidence {
+    private final Optional<CompletedDownload> policy;
+    private final Optional<CompletedDownload> role;
+    private final long cursor;
+
+    DownloadEvidence(
+        Optional<CompletedDownload> policy, Optional<CompletedDownload> role, long cursor) {
+      this.policy = policy;
+      this.role = role;
+      this.cursor = cursor;
+    }
+
+    Optional<CompletedDownload> policy() {
+      return policy;
+    }
+
+    Optional<CompletedDownload> role() {
+      return role;
+    }
+
+    long cursor() {
+      return cursor;
+    }
+  }
+
   private static final ObjectMapper JSON = new ObjectMapper();
   private static final String URL = "ranger.plugin.spark.policy.rest.url";
   private static final String CACHE = "ranger.plugin.spark.policy.cache.dir";
@@ -69,7 +126,7 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
             PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
     gateway =
         new DeltaRangerCallbackGateway(
-            URI.create(original.get(URL)), evidence.resolve("downloads.jsonl"));
+            URI.create(original.get(URL)), evidence.resolve("downloads.jsonl"), service);
     try {
       var nodes = document.getElementsByTagName("property");
       for (int i = 0; i < nodes.getLength(); i++) {
@@ -127,41 +184,81 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
     return gateway.awaitDrained();
   }
 
+  long completedCursor() throws IOException, InterruptedException {
+    if (!gateway.awaitDrained()) {
+      throw new IllegalStateException("Download completion unresolved");
+    }
+    long cursor = 0;
+    for (String line : gateway.recordedEvents()) {
+      JsonNode event = JSON.readTree(line);
+      if (event.has("finished")) {
+        cursor = Math.max(cursor, event.path("attempt").asLong());
+      }
+    }
+    return cursor;
+  }
+
+  DownloadEvidence completedAfter(
+      long exclusiveCursor,
+      DownloadRequirement requirement,
+      DeltaRangerPolicyEngine.Versions applied)
+      throws IOException, InterruptedException {
+    return completedAfter(exclusiveCursor, requirement, applied.policy(), applied.role());
+  }
+
+  private DownloadEvidence completedAfter(
+      long exclusiveCursor, DownloadRequirement requirement, long policyVersion, long roleVersion)
+      throws IOException, InterruptedException {
+    if (!gateway.awaitDrained()) {
+      throw new IllegalStateException("Download completion unresolved");
+    }
+    JsonNode latestPolicy = null;
+    JsonNode latestRole = null;
+    long cursor = exclusiveCursor;
+    for (String line : gateway.recordedEvents()) {
+      JsonNode event = JSON.readTree(line);
+      long attempt = event.path("attempt").asLong();
+      if (attempt <= exclusiveCursor || !event.has("finished")) {
+        continue;
+      }
+      cursor = Math.max(cursor, attempt);
+      if (!"GET".equals(event.path("method").asText())
+          || !event.path("upstreamAttempted").asBoolean()
+          || !event.has("upstreamResponseCompleted")
+          || !event.path("downstreamResponseCompleted").asBoolean()
+          || event.path("upstreamStatus").asInt() != 200) {
+        continue;
+      }
+      String path = event.path("path").asText();
+      if (path.equals(RangerRESTUtils.REST_URL_POLICY_GET_FOR_SECURE_SERVICE_IF_UPDATED + service)
+          && (latestPolicy == null || attempt > latestPolicy.path("attempt").asLong())) {
+        latestPolicy = event;
+      }
+      if (path.equals(RangerRESTUtils.REST_URL_SERVICE_SERCURE_GET_USER_GROUP_ROLES + service)
+          && (latestRole == null || attempt > latestRole.path("attempt").asLong())) {
+        latestRole = event;
+      }
+    }
+    Optional<CompletedDownload> policy = Optional.empty();
+    Optional<CompletedDownload> role = Optional.empty();
+    if (requirement == DownloadRequirement.POLICY || requirement == DownloadRequirement.BOTH) {
+      policy = Optional.of(require(latestPolicy, "policy", policyVersion));
+    }
+    if (requirement == DownloadRequirement.ROLE || requirement == DownloadRequirement.BOTH) {
+      role = Optional.of(require(latestRole, "role", roleVersion));
+    }
+    return new DownloadEvidence(policy, role, cursor);
+  }
+
   void recordInitialDownloads(long policy, long role, long minPolicy, long minRole)
       throws Exception {
     if (policy < minPolicy || role < minRole) {
       throw new IllegalStateException(
           "Fresh downloaded generations have not reached the fixture floor");
     }
-    long policyAttempt = 0;
-    long roleAttempt = 0;
-    for (String line : gateway.recordedEvents()) {
-      JsonNode event = JSON.readTree(line);
-      if (!"GET".equals(event.path("method").asText())
-          || !event.has("upstreamResponseCompleted")
-          || !event.has("finished")
-          || !event.path("upstreamAttempted").asBoolean()
-          || event.path("upstreamStatus").asInt() != 200
-          || !event.path("downstreamResponseCompleted").asBoolean()) {
-        continue;
-      }
-      if (event
-          .path("path")
-          .asText()
-          .equals(RangerRESTUtils.REST_URL_POLICY_GET_FOR_SECURE_SERVICE_IF_UPDATED + service)) {
-        policyAttempt = event.path("attempt").asLong();
-      }
-      if (event
-          .path("path")
-          .asText()
-          .equals(RangerRESTUtils.REST_URL_SERVICE_SERCURE_GET_USER_GROUP_ROLES + service)) {
-        roleAttempt = event.path("attempt").asLong();
-      }
-    }
-    if (policyAttempt == 0 || roleAttempt == 0) {
-      throw new IllegalStateException(
-          "Both initial secure downloads require completed actual HTTP 200");
-    }
+    DownloadEvidence downloads = completedAfter(0, DownloadRequirement.BOTH, policy, role);
+    long policyAttempt = downloads.policy().orElseThrow().attempt();
+    long roleAttempt = downloads.role().orElseThrow().attempt();
     Map<String, Object> record = new LinkedHashMap<>();
     record.put("policyAttempt", policyAttempt);
     record.put("roleAttempt", roleAttempt);
@@ -169,6 +266,20 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
     record.put("roleVersion", role);
     record.put("freshEmptyCacheAtPreparation", true);
     write(evidence.resolve("initial-downloads.json"), record);
+  }
+
+  private CompletedDownload require(JsonNode event, String kind, long version) {
+    if (event == null
+        || !kind.equals(event.path("downloadKind").asText())
+        || !service.equals(event.path("downloadService").asText())
+        || !event.path("downloadVersion").isIntegralNumber()
+        || event.path("downloadVersion").asLong() != version
+        || !event.path("responseSha256").isTextual()
+        || !event.path("responseSha256").asText().matches("[0-9a-f]{64}")) {
+      throw new IllegalStateException("Completed download does not match applied generation");
+    }
+    return new CompletedDownload(
+        event.path("attempt").asLong(), version, event.path("responseSha256").asText());
   }
 
   static Map<String, String> properties(Path xml) throws Exception {

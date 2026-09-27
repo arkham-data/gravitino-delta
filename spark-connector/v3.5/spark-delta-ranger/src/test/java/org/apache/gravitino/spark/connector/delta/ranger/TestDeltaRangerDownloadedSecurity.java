@@ -37,9 +37,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ranger.plugin.util.RangerRESTUtils;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -49,6 +52,136 @@ class TestDeltaRangerDownloadedSecurity {
   @TempDir Path directory;
 
   @Test
+  void postCursorPolicyAndBothSelectExactAppliedResponseDigests() throws Exception {
+    String policyBody = "{\"serviceName\":\"service\",\"policyVersion\":1}";
+    String roleBody = "{\"serviceName\":\"service\",\"roleVersion\":1}";
+    HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    upstream.createContext(
+        "/",
+        exchange -> {
+          byte[] body =
+              (exchange.getRequestURI().getPath().contains("roles") ? roleBody : policyBody)
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
+    upstream.start();
+    Path source = source("http://127.0.0.1:" + upstream.getAddress().getPort());
+    try (TestDeltaRangerNativeSelect.Fixture fixture = new TestDeltaRangerNativeSelect.Fixture();
+        DeltaRangerDownloadedSecurity security =
+            new DeltaRangerDownloadedSecurity(
+                source,
+                Files.createDirectory(directory.resolve("postcursor")),
+                directory,
+                "service")) {
+      DeltaRangerPolicyEngine.Versions applied = fixture.engine.versions();
+      long cursor = security.completedCursor();
+      String policy = RangerRESTUtils.REST_URL_POLICY_GET_FOR_SECURE_SERVICE_IF_UPDATED + "service";
+      String role = RangerRESTUtils.REST_URL_SERVICE_SERCURE_GET_USER_GROUP_ROLES + "service";
+      request(security.uri(), policy);
+      assertTrue(security.awaitDrained());
+      DeltaRangerDownloadedSecurity.DownloadEvidence policyOnly =
+          security.completedAfter(
+              cursor, DeltaRangerDownloadedSecurity.DownloadRequirement.POLICY, applied);
+      assertEquals(applied.policy(), policyOnly.policy().orElseThrow().version());
+      assertTrue(policyOnly.role().isEmpty());
+      assertEquals(
+          HexFormat.of()
+              .formatHex(
+                  MessageDigest.getInstance("SHA-256")
+                      .digest(policyBody.getBytes(StandardCharsets.UTF_8))),
+          policyOnly.policy().orElseThrow().responseSha256());
+      cursor = policyOnly.cursor();
+      request(security.uri(), policy);
+      request(security.uri(), role);
+      assertTrue(security.awaitDrained());
+      DeltaRangerDownloadedSecurity.DownloadEvidence both =
+          security.completedAfter(
+              cursor, DeltaRangerDownloadedSecurity.DownloadRequirement.BOTH, applied);
+      assertEquals(applied.policy(), both.policy().orElseThrow().version());
+      assertEquals(applied.role(), both.role().orElseThrow().version());
+      assertEquals(
+          HexFormat.of()
+              .formatHex(
+                  MessageDigest.getInstance("SHA-256")
+                      .digest(roleBody.getBytes(StandardCharsets.UTF_8))),
+          both.role().orElseThrow().responseSha256());
+      assertTrue(both.cursor() > cursor);
+    } finally {
+      upstream.stop(0);
+    }
+  }
+
+  @Test
+  void latestCompletedRoleMustMatchAppliedVersionAndNoneAdvancesCursor() throws Exception {
+    AtomicReference<String> response =
+        new AtomicReference<>("{\"serviceName\":\"owned\",\"roleVersion\":1}");
+    HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    upstream.createContext(
+        "/",
+        exchange -> {
+          byte[] body = response.get().getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, body.length);
+          exchange.getResponseBody().write(body);
+          exchange.close();
+        });
+    upstream.start();
+    Path source = source("http://127.0.0.1:" + upstream.getAddress().getPort());
+    try (TestDeltaRangerNativeSelect.Fixture fixture = new TestDeltaRangerNativeSelect.Fixture();
+        DeltaRangerDownloadedSecurity security =
+            new DeltaRangerDownloadedSecurity(
+                source, Files.createDirectory(directory.resolve("scoped")), directory, "owned")) {
+      DeltaRangerPolicyEngine.Versions applied = fixture.engine.versions();
+      long initial = security.completedCursor();
+      String role = RangerRESTUtils.REST_URL_SERVICE_SERCURE_GET_USER_GROUP_ROLES + "owned";
+      request(security.uri(), role);
+      assertTrue(security.awaitDrained());
+      DeltaRangerDownloadedSecurity.DownloadEvidence matching =
+          security.completedAfter(
+              initial, DeltaRangerDownloadedSecurity.DownloadRequirement.ROLE, applied);
+      assertEquals(1L, matching.role().orElseThrow().version());
+      assertTrue(matching.policy().isEmpty());
+      assertEquals(64, matching.role().orElseThrow().responseSha256().length());
+      long cursor = matching.cursor();
+      response.set("{\"serviceName\":\"owned\",\"roleVersion\":2}");
+      request(security.uri(), role);
+      assertTrue(security.awaitDrained());
+      assertThrows(
+          IllegalStateException.class,
+          () ->
+              security.completedAfter(
+                  initial, DeltaRangerDownloadedSecurity.DownloadRequirement.ROLE, applied));
+      DeltaRangerDownloadedSecurity.DownloadEvidence none =
+          security.completedAfter(
+              cursor, DeltaRangerDownloadedSecurity.DownloadRequirement.NONE, applied);
+      assertTrue(none.role().isEmpty());
+      assertTrue(none.cursor() > cursor);
+      for (String malformed :
+          List.of(
+              "{\"serviceName\":\"other\",\"roleVersion\":1}",
+              "{\"serviceName\":\"owned\"}",
+              "{\"serviceName\":\"owned\",\"roleVersion\":1.5}",
+              "{\"serviceName\":\"owned\",\"roleVersion\":9223372036854775808}",
+              "{\"serviceName\":\"owned\",\"roleVersion\":1,\"roleVersion\":1}",
+              "not-json")) {
+        response.set(malformed);
+        long before = security.completedCursor();
+        request(security.uri(), role);
+        assertTrue(security.awaitDrained());
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                security.completedAfter(
+                    before, DeltaRangerDownloadedSecurity.DownloadRequirement.ROLE, applied));
+      }
+      assertFalse(Files.readString(directory.resolve("downloads.jsonl")).contains("roleVersion"));
+    } finally {
+      upstream.stop(0);
+    }
+  }
+
+  @Test
   void copiesOnlyTwoPropertiesAndRequiresBothCompletedFreshDownloads() throws Exception {
     HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     upstream.createContext(
@@ -56,7 +189,11 @@ class TestDeltaRangerDownloadedSecurity {
         exchange -> {
           assertEquals(
               "Basic test-only-token", exchange.getRequestHeaders().getFirst("Authorization"));
-          byte[] body = "{\"version\":7}".getBytes(StandardCharsets.UTF_8);
+          byte[] body =
+              (exchange.getRequestURI().getPath().contains("roles")
+                      ? "{\"serviceName\":\"owned\",\"roleVersion\":9}"
+                      : "{\"serviceName\":\"owned\",\"policyVersion\":7}")
+                  .getBytes(StandardCharsets.UTF_8);
           exchange.sendResponseHeaders(200, body.length);
           exchange.getResponseBody().write(body);
           exchange.close();
@@ -103,7 +240,8 @@ class TestDeltaRangerDownloadedSecurity {
       assertFalse(manifest.contains("test-only-secret"));
       String events = Files.readString(evidence.resolve("downloads.jsonl"));
       assertFalse(events.contains("test-only-token"));
-      assertFalse(events.contains("version"));
+      assertFalse(events.contains("policyVersion"));
+      assertFalse(events.contains("roleVersion"));
       var accepted =
           new ObjectMapper().readTree(evidence.resolve("initial-downloads.json").toFile());
       assertEquals(7, accepted.path("policyVersion").asLong());
@@ -158,7 +296,13 @@ class TestDeltaRangerDownloadedSecurity {
     upstream.createContext(
         "/",
         exchange -> {
-          exchange.sendResponseHeaders(200, -1);
+          byte[] body =
+              (exchange.getRequestURI().getPath().contains("roles")
+                      ? "{\"serviceName\":\"owned\",\"roleVersion\":9}"
+                      : "{\"serviceName\":\"owned\",\"policyVersion\":7}")
+                  .getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, body.length);
+          exchange.getResponseBody().write(body);
           exchange.close();
         });
     upstream.start();
