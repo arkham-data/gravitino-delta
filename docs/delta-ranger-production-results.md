@@ -19,14 +19,16 @@
 
 # Delta Ranger production-chain qualification
 
-Task 4 remains in progress. Qualification on September 26–27, 2026 (UTC), passed
+Task 4's planned live qualification gates passed on September 26–27, 2026 (UTC):
 the healthy SELECT, warm Admin outage, public Gravitino grant/revoke, independent
 role-publication, and cold/cached startup gates on all four Spark/Delta pairs with
-Ranger 2.8.0. First-grant and final-revoke callback failures are also qualified on
-Spark 3.5.4/Delta 3.3.0. The additional-grant case exposed a cross-catalog role-update
-defect in the Delta authorization plugin. Its fix passed 50 offline module tests
-and independent review; runtime replacement, live qualification and final branch
-review remain open. The milestone checkpoint has not been pushed.
+Ranger 2.8.0. First-grant, additional-grant and final-revoke callback failures are
+also qualified on Spark 3.5.4/Delta 3.3.0. The additional-grant gate includes the
+reviewed cross-catalog plugin fix, 50 passing offline module tests and verified
+runtime replacement. Final independent branch review passed SPEC and QUALITY;
+the finite SELECT milestone is closed. The authorized normal checkpoint push
+follows this closeout commit, with an exact remote-SHA check. Full Delta support
+is a separate, unfinished objective.
 
 These results qualify the finite named SELECT surface with user AQE explicitly
 disabled. They do not establish full Delta support, general user caching/AQE, or
@@ -132,6 +134,7 @@ The acceptance entry points are:
 - `root-effective-transitions-acceptance-20260927.json`
 - `root-role-only-acceptance-20260927.json`
 - `root-startup-cache-acceptance-20260927.json`
+- `root-policy-callback-failures-acceptance-20260927.json`
 
 The callback gate uses isolated roles and fresh query JVMs. Two cases passed on
 Spark 3.5.4/Delta 3.3.0 with Ranger 2.8.0: an injected pre-forwarding policy PUT 503
@@ -165,16 +168,40 @@ every explicit changed resource, without treating the old role's foreign grants
 as this callback's scope. Full lifecycle and membership validation remains intact;
 Gravitino core is unchanged. All 50 offline module tests passed, including a real
 REST regression spanning two catalogs. Docker and native-fixture gates were excluded
-from that suite. The running server still needs the new plugin and a fresh live
-additional-grant qualification. Failed identities remain unreconciled and must not
-be replayed for qualification.
+from that suite. The failed identities remain unreconciled and were not replayed.
 
-Private independent reviews are `first-grant-live-review.md` and
-`last-revoke-live-review.md` beneath the callback task evidence directory. Ordinary
-grant reconciliation remains a separate rollout requirement. After the additional
-case and final review close the milestone, the accepted branch checkpoint will be
-pushed normally and its remote SHA verified; subsequent full-Delta work continues
-locally.
+The corrected server plugin is source commit `2004c4899`, with qualified JAR SHA-256
+`36a905d1044551d70e3c17776d15f1d661d7376598449d2917dfa34eeeb1f52f`.
+The isolated export changes only the tested plugin class and preserves all 51 other
+archives. A controlled restart retained the configuration, parent classpath and
+H2 state; the loaded-class origin and all 33 pre/post models verified the replacement.
+Ranger Admin and the Spark artifacts were unchanged.
+
+A new additional-grant case then passed with coordinator
+`19ef4d4d726f317821a465e513e043a7f30d17b40f13ebbc1782b9b8f549721e`.
+After healthy A SELECT and mirrored membership, the B policy PUT received exactly
+one injected 503 before forwarding. The public grant completed with HTTP 500 and
+local A+B SELECT persisted. All 19 Admin policies and 29 roles stayed unchanged.
+Fresh pre/post drivers allowed A and denied B at policy 73/role 110, with matching
+download hashes and complete cache models. Both drivers and the coordinator exited
+naturally, and the normal recorder was restored.
+
+Across the three accepted cases, six query JVMs executed eight SELECT commands.
+First grant and final revoke retain their original server artifact qualification;
+the additional case qualifies the server-only fix. This is not a claim that every
+case was rerun on one server binary or all four Spark/Delta pairs. Final readback
+preserved all original owner/foreign policy contributions and 19 original roles,
+the five quarantined case identities, and all 12 original S3 objects. Ten isolated
+case roles and four healthy setup SELECT contributions remain deliberately present;
+the final observed generations are policy 73, tag 6 and role 110.
+
+Private independent reviews are `first-grant-live-review.md`,
+`last-revoke-live-review.md` and `additional-grant-fixed-live-review.md` beneath the
+callback task directory. The final aggregate review, `milestone-final-review.md`,
+passed SPEC and QUALITY using these results and the accepted historical source
+reviews. Ordinary grant reconciliation remains a separate rollout requirement.
+Publication uses a normal push and exact remote-SHA verification; subsequent
+full-Delta work continues locally.
 
 ## Initial verified packaging checkpoint
 

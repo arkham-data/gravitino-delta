@@ -311,10 +311,12 @@ separate and unchanged.
 
 Package `gravitino-spark-connector-delta-ranger-runtime-3.5_2.12` as a companion to the preceding Delta runtime. Include the enforcement module and exactly one reviewed Ranger/Kyuubi closure; keep Spark/Scala/Hadoop/Delta provided, and do not duplicate connector/client/protocol classes from the Delta runtime. Align audit classes with Ranger 2.8's split audit-core artifact; archive resolved classes/jar hashes. Server artifact remains independently installed under `authorizations/ranger-delta`.
 
-- [ ] Add an opt-in external-endpoint test gate following existing Ranger/Delta conventions; missing explicit endpoint/private credential file/opt-in fails setup. Root supplies isolated runtime and owns cleanup. Use unique resource/tag service/definition with explicit linking; do not change shared defaults or deploy catalog-demo.
-- [ ] Provision a compatible four-level service bound to one metalake and bootstrap production Gravitino catalog/auth provider. Through real public Gravitino client/REST create a role initially containing an admitted table SELECT securable object, then grant membership; verify exact owned Admin policy and fresh engine policy/role versions. Execute named SELECT, then revoke through Gravitino, await observed refresh and assert a **new** SELECT denied. Repeat already-converged requests idempotently and verify both systems; identical grant/revoke retries after callback failure are not reconciliation. No direct candidate plugin callback substitutes for REST.
-- [ ] Independently create Ranger-owned column access/deny/CUSTOM or NULL masks/row filters. Assert foreign models preserved across Gravitino grant/revoke/owner operations and actual different masked/filtered rows from two catalogs and their join. Test projection/predicate/SELECT */path negatives, authenticated subject/groups/resources, metadata-only credential separation and engine startup/cache/outage behavior. Do not use table-wide grants to hide column-only metadata access problems.
-- [ ] Repeat fresh JVM qualification across all four Spark/Delta pairs with real Ranger 2.8; retain nonzero original XML/process exits, class provenance, versions, artifact hashes and sanitized commands. Verify default/base Delta runtime unchanged. Commit owned files/results for review after checks. After all milestone gates and final review pass, push the accepted checkpoint on `codex/delta-spark-feasibility` to `origin` with an ordinary nonforce push, verify the remote SHA, then continue subsequent work locally, as requested by the user. No merge or demo change.
+- [x] Add an opt-in external-endpoint test gate following existing Ranger/Delta conventions; missing explicit endpoint/private credential file/opt-in fails setup. Root supplies isolated runtime and owns cleanup. Use unique resource/tag service/definition with explicit linking; do not change shared defaults or deploy catalog-demo.
+- [x] Provision a compatible four-level service bound to one metalake and bootstrap production Gravitino catalog/auth provider. Through real public Gravitino client/REST create a role initially containing an admitted table SELECT securable object, then grant membership; verify exact owned Admin policy and fresh engine policy/role versions. Execute named SELECT, then revoke through Gravitino, await observed refresh and assert a **new** SELECT denied. Repeat already-converged requests idempotently and verify both systems; identical grant/revoke retries after callback failure are not reconciliation. No direct candidate plugin callback substitutes for REST.
+- [x] Independently create Ranger-owned column access/deny/CUSTOM or NULL masks/row filters. Assert foreign models preserved across Gravitino grant/revoke/owner operations and actual different masked/filtered rows from two catalogs and their join. Test projection/predicate/SELECT */path negatives, authenticated subject/groups/resources, metadata-only credential separation and engine startup/cache/outage behavior. Do not use table-wide grants to hide column-only metadata access problems.
+- [x] Repeat fresh JVM qualification across all four Spark/Delta pairs with real Ranger 2.8; retain nonzero original XML/process exits, class provenance, versions, artifact hashes and sanitized commands. Verify default/base Delta runtime unchanged. Commit owned files/results for review after checks.
+
+Publication follows the closeout commit: after all milestone gates and final review pass, push the accepted checkpoint on `codex/delta-spark-feasibility` to `origin` with an ordinary nonforce push, verify the remote SHA, then continue subsequent work locally, as requested by the user. No merge or demo change.
 
 Expected packaging command:
 
@@ -330,7 +332,9 @@ This plan is complete only when production SPI grant/revoke and role membership 
 
 The following must be tracked in the subsequent conformance plan: all remaining Ranger standard/custom transformers and expression semantics; DML source/target and write actions, CTAS/RTAS/COR paths, ALTER/RESTORE/time travel, streaming/checkpoint restarts, maintenance/history, caches/reused plans/refresh revocation, metadata exposure and supported launcher boundary. Each route is explicitly rejected or deployment-restricted until qualified; unsupported masks are never silently ignored. Existing native runtime support without enforcement is not authorization evidence. Isolated catalog-demo integration follows production qualification and these agreed conformance gates.
 
-The preflight stage used source/cached-bytecode inspection only. This plan does not claim production Ranger implementation, test execution or service qualification.
+The historical preflight stage used source/cached-bytecode inspection only. The
+September 27 closeout below and `docs/delta-ranger-production-results.md` record
+the subsequent implementation, test execution and bounded service qualification.
 
 ## Recorded design decisions and source evidence
 
@@ -362,7 +366,7 @@ Ruling: retain the bounded ordered bootstrap and catalog-visibility prerequisite
 
 ### Explicit catalog visibility privilege
 
-Task1 additionally admits exactly CATALOG / USE_CATALOG / ALLOW bound to this plugin's verified canonical catalog as a Gravitino-only visibility privilege. It produces zero Ranger access resources and zero policy items; never inherit HadoopSQL's USE_CATALOG → wildcard SELECT mapping. This is an enumerated supported local privilege, not an unknown-privilege fallback. TABLE / SELECT_TABLE / ALLOW remains the only ordinary grant translated to Ranger access. Reject other ordinary type/privilege/condition combinations, including METALAKE-scoped USE_CATALOG, unless separately qualified. Validate all securable objects and role changes before Admin mutations. Handle visibility-only and mixed visibility/SELECT roles consistently across create/update/delete/user/group callbacks. Mirrored role/membership records may exist but must carry no access from visibility alone.
+Task1 additionally admits exactly CATALOG / USE_CATALOG / ALLOW bound to this plugin's verified canonical catalog as a Gravitino-only visibility privilege. It produces zero Ranger access resources and zero policy items; never inherit HadoopSQL's USE_CATALOG → wildcard SELECT mapping. This is an enumerated supported local privilege, not an unknown-privilege fallback. TABLE / SELECT_TABLE / ALLOW remains the only ordinary grant translated to Ranger access. Reject other ordinary type/privilege/condition combinations, including METALAKE-scoped USE_CATALOG, unless separately qualified. Before Admin mutations, create/delete/membership callbacks validate all scoped securable objects; update callbacks validate role identity and every explicit change. Core supplies an unfiltered old role to updates, so foreign contextual grants are not translated or treated as changes to the target catalog. Explicit changes retain strict catalog matching and complete prevalidation. Handle visibility-only and mixed visibility/SELECT roles consistently across callbacks. Mirrored role/membership records may exist but must carry no access from visibility alone.
 
 Task3/4 startup tests grant application catalog visibility without any effective USE_CATALOG deny, Gravitino table SELECT or ownership. The separate scoped metadata identity resolves schemas/tables; the actual query subject remains Ranger's subject. A visibility-only application must discover the optional catalog and remain denied every SELECT until an independent Ranger access policy permits it. Real REST tests cover role/membership creation, visibility grant/revoke and mixed roles; assert no wildcard/access policy from visibility, foreign models unchanged, unknown privilege rejection, and visibility removal preventing fresh-driver discovery. Exact source proof is the narrow followup in the independent preflight report.
 
@@ -402,14 +406,15 @@ completed coordinator close, and an owned server restart before new public grant
 ### Post-Task4 full Delta conformance order
 
 Independent source audit distinguishes the existing native four-pair tests from
-Ranger qualification. Task4 actual public-client/downloaded-policy fresh SELECT
-composition is still pending. Do not expand its accepted scope from packaging or
-native test results. Subsequent implementation slices, each requiring actual
-Ranger 2.8 downloads on all four pinned Spark/Delta pairs, are:
+Ranger qualification. Task 4 actual public-client/downloaded-policy finite SELECT
+composition is now accepted, including retained-plan collection guards. General
+user caching/AQE and other actions remain open. Do not expand the accepted scope
+from packaging or native test results. Subsequent implementation slices, each
+requiring actual Ranger 2.8 downloads on all four pinned Spark/Delta pairs, are:
 
-1. Enforce subject and policy-generation checks when an analyzed plan or cached
-   Dataset is reused. Current identity tags and rewrite-time version checks only
-   qualify restricted fresh queries. Establish an execution boundary before
+1. Extend subject and policy-generation enforcement beyond the qualified retained
+   SELECT collection boundary. General user caching/AQE and other Spark actions
+   remain unqualified. Establish command-specific execution boundaries before
    expanding authorization to writes.
 2. Map DML source SELECT and target write/update actions, including MERGE, UPDATE
    and DELETE row-policy semantics; deny or safely implement unsupported cases.
@@ -458,4 +463,6 @@ SELECT composition does not close these gaps.
 
 Startup/cache gate accepted on 2026-09-27 after independent review of the original evidence found no discrepancy. Source commit c5cd68a204 exports test application SHA-256 b480ebb0e6b1838ea1add21a10b614dfe448cff0891002807bd2b46d024dc648 with the unchanged production companion. Four default controls passed eight queries and 16 non-close commands. All eight outage JVMs exited naturally: four empty-cache drivers remained not ready and ran no query; four genuine cached drivers returned exact masked/filtered ALPHA/null rows at policy 64/role 86. All 2,236 local attempts reconcile, with no upstream responses or HTTP 200s; unresolved transport failures remain explicit.
 
-The same Admin is restored with ten unchanged configuration hashes. All 33 model contents/statuses and 12 S3 objects remain unchanged apart from restart publication counters; the observed baseline is now policy 65/tag 6/role 86. Task 4 evidence/root-startup-cache-acceptance-20260927.json binds source, report, review, queries, restoration and postflight. The callback author owns four separate test-source paths; source review and three live callback-failure cases remain, followed by whole-branch review and the authorized normal milestone push. Full Delta support remains open. No remote push has occurred.
+At the startup gate, the same Admin was restored with ten unchanged configuration hashes. All 33 model contents/statuses and 12 S3 objects remained unchanged apart from restart publication counters; the observed baseline was policy 65/tag 6/role 86. Task 4 evidence/root-startup-cache-acceptance-20260927.json binds source, report, review, queries, restoration and postflight.
+
+The three callback-failure gates subsequently passed independent review on Spark 3.5.4 / Delta 3.3.0 with Ranger 2.8.0. First grant and final revoke retain the original server-runtime qualification; additional grant qualifies the plugin-only cross-catalog update fix at 2004c4899 after 50 offline module tests, reviewed archive replacement and unchanged restart readbacks. Six fresh query JVMs executed eight SELECT commands with complete HTTP/cache/model evidence and natural exits. The two excluded additional-case attempts remain preserved and unreplayed. Final state is policy 73/tag 6/role 110; all original owner/foreign contributions, 19 original roles, five quarantined local cases and 12 S3 objects are preserved. Task 4 evidence/root-policy-callback-failures-acceptance-20260927.json binds the accepted cases and final continuity. Final aggregate branch review passed SPEC and QUALITY in milestone-final-review.md; the finite SELECT milestone is closed. The authorized normal checkpoint push and exact remote-SHA verification follow the closeout commit. The full Delta conformance and ordinary reconciliation requirements above remain open; none is closed by this finite SELECT milestone.

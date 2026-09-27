@@ -1,5 +1,11 @@
 # Delta demo production handoff
 
+> Historical feasibility-stage integration map. Its Gravitino implementation and
+> packaging gaps describe the original inspection, not the September 27, 2026
+> checkpoint. See [the current qualification results](delta-ranger-production-results.md)
+> for the accepted finite SELECT milestone and remaining full-Delta requirements.
+> The demo has not been integrated or requalified by this milestone.
+
 This is a source-backed handoff for eventual integration into
 `/Users/jacobo.calderon/Code/Arkham/catalog-demo`. It does not claim a production
 Delta catalog, a deployable Spark Ranger extension, complete authorization, or full

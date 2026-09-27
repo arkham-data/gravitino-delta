@@ -56,10 +56,15 @@ Additionally, canonical CATALOG/USE_CATALOG/ALLOW and SCHEMA/USE_SCHEMA/ALLOW
 are explicitly supported as Gravitino-only visibility and contribute zero Ranger
 access resources/items. The scoped metadata reader needs both visibility privileges
 and table SELECT to satisfy Gravitino's existing metadata REST authorization.
-Application query subjects retain catalog visibility only in this qualification.
+Application subjects in the Ranger-only column-access matrix retain catalog
+visibility only. Isolated callback-failure subjects have catalog and schema
+visibility in both catalogs; visibility still contributes no Ranger data access.
 Never inherit HadoopSQL's wildcard SELECT translation for visibility. Validate
-all role objects/changes, including mixed visibility/SELECT roles, before side
-effects; reject other unqualified combinations rather than ignore them.
+every scoped role object for create/delete/membership callbacks, including mixed
+visibility/SELECT roles. Update callbacks receive an unfiltered old role: validate
+its identity and every explicit changed resource before side effects, without
+translating foreign catalog grants from that context. Reject unqualified explicit
+changes and retain strict target-catalog matching.
 
 Driver catalog discovery precedes wrapper construction and uses application
 identity. Qualify minimal catalog visibility without Gravitino table SELECT or
