@@ -203,6 +203,23 @@ reviews. Ordinary grant reconciliation remains a separate rollout requirement.
 Publication uses a normal push and exact remote-SHA verification; subsequent
 full-Delta work continues locally.
 
+## Subsequent local write-policy development
+
+After the SELECT milestone, local source commit `651e669fa` added the narrow
+TABLE/MODIFY_TABLE/ALLOW → Ranger `update` mapping. Mixed SELECT/MODIFY grants
+retain distinct accesses; tests cover selective changes, owners, foreign policies,
+cross-catalog context and rejection before Admin activity. All 53 offline module
+tests and scoped formatting passed; independent SPEC/QUALITY review passed.
+Docker/native fixture and actual published-table MODIFY callbacks remain separate
+gates. The tested plugin has not replaced the live SELECT runtime.
+
+The [governed append design](superpowers/specs/2026-09-27-delta-governed-append-design.md)
+preserves source SELECT masks/filters and target UPDATE access. Next comes native
+transaction-boundary characterization, followed by command enforcement and real
+Ranger 2.8.0/S3 qualification on all four Spark/Delta pairs. This mapping does not
+yet admit or qualify Spark writes. Full Delta and ordinary reconciliation remain
+open.
+
 ## Initial verified packaging checkpoint
 
 | Actual archived runtime | Packaging | Pinned helper probe | Public callbacks / native SELECT |

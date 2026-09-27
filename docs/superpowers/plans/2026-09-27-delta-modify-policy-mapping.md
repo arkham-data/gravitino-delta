@@ -34,7 +34,7 @@
 
 **Interfaces:** Consume existing `privilegesMappingRule`, `allowPrivilegesRule`, `translatePrivilege(SecurableObject)`, `onRoleCreated`, `onRoleUpdated` and ordinary `RoleChange` callbacks. Produce the same typed Delta resource shape with unique select/update privileges; no new public API.
 
-- [ ] Add translation regressions first, using existing helpers and native privilege values:
+- [x] Add translation regressions first, using existing helpers and native privilege values:
 
 ```java
 SecurableObject modify = SecurableObjects.parse(
@@ -48,17 +48,17 @@ assertEquals(List.of("update"), actual.privileges().stream()
 
 Also assert `privilegesMappingRule().get(MODIFY_TABLE)` contains exactly the native UPDATE enum and the allowlist contains MODIFY_TABLE, mixed/reversed/duplicate SELECT+MODIFY produces exactly two distinct accesses, empty produces none, visibility produces none, and illegal combinations still reject. Existing tests which use MODIFY_TABLE as an unsupported TABLE privilege must use an actually unsupported privilege; preserve their original validation purpose. Foreign old context may still contain MODIFY_TABLE but must remain untranslated.
 
-- [ ] Add behavioral callback regressions using the existing Admin fixture: install owner and another ordinary role plus foreign access/mask/filter models; create/update a writer role, add SELECT beside MODIFY, revoke only MODIFY then only SELECT, and re-add. Compare complete detached serialized models for every unaffected policy/owner/foreign contribution and exact writer accesses for the affected one. Cover A/B same-name tables with one global role and a valid-first/invalid-second change array with zero Admin interactions. Reuse existing true policy simulation rather than asserting mock call counts as the sole oracle.
+- [x] Add behavioral callback regressions using the existing Admin fixture: install owner and another ordinary role plus foreign access/mask/filter models; create/update a writer role, add SELECT beside MODIFY, revoke only MODIFY then only SELECT, and re-add. Compare complete detached serialized models for every unaffected policy/owner/foreign contribution and exact writer accesses for the affected one. Cover A/B same-name tables with one global role and a valid-first/invalid-second change array with zero Admin interactions. Reuse existing true policy simulation rather than asserting mock call counts as the sole oracle.
 
-- [ ] Run focused tests before changing production code; archive actual failing XML/logs and classify failures. Command with JDK17:
+- [x] Run focused tests before changing production code; archive actual failing XML/logs and classify failures. Command with JDK17:
 
 ```bash
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew :authorizations:authorization-ranger-delta:spotlessApply :authorizations:authorization-ranger-delta:test --tests '*TestRangerDeltaAuthorization' -PskipITs -PdeltaSparkVersion=3.5.4 -PdeltaVersion=3.3.0 --offline --console=plain
 ```
 
-- [ ] Add MODIFY_TABLE to both the plugin allowlist and `privilegesMappingRule()` with only UPDATE. Fully validate all privileges before emitting a resource. Deduplicate by native access enum/name before constructing `RangerHivePrivilegeImpl(SELECT, ALLOW)` / `RangerHivePrivilegeImpl(UPDATE, ALLOW)` values (the wrapper has identity equality) for table SELECT_TABLE / MODIFY_TABLE, respectively; retain local visibility's empty output and existing canonical checks. Do not delegate to inherited broad MODIFY translation.
+- [x] Add MODIFY_TABLE to both the plugin allowlist and `privilegesMappingRule()` with only UPDATE. Fully validate all privileges before emitting a resource. Deduplicate by native access enum/name before constructing `RangerHivePrivilegeImpl(SELECT, ALLOW)` / `RangerHivePrivilegeImpl(UPDATE, ALLOW)` values (the wrapper has identity equality) for table SELECT_TABLE / MODIFY_TABLE, respectively; retain local visibility's empty output and existing canonical checks. Do not delegate to inherited broad MODIFY translation.
 
-- [ ] Run the complete offline module suite and scoped formatting:
+- [x] Run the complete offline module suite and scoped formatting:
 
 ```bash
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew :authorizations:authorization-ranger-delta:spotlessApply :authorizations:authorization-ranger-delta:test :authorizations:authorization-ranger-delta:spotlessCheck -PskipITs -PdeltaSparkVersion=3.5.4 -PdeltaVersion=3.3.0 --offline --console=plain
@@ -66,4 +66,13 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradl
 
 Record every failure/warning and excluded Docker/native gate explicitly. No rerun of live SELECT fixtures is implied. Archive final source diff/hashes, XML and class outputs for review; root will commit only exact reviewed files.
 
-- [ ] Independent SPEC/QUALITY review, covering all five review-focus conditions; fix grounded findings with focused reruns. Root commits the accepted local change and updates this task status. Full governed append remains pending native characterization, command enforcement and four-pair live qualification.
+- [x] Independent SPEC/QUALITY review, covering all five review-focus conditions; fix grounded findings with focused reruns. Root commits the accepted local change and updates this task status. Full governed append remains pending native characterization, command enforcement and four-pair live qualification.
+
+
+## Accepted local result — September 27, 2026
+
+Source commit `651e669fa` changes only the Delta authorization plugin and its unit tests. Independent SPEC/QUALITY review passed. The complete offline module suite passed 53 tests across eight suites, with zero failures/errors/reported skips, and module Spotless passed. Original RED logs remain separate from reconstructed RED XML. An optional public TABLE test encountered the offline fixture's unpublished registration and was removed; it is not live table-grant evidence. Docker/native-fixture tests remain excluded.
+
+Private evidence and reviews are under `.superpowers/sdd/2026-09-27-delta-modify-policy-mapping/`; `evidence/root-task-1-acceptance.json` binds the tested source, report, review and XML verification. Intermediate writer assertions compare distinct access names; complete owner/other-role JSON is checked at the final state and complete foreign policy JSON at each transition. This bounded coverage limit is retained.
+
+No runtime replacement or remote push accompanied this change. The next gate is native append characterization; governed Spark append and full Delta support remain unfinished.
