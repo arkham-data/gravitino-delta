@@ -94,7 +94,9 @@ try (AppendProbeCapture capture =
 }
 ```
 
-Use a non-inheritable ThreadLocal scope bound to the owning SparkSession and target name. Reject nested begin or another session, and close in finally. It is test instrumentation, not a future authorization token. Scope only matches a native DeltaTableV2 whose descriptor is the fixture's canonical catalog/database/table; record the descriptor and actual target table object. Never arm a raw path or another table merely because the source query references the target.
+Use a non-inheritable ThreadLocal scope bound to the owning SparkSession and target name. Reject nested begin or an append attempt from another session, and close in finally. It is test instrumentation, not a future authorization token. Scope only matches a native DeltaTableV2 whose descriptor is the fixture's canonical catalog/database/table; record the descriptor and actual target table object. Never arm a raw path or another table merely because the source query references the target.
+
+The October 5 native cache-refresh control showed non-append snapshot analysis in a cloned SparkSession beneath `CacheManager.recacheByPlan`. Record that nested observation without applying the append-session rejection to the read. Logical and physical append attempts from another session must still reject, and the received insertion Dataset must belong to the captured session. This measured native read behavior grants no write ownership or production authorization.
 
 ### Frontend probe seam
 
@@ -217,12 +219,12 @@ For a concrete native postcommit hook check, use independently created owned tab
 
 ## Ordered implementation and gates
 
-- [ ] Add frontend observation/delegation first and prove genuine native behavior. Missing instrumentation, compilation and setup failures are not behavioral RED; preserve and label them accurately. This is characterization of existing native behavior, so do not manufacture a failing assertion merely to claim TDD. Any actual seam/compiler incompatibility returns to root with evidence.
-- [ ] Add native-vs-split behavioral tests before split coordination; preserve actual failures without labeling an unavailable helper as a native semantic failure. Implement the minimal test-only coordinator and prove data/action/idempotency equivalence before adding failure modes. Never count a compile failure as behavioral RED.
-- [ ] Add entry/precommit fault modes and retain RED/GREEN assertions against native storage state. Add options/metadata and metrics/postcommit comparisons; classify every mismatch rather than normalizing it away.
-- [ ] Format only spark-delta, run the complete existing TestDeltaNativeAdapter class at the first pair; inspect failures and existing baseline tests.
-- [ ] Once the source is stable, run the same exact class on the other three pairs, archiving each pair before another build overwrites classes/XML. No production coordinator or widened companion admission follows automatically.
-- [ ] Freeze the two test sources and scoped build correction, commands/exit codes, effective runtime manifests, compiled probe classes and four-pair XML/log/artifact results; report unresolved native semantics and evidence limits for root review.
+- [x] Add frontend observation/delegation first and prove genuine native behavior. Missing instrumentation, compilation and setup failures are not behavioral RED; preserve and label them accurately. This is characterization of existing native behavior, so do not manufacture a failing assertion merely to claim TDD. Any actual seam/compiler incompatibility returns to root with evidence.
+- [x] Add native-vs-split behavioral tests before split coordination; preserve actual failures without labeling an unavailable helper as a native semantic failure. Implement the minimal test-only coordinator and prove data/action/idempotency equivalence before adding failure modes. Never count a compile failure as behavioral RED.
+- [x] Add entry/precommit fault modes and retain RED/GREEN assertions against native storage state. Add options/metadata and metrics/postcommit comparisons; classify every mismatch rather than normalizing it away.
+- [x] Format only spark-delta, run the complete existing TestDeltaNativeAdapter class at the first pair; inspect failures and existing baseline tests.
+- [x] Once the source is stable, run the same exact class on the other three pairs, archiving each pair before another build overwrites classes/XML. No production coordinator or widened companion admission follows automatically.
+- [x] Freeze the two test sources and scoped build correction, commands/exit codes, effective runtime manifests, compiled probe classes and four-pair XML/log/artifact results; report unresolved native semantics and evidence limits for root review.
 
 One source/build owner only; the server MODIFY mapping task has completed and released the lane at local source commit651e669fa; its accepted closeout is9438e9e59.
 
@@ -254,3 +256,14 @@ without changing dependency versions or compilation ordering. Capture the resolv
 Zinc Scala library and the application testRuntimeClasspath Scala2.12.21 after
 the fix, then use normal Gradle compilation/tests. A manual compiler bypass is
 not an accepted build path.
+
+## Accepted local checkpoint — October 5, 2026
+
+All six ordered gates above passed on the final frozen source. Each of the four
+Spark/Delta cells passed the complete 14-test adapter class, with no failures,
+errors or skips. Independent SPEC/QUALITY review and source/class/runtime/file
+audits passed. The [results](../../delta-native-append-results.md) record exact
+source hashes, evidence roots, measured behavior and remaining boundaries.
+Earlier failed assumptions, setup failures and the three auto-compaction guard
+regressions remain retained separately. This completes native characterization;
+production command authority and Ranger 2.8/S3 append remain subsequent work.

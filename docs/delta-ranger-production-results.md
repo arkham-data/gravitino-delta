@@ -26,8 +26,8 @@ Ranger 2.8.0. First-grant, additional-grant and final-revoke callback failures a
 also qualified on Spark 3.5.4/Delta 3.3.0. The additional-grant gate includes the
 reviewed cross-catalog plugin fix, 50 passing offline module tests and verified
 runtime replacement. Final independent branch review passed SPEC and QUALITY;
-the finite SELECT milestone is closed. The authorized normal checkpoint push
-follows this closeout commit, with an exact remote-SHA check. Full Delta support
+the finite SELECT milestone is closed and was pushed at `84172dd45`, with an
+exact remote-SHA check. Subsequent work continues locally. Full Delta support
 is a separate, unfinished objective.
 
 These results qualify the finite named SELECT surface with user AQE explicitly
@@ -214,9 +214,11 @@ Docker/native fixture and actual published-table MODIFY callbacks remain separat
 gates. The tested plugin has not replaced the live SELECT runtime.
 
 The [governed append design](superpowers/specs/2026-09-27-delta-governed-append-design.md)
-preserves source SELECT masks/filters and target UPDATE access. Next comes native
-transaction-boundary characterization, followed by command enforcement and real
-Ranger 2.8.0/S3 qualification on all four Spark/Delta pairs. This mapping does not
+preserves source SELECT masks/filters and target UPDATE access. The
+[native append characterization](delta-native-append-results.md) passed all four
+Spark/Delta pairs on October 5: 14 tests per pair, with independent review and
+artifact verification. Command enforcement and real Ranger 2.8.0/S3 append
+qualification remain subsequent work. This mapping does not
 yet admit or qualify Spark writes. Full Delta and ordinary reconciliation remain
 open.
 

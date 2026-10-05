@@ -346,7 +346,7 @@ without reducing the acceptance contract. Use inline execution unless the user
 chooses delegation. Each production package ends with focused verification and a
 reviewable commit; no issue or PR is submitted without the required preview.
 
-## Current implementation checkpoint — September 27, 2026
+## Current implementation checkpoint — October 5, 2026
 
 The finite SELECT milestone is accepted and pushed at `84172dd45`. Its exact
 runtime scope, evidence and remaining limitations are recorded in
@@ -354,12 +354,14 @@ runtime scope, evidence and remaining limitations are recorded in
 This closes neither the packages above nor the full-support requirements.
 
 Subsequent local work added the reviewed TABLE/MODIFY_TABLE/ALLOW to Ranger
-`update` mapping. The next implementation gate is
-[native append characterization](2026-09-27-delta-native-append-characterization.md),
-under the [governed append design](../specs/2026-09-27-delta-governed-append-design.md).
-The native tests must qualify the split transaction path before production
-command authority and source-policy enforcement are implemented. Native-only
-append results do not establish Ranger enforcement or deployed S3 writes.
+`update` mapping. The
+[native append characterization](2026-09-27-delta-native-append-characterization.md)
+then passed all four Spark/Delta pairs on October 5, with 14 tests per pair and
+independent source/artifact review; see the
+[results](../../delta-native-append-results.md). The next increment is production
+target/command authority and source-policy enforcement under the
+[governed append design](../specs/2026-09-27-delta-governed-append-design.md).
+Native-only append results do not establish Ranger enforcement or deployed S3 writes.
 
 The remaining acceptance scope still includes the full command and table-feature
 inventory, governed DML/DDL, history and change data feed, streaming and restart,

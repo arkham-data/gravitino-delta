@@ -30,7 +30,9 @@ require(providers.gradleProperty("scalaVersion").getOrElse("2.12") == "2.12") {
   "The Delta adapter requires Scala 2.12"
 }
 
-configurations.configureEach {
+configurations.matching {
+  it.name in setOf("compileClasspath", "runtimeClasspath", "testCompileClasspath", "testRuntimeClasspath")
+}.configureEach {
   resolutionStrategy.eachDependency {
     if (requested.group == "org.apache.spark") { useVersion(deltaSparkVersion) }
     if (requested.group == "org.scala-lang") { useVersion("2.12.21") }
