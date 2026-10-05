@@ -359,7 +359,8 @@ Subsequent local work added the reviewed TABLE/MODIFY_TABLE/ALLOW to Ranger
 then passed all four Spark/Delta pairs on October 5, with 14 tests per pair and
 independent source/artifact review; see the
 [results](../../delta-native-append-results.md). The next increment is production
-target/command authority and source-policy enforcement under the
+[exact target binding and UPDATE authority](2026-10-05-delta-append-target-authority.md),
+followed by integrated command/source enforcement under the
 [governed append design](../specs/2026-09-27-delta-governed-append-design.md).
 Native-only append results do not establish Ranger enforcement or deployed S3 writes.
 
