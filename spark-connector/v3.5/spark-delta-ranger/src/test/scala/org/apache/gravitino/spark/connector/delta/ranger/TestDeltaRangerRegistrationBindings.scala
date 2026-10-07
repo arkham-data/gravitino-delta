@@ -641,6 +641,10 @@ class TestDeltaRangerRegistrationBindings {
   def appendTargetAllowsDataAdvanceButRejectsNativeRegistrationVersionRegression(): Unit =
     withAppendHistory { (spark, publish) =>
       publish("data")
+      // This case starts at version 1; initialSnapshot alone may reuse a cached native head.
+      val current =
+        DeltaLog.forTable(spark, NativeSelectFixture.locations("a")).update(false, None, None)
+      assertEquals(1L, current.version)
       val native = table(spark, "a")
       val f = new Fixture(native)
       try {

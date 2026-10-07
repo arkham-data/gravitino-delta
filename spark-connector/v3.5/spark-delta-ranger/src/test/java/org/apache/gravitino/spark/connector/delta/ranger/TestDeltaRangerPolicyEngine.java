@@ -595,6 +595,154 @@ class TestDeltaRangerPolicyEngine {
     }
   }
 
+  @Test
+  void realEngineCanonicalTargetRequiresUpdateRatherThanSelectOrWrite() throws Exception {
+    Fixture fixture = new Fixture(directory);
+    UpdateFixture real = new UpdateFixture(fixture);
+    try (DeltaRangerPolicyEngine lease = real.engine) {
+      DeltaRangerResourceKey target =
+          new DeltaRangerResourceKey("delta_a", "sales", "orders", null, "update", null);
+      assertEquals("delta_a", target.resource().getValue("catalog"));
+      assertEquals("sales", target.resource().getValue("database"));
+      assertEquals("orders", target.resource().getValue("table"));
+      assertEquals("*", target.resource().getValue("column"));
+      for (String access : Arrays.asList("select", "write", "update")) {
+        real.publish(Collections.singletonList(targetPolicy(1L, "delta_a", access, false)));
+        if (access.equals("update")) {
+          lease.authorize(fixture.subject, target);
+          assertThrows(
+              SecurityException.class, () -> lease.authorize(fixture.subject, fixture.table));
+        } else {
+          assertThrows(SecurityException.class, () -> lease.authorize(fixture.subject, target));
+        }
+      }
+      real.publish(Collections.singletonList(targetPolicy(1L, "delta_b", "update", false)));
+      assertThrows(SecurityException.class, () -> lease.authorize(fixture.subject, target));
+      lease.authorize(
+          fixture.subject,
+          new DeltaRangerResourceKey("delta_b", "sales", "orders", null, "update", null));
+    }
+  }
+
+  @Test
+  void realEngineTargetScopeDenyOverridesUpdateAllow() throws Exception {
+    Fixture fixture = new Fixture(directory);
+    UpdateFixture real = new UpdateFixture(fixture);
+    try (DeltaRangerPolicyEngine lease = real.engine) {
+      DeltaRangerResourceKey target =
+          new DeltaRangerResourceKey("delta_a", "sales", "orders", null, "update", null);
+      RangerPolicy allow = targetPolicy(1L, "delta_a", "update", false);
+      real.publish(Collections.singletonList(allow));
+      lease.authorize(fixture.subject, target);
+      real.publish(Arrays.asList(allow, targetPolicy(2L, "delta_a", "update", true)));
+      assertThrows(SecurityException.class, () -> lease.authorize(fixture.subject, target));
+    }
+  }
+
+  @Test
+  void realEngineTargetUpdateUsesCurrentRoleGroupMembership() throws Exception {
+    Fixture fixture = new Fixture(directory);
+    UpdateFixture real = new UpdateFixture(fixture);
+    try (DeltaRangerPolicyEngine lease = real.engine) {
+      DeltaRangerResourceKey target =
+          new DeltaRangerResourceKey("delta_a", "sales", "orders", null, "update", null);
+      String roleName = "GRAVITINO_METALAKE_1_ROLE_appender";
+      RangerPolicy policy = targetPolicy(1L, "delta_a", "update", false);
+      policy.getPolicyItems().get(0).setUsers(Collections.emptyList());
+      policy.getPolicyItems().get(0).setRoles(Collections.singletonList(roleName));
+      real.publish(Collections.singletonList(policy));
+      assertThrows(SecurityException.class, () -> lease.authorize(fixture.subject, target));
+      RangerRole role = new RangerRole();
+      role.setName(roleName);
+      role.setGroups(Collections.singletonList(new RangerRole.RoleMember("finance", false)));
+      RangerRoles roles = new RangerRoles();
+      roles.setServiceName("service");
+      roles.setRoleVersion(4L);
+      roles.setRangerRoles(Collections.singleton(role));
+      long policyVersion = real.plugin.getPoliciesVersion();
+      real.plugin.setRoles(roles);
+      lease.authorize(fixture.subject, target);
+      assertEquals(policyVersion, real.plugin.getPoliciesVersion());
+      DeltaRangerPolicyEngine.SnapshotStamp granted = lease.snapshotStamp();
+      roles = new RangerRoles();
+      roles.setServiceName("service");
+      roles.setRoleVersion(5L);
+      roles.setRangerRoles(Collections.emptySet());
+      real.plugin.setRoles(roles);
+      assertThrows(SecurityException.class, () -> lease.requireSnapshot(granted));
+      assertThrows(SecurityException.class, () -> lease.authorize(fixture.subject, target));
+      assertEquals(policyVersion, real.plugin.getPoliciesVersion());
+    }
+  }
+
+  private static RangerPolicy targetPolicy(long id, String catalog, String access, boolean deny) {
+    RangerPolicy policy = new RangerPolicy();
+    policy.setId(id);
+    policy.setName("target-" + id);
+    policy.setService("service");
+    policy.setPolicyType(0);
+    policy.setIsEnabled(true);
+    Map<String, RangerPolicy.RangerPolicyResource> resources = new LinkedHashMap<>();
+    resources.put("catalog", new RangerPolicy.RangerPolicyResource(catalog));
+    resources.put("database", new RangerPolicy.RangerPolicyResource("sales"));
+    resources.put("table", new RangerPolicy.RangerPolicyResource("orders"));
+    resources.put("column", new RangerPolicy.RangerPolicyResource("*"));
+    policy.setResources(resources);
+    RangerPolicy.RangerPolicyItem item = new RangerPolicy.RangerPolicyItem();
+    item.setUsers(Collections.singletonList("query-reader"));
+    item.setAccesses(
+        Collections.singletonList(new RangerPolicy.RangerPolicyItemAccess(access, true)));
+    if (deny) {
+      policy.setDenyPolicyItems(Collections.singletonList(item));
+    } else {
+      policy.setPolicyItems(Collections.singletonList(item));
+    }
+    return policy;
+  }
+
+  private static final class UpdateFixture implements DeltaRangerPolicyEngine.Backend {
+    private final Fixture fixture;
+    private final RangerBasePlugin plugin;
+    private final DeltaRangerPolicyEngine engine;
+    private long version = 10L;
+
+    private UpdateFixture(Fixture fixture) {
+      this.fixture = fixture;
+      plugin = new RangerBasePlugin(fixture.plugin.getConfig());
+      engine = new DeltaRangerPolicyEngine.Owner(() -> this).acquire(fixture.config);
+    }
+
+    private void publish(List<RangerPolicy> values) {
+      ServicePolicies policies = new ServicePolicies();
+      policies.setServiceName("service");
+      policies.setServiceDef(fixture.definition);
+      policies.setPolicyVersion(version++);
+      policies.setPolicies(values);
+      policies.setServiceConfig(
+          Collections.singletonMap("ranger.plugin.spark.gravitino.metalake", "lake"));
+      plugin.setPolicies(policies);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public RangerBasePlugin plugin() {
+      return plugin;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void start() {
+      publish(Collections.emptyList());
+      plugin.setRoles(fixture.roles);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void close() {
+      plugin.cleanup();
+    }
+  }
+
   private static AccessRequest maskRequest(String catalog, String column) {
     AccessRequest request = new AccessRequest(AccessType.SELECT());
     AccessResource resource =

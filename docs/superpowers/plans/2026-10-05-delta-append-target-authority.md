@@ -193,7 +193,7 @@ private[ranger] object DeltaRangerAppendTargetReceipt {
 
 The private constructor is accessible from its companion; neither object issues a plan tag, serialization reference, execution lease or generic callback. Freeze the target key privately from its canonical observation and descriptor owner. No caller-supplied resource/subject/stamp is accepted. `capture` captures current subject, engine stamp and full immutable settings, constructs the receipt and immediately calls `validate`; issuance cannot bypass validation.
 
-- [ ] **Write a failing positive test with the production engine and real named target fixture.** This tests more than a receipt-shaped mock:
+- [x] **Write a failing positive test with the production engine and real named target fixture.** This tests more than a receipt-shaped mock:
 
 ```scala
 @Test
@@ -221,9 +221,9 @@ def targetReceiptRequestsOnlyCanonicalUpdateAtEveryValidation(): Unit =
 
 Imports are the existing fixture's `Identifier`, `DeltaTableV2`, JUnit, Scala JavaConverters and SparkSession types. This does not claim downloaded Ranger policies: the transport is a request-sensitive double around the real engine.
 
-- [ ] **Add target policy and retention negatives.** Configure the test-local access answer to allow only SELECT, then only WRITE, then only UPDATE; only the third may issue the receipt. Use `policy.denied.add("a:*")` after capture to prove each later validation reevaluates UPDATE even without a changed stamp. Preserve target mask/filter fixture values and prove they are never requested or applied. Test same names under catalog `b` with separate engine and shared location; each key/engine stays canonical. In a real Ranger 2.8 plugin using the existing `setPolicies`/`setRoles` pattern, test UPDATE-only, SELECT-only, WRITE-only, wrong-catalog, target-scope deny and role/group membership with the canonical four-level key. Do not claim concrete-column deny semantics for a wildcard target request without an explicit engine result.
-- [ ] **Run RED:** run the Task 2 command below. Once compilable, retain an access-type-sensitive denial test that fails if the implementation mistakenly checks SELECT or never reevaluates UPDATE.
-- [ ] **Implement `capture` and `validate` with this exact ordering.** Private helpers may factor the repeated invariant checks; they do not add new external interfaces:
+- [x] **Add target policy and retention negatives.** Configure the test-local access answer to allow only SELECT, then only WRITE, then only UPDATE; only the third may issue the receipt. Use `policy.denied.add("a:*")` after capture to prove each later validation reevaluates UPDATE even without a changed stamp. Preserve target mask/filter fixture values and prove they are never requested or applied. Test same names under catalog `b` with separate engine and shared location; each key/engine stays canonical. In a real Ranger 2.8 plugin using the existing `setPolicies`/`setRoles` pattern, test UPDATE-only, SELECT-only, WRITE-only, wrong-catalog, target-scope deny and role/group membership with the canonical four-level key. Do not claim concrete-column deny semantics for a wildcard target request without an explicit engine result.
+- [x] **Run RED:** run the Task 2 command below. Once compilable, retain an access-type-sensitive denial test that fails if the implementation mistakenly checks SELECT or never reevaluates UPDATE.
+- [x] **Implement `capture` and `validate` with this exact ordering.** Private helpers may factor the repeated invariant checks; they do not add new external interfaces:
 
 ```text
 capture:
@@ -253,9 +253,9 @@ target.engine().authorize(subject, key, Instant.now())
 
 The real implementation freezes `key` once after target retention checks; the snippet illustrates its verified constructor and resource source. Never call SELECT mask/filter helpers with this key. Use fixed, non-sensitive `toString`/error descriptions and no serializable/Product receipt fields.
 
-- [ ] **Test every boundary with deterministic existing hooks.** Before validation: another session; changed user/groups via existing UGI `doAs` patterns; arbitrary time-zone change; txnVersion removal with auto-reset enabled; metadata/engine close or expiry; completed policy or role-only publication; registration replacement. All reject before access. During `policy.onRequest` or `bindingFixture.onRead`: registration generation/location/native-ID/schema change, native data/version advance, property-only metadata drift, policy/role publication, subject/configuration drift, close/expiry. All reject after the initial allow and leave native scopes cleared. Test descriptor replacement and changed-descriptor-owner copies through the target resolver, not a fictitious registration-reader owner callback. Borrow fixture callbacks from existing action-validation tests; do not add production hooks. Restoring a setting does not erase an observed failure, and target authority has no special reset exemption in this task.
-- [ ] **Test authority containment.** Assert the new receipt/binding classes cannot serialize and expose no plan tags or mutable principal/configuration getters. Obtain a valid target receipt, then execute actual `spark.sql("INSERT INTO a.db.t VALUES (9, 'keep', 'new')")` through the installed existing extension and assert rejection with no new Delta version or data files. Keep this fixture's isolated warehouse, inspect rows through its native test control, and snapshot filenames/bytes before/after. Raw paths and copied/unreceipted SELECT plans remain rejected. Do not attach the new receipt to a command to make this test pass.
-- [ ] **Run GREEN and unchanged SELECT regression suite.** Run Task 2 tests and the combined regression command below. Tests must prove current checks, not just constructor fields. Independent review precedes any local commit. Commit only the new receipt/tests and targeted real-engine test if needed; no push.
+- [x] **Test every boundary with deterministic existing hooks.** Before validation: another session; changed user/groups via existing UGI `doAs` patterns; arbitrary time-zone change; txnVersion removal with auto-reset enabled; metadata/engine close or expiry; completed policy or role-only publication; registration replacement. All reject before access. During `policy.onRequest` or `bindingFixture.onRead`: registration generation/location/native-ID/schema change, native data/version advance, property-only metadata drift, policy/role publication, subject/configuration drift, close/expiry. All reject after the initial allow and leave native scopes cleared. Test descriptor replacement and changed-descriptor-owner copies through the target resolver, not a fictitious registration-reader owner callback. Borrow fixture callbacks from existing action-validation tests; do not add production hooks. Restoring a setting does not erase an observed failure, and target authority has no special reset exemption in this task.
+- [x] **Test authority containment.** Assert the new receipt/binding classes cannot serialize and expose no plan tags or mutable principal/configuration getters. Obtain a valid target receipt, then execute actual `spark.sql("INSERT INTO a.db.t VALUES (9, 'keep', 'new')")` through the installed existing extension and assert rejection with no new Delta version or data files. Keep this fixture's isolated warehouse, inspect rows through its native test control, and snapshot filenames/bytes before/after. Raw paths and copied/unreceipted SELECT plans remain rejected. Do not attach the new receipt to a command to make this test pass.
+- [x] **Run GREEN and unchanged SELECT regression suite.** Run Task 2 tests and the combined regression command below. Tests must prove current checks, not just constructor fields. Independent review precedes any local commit. Commit only the new receipt/tests and targeted real-engine test if needed; no push.
 
 ```bash
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests org.apache.gravitino.spark.connector.delta.ranger.TestDeltaRangerAppendTargetReceipt --tests org.apache.gravitino.spark.connector.delta.ranger.TestDeltaRangerPolicyEngine -PskipITs -PdeltaSparkVersion=3.5.4 -PdeltaVersion=3.3.0 --offline --console=plain
@@ -295,6 +295,8 @@ The integrated design must use an owner-bound continuation/reissuance for comman
 `DeltaRangerReadRule.prepare` currently rejects a transactional DeltaScanGenerator; self-append plans inside `withNewTransaction` can encounter it. Preserve the exact native transaction read tracking/OCC generator. Do not replace it with a Snapshot merely to satisfy the old matcher. An admitted transactional generator must be the exact transaction of the bound append target, tied to that source occurrence/log/snapshot and current registration. Test self-append under source masks/filters, denial of source SELECT despite target UPDATE, and unrelated/foreign active transactions.
 
 `DeltaRangerNativeOperation` is non-reentrant. Source prepare/scan and target validation each open their own bounded operations; surrounding the whole helper with `prepare(sourceOwner)` would break nesting and grants no target authority for literals. The integrated owner must separate command lifetime from finite native invocation evidence and prove each helper-created invariant/statistics/snapshot plan against exact inputs/transaction lineage. Exercise cleanup after entry denial, source preparation failure, file-write failure and precommit denial. Do not allow arbitrary operations by package/class name, ThreadLocal presence, copied native tags or a callback invoked from user code. Preserve all existing native snapshot spoof negatives.
+
+Task 2's primary installed-companion diagnostic on Spark 3.5.4 / Delta 3.3.0 found that removing the native version checksum forces a snapshot reconstruction containing `DeserializeToObject` in `getNumPartitionColumns`/`update`, which current admission rejects. Retain that failure as a separate availability boundary. The target component uses genuine native commits with their matching checksum artifacts; this does not qualify checksum-absent histories. The integrated gate must cover both checksum-bearing and checksum-absent native reconstruction without a generic encoder or native-package allowance.
 
 Native recache can analyze non-append work in a cloned SparkSession, as the frozen probe records. That observation does not authorize arbitrary clone sessions or shared-state caches. Qualify an exact recache continuation, tied to the committed target and actual native-created plan/session, or keep the unsupported case as an explicit integration failure. No broad exemption for `sharedState` equality, all cloned sessions, native-looking plans or user cache substitution. A recache failure after commit is possible committed work and must remain so in the reported outcome.
 
@@ -344,7 +346,7 @@ The existing module exposes guarded production endpoint configuration via `-Pran
 - Every executable-task interface used later in this plan is defined above. Subsequent integration concerns intentionally have no invented production signatures until their lifecycle is measured.
 - Spec coverage is partial by design: target binding/UPDATE observations are delivered here; complete source/command receipt, modeled txn reset, native continuation, commit boundary, all frontend support and real Ranger/S3 append remain explicitly unimplemented requirements of the next integrated gate.
 - Existing MODIFY mapping is not repeated. SELECT regression source and strict provenance remain unchanged. Target read masks/filters remain independent from source obligations.
-- No tests/builds, native operations, services, Git mutations, commits or pushes were performed while preparing this draft. Root self-reviewed the plan against the approved design and existing binding source, corrected final-head configuration capture and owner-observation scope, and promoted it after the native four-pair gate. Tasks 1–2 remain unimplemented; execution uses the user's existing continuous authorization.
+- No tests/builds, native operations, services, Git mutations, commits or pushes were performed while preparing this draft. Root self-reviewed the plan against the approved design and existing binding source, corrected final-head configuration capture and owner-observation scope, and promoted it after the native four-pair gate. Tasks 1–2 are now implemented and independently source-reviewed; combined verification and local acceptance are recorded below. Execution uses the user's existing continuous authorization.
 
 ## Task 1 local acceptance — October 7, 2026
 
@@ -363,8 +365,65 @@ launcher is JDK 17.0.16; classpath versions are Spark 3.5.4, Delta 3.3.0 and Sca
 Private report/review/evidence live under
 `.superpowers/sdd/2026-10-05-delta-append-target-authority/`.
 
-Task 2 and the combined four-pair regression remain pending. Target binding does
+At this Task 1 checkpoint, Task 2 and the combined four-pair regression were
+pending; their final acceptance follows below. Target binding alone does
 not authorize UPDATE, admit commands, refresh external Gravitino ownership, or
 establish a policy/registration fence. Existing worktree revision-detection,
 unchanged test type-check and Gradle deprecation warnings remain recorded;
 no unrelated build cleanup is included.
+
+
+## Task 2 and combined local acceptance — October 7, 2026
+
+The target UPDATE receipt and its integration with the exact named-target binding
+passed independent specification and quality reviews. Capture validates before
+issuing a receipt; subsequent validation checks the exact session, current
+application user/groups, full SQLConf, policy/role publication and retained target,
+and brackets one canonical table-wide UPDATE decision with current registration
+and native observations. Target SELECT, masks and filters are not evaluated.
+The receipt grants no command or native execution authority.
+
+The final unchanged source snapshot passed the following combined suite, with
+zero failures, errors or skips in every cell:
+
+| Spark | Delta | Tests | Build time |
+| --- | --- | ---: | --- |
+| 3.5.4 | 3.3.0 | 125 | 5m 36s |
+| 3.5.4 | 3.3.2 | 125 | 5m 33s |
+| 3.5.6 | 3.3.0 | 125 | 5m 53s |
+| 3.5.6 | 3.3.2 | 125 | 6m 06s |
+
+These 500 test executions cover the new receipt, real Ranger policy evaluation,
+registration binding and existing SELECT/action/physical/native/retained-query
+regressions across ten classes. Module-scoped formatting checks passed. Each cell
+records JDK 17.0.16, Scala 2.12.21 and the requested Spark/Delta versions, including
+five resolved Ranger 2.8.0 artifacts. Root independently verified all suite XML,
+the six final source hashes and 15 recorded dependency JAR hashes per cell. This
+is Gradle Test launcher/resolved-artifact provenance, not an in-JVM loaded-class
+audit or a new live Ranger/S3 qualification.
+
+Two fixture corrections were required and independently reviewed. The receipt's
+group-change test now derives and asserts genuinely different membership and
+restores the original mapping, avoiding contamination from an existing test's
+shared Hadoop mapping. One binding history case explicitly refreshes the native
+head before constructing its required version-1 target, because `initialSnapshot`
+can reuse cached state. Original regression assertions remain intact; neither fix
+changes production authorization or shared SELECT fixtures. Failed attempts,
+diagnostics and original snapshots remain archived. An earlier long focused run
+included 582 seconds of recorded machine sleep; final matrix commands prevented
+idle sleep for their duration without changing global system settings.
+
+Private reports, reviews and evidence remain under
+`.superpowers/sdd/2026-10-05-delta-append-target-authority/`; final matrix evidence
+is `evidence/matrix/attempt-3/`, including `root-artifact-audit.json`. The final
+four-file revision snapshot is `evidence/task-1/history-cache-fix/`. Existing
+worktree revision-detection, unchanged test type-check and Gradle deprecation
+warnings remain deferred.
+
+This closes the bounded target-authority plan locally. It does not enable append
+execution, refresh external Gravitino ownership, model native transaction reset,
+resolve checksum-absent reconstruction or establish an atomic authorization fence.
+Source/command authority, transaction/helper/precommit integration and live
+Ranger 2.8/S3 append remain the subsequent gate above. Catalog-based CDF enablement
+remains the first feature priority after Delta maturity. No core changes, service
+changes, deployment or remote push are part of this increment.
