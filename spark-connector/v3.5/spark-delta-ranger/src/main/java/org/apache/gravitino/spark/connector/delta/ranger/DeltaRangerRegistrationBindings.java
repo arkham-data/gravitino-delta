@@ -23,6 +23,7 @@ import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.net.URI;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -112,7 +113,7 @@ final class DeltaRangerRegistrationBindings {
             || !logicalSchema(snapshot.metadata().partitionSchema())
                 .equals(logicalSchema(relation.partitionSchema()))) throw denied();
         RegistrationBinding binding =
-            new RegistrationBinding(after, descriptor, relation, index, snapshot);
+            new RegistrationBinding(after, table, descriptor, relation, index, snapshot);
         // Network and lazy native work above never hold this monitor. Close and insertion share it.
         synchronized (this) {
           requireLive();
@@ -174,6 +175,33 @@ final class DeltaRangerRegistrationBindings {
         reader.requireLive(binding.observation);
         return new BoundRegistrationScan(this, descriptor, relation, index, log, binding);
       }
+    } catch (Exception | LinkageError failure) {
+      throw denied();
+    }
+  }
+
+  @SuppressWarnings("ReferenceEquality") // Only the exact completed named load is a target.
+  BoundAppendTarget resolveAppendTarget(DeltaTableV2 table) {
+    try {
+      CatalogTable descriptor = table.catalogTable().get();
+      RegistrationBinding binding;
+      synchronized (this) {
+        requireLive();
+        drain(collected, entries);
+        binding = entries.get(new IdentityKey<>(descriptor, null));
+      }
+      if (binding == null || binding.table.get() != table) throw denied();
+      BoundRegistrationScan anchor =
+          new BoundRegistrationScan(
+              this,
+              descriptor,
+              binding.relation.get(),
+              binding.index.get(),
+              binding.log.get(),
+              binding);
+      BoundAppendTarget target = new BoundAppendTarget(table, anchor);
+      target.requireRetained();
+      return target;
     } catch (Exception | LinkageError failure) {
       throw denied();
     }
@@ -261,6 +289,16 @@ final class DeltaRangerRegistrationBindings {
     Iterator<String> iterator = values.iterator();
     while (iterator.hasNext()) append(stamp, iterator.next());
     return stamp.toString();
+  }
+
+  private static Map<String, String> configurationSnapshot(Metadata metadata) {
+    Map<String, String> values = new HashMap<>();
+    Iterator<Tuple2<String, String>> iterator = metadata.configuration().iterator();
+    while (iterator.hasNext()) {
+      Tuple2<String, String> entry = iterator.next();
+      values.put(entry._1(), entry._2());
+    }
+    return Collections.unmodifiableMap(values);
   }
 
   private static String mappingStamp(Metadata metadata) {
@@ -366,16 +404,20 @@ final class DeltaRangerRegistrationBindings {
     private final String protocolJson;
     private final String partitions;
     private final String mapping;
+    private final String descriptorOwner;
+    private final Map<String, String> nativeConfiguration;
     private final String descriptorSchemaJson;
     private final String dataSchemaJson;
     private final String partitionSchemaJson;
     private final long nativeVersion;
+    private final WeakReference<DeltaTableV2> table;
     private final WeakReference<HadoopFsRelation> relation;
     private final WeakReference<TahoeLogFileIndex> index;
     private final WeakReference<DeltaLog> log;
 
     private RegistrationBinding(
         PublishedObservation observation,
+        DeltaTableV2 table,
         CatalogTable descriptor,
         HadoopFsRelation relation,
         TahoeLogFileIndex index,
@@ -385,10 +427,13 @@ final class DeltaRangerRegistrationBindings {
       this.protocolJson = snapshot.protocol().json();
       this.partitions = sequenceStamp(snapshot.metadata().partitionColumns());
       this.mapping = mappingStamp(snapshot.metadata());
+      this.descriptorOwner = descriptor.owner();
+      this.nativeConfiguration = configurationSnapshot(snapshot.metadata());
       this.descriptorSchemaJson = descriptor.schema().json();
       this.dataSchemaJson = relation.dataSchema().json();
       this.partitionSchemaJson = relation.partitionSchema().json();
       this.nativeVersion = snapshot.version();
+      this.table = new WeakReference<>(table);
       this.relation = new WeakReference<>(relation);
       this.index = new WeakReference<>(index);
       this.log = new WeakReference<>(index.deltaLog());
@@ -406,16 +451,19 @@ final class DeltaRangerRegistrationBindings {
     private final SparkSession session;
     private final PublishedObservation publication;
     private final long nativeVersion;
+    private final Map<String, String> nativeConfiguration;
 
     private CurrentObservation(
         BoundRegistrationScan binding,
         SparkSession session,
         PublishedObservation publication,
-        long nativeVersion) {
+        long nativeVersion,
+        Map<String, String> nativeConfiguration) {
       this.binding = binding;
       this.session = session;
       this.publication = publication;
       this.nativeVersion = nativeVersion;
+      this.nativeConfiguration = nativeConfiguration;
     }
 
     void requireSame(@Nullable CurrentObservation other) {
@@ -431,6 +479,98 @@ final class DeltaRangerRegistrationBindings {
     @Override
     public String toString() {
       return "Current Delta action observation";
+    }
+  }
+
+  /** Exact named target and private metadata anchor, without source or append authorization. */
+  static final class BoundAppendTarget {
+    private final DeltaTableV2 table;
+    private final SparkSession session;
+    private final BoundRegistrationScan anchor;
+
+    private BoundAppendTarget(DeltaTableV2 table, BoundRegistrationScan anchor) {
+      this.table = table;
+      this.session = table.spark();
+      this.anchor = anchor;
+    }
+
+    DeltaTableV2 table() {
+      return table;
+    }
+
+    CatalogTable descriptor() {
+      return anchor.descriptor();
+    }
+
+    DeltaLog log() {
+      return anchor.log();
+    }
+
+    PublishedObservation observation() {
+      return anchor.observation();
+    }
+
+    DeltaRangerPolicyEngine engine() {
+      return anchor.engine();
+    }
+
+    @SuppressWarnings("ReferenceEquality") // Frozen native identity cannot be replaced by a copy.
+    void requireRetained() {
+      try {
+        anchor.requireRetained();
+        RegistrationBinding binding = anchor.binding;
+        if (binding.table.get() != table
+            || table.spark() != session
+            || table.timeTravelOpt().isDefined()
+            || !table.options().isEmpty()
+            || table.hasPartitionFilters()
+            || table.catalogTable().isEmpty()
+            || table.ttSafeCatalogTable().isEmpty()
+            || table.catalogTable().get() != anchor.descriptor
+            || table.ttSafeCatalogTable().get() != anchor.descriptor
+            || table.deltaLog() != anchor.log
+            || !binding.descriptorOwner.equals(anchor.descriptor.owner())
+            || !locationMatches(binding.observation.location(), table.path().toUri()))
+          throw denied();
+        Snapshot snapshot = table.initialSnapshot();
+        if (snapshot.deltaLog() != anchor.log
+            || snapshot.version() != binding.nativeVersion
+            || !binding.observation.nativeId().equals(snapshot.metadata().id())
+            || !binding.nativeSchemaJson.equals(snapshot.metadata().schemaString())
+            || !binding.protocolJson.equals(snapshot.protocol().json())
+            || !binding.partitions.equals(sequenceStamp(snapshot.metadata().partitionColumns()))
+            || !binding.mapping.equals(mappingStamp(snapshot.metadata()))
+            || !binding.nativeConfiguration.equals(configurationSnapshot(snapshot.metadata()))
+            || !binding.nativeConfiguration.equals(configurationSnapshot(anchor.index.metadata())))
+          throw denied();
+        requireLive();
+      } catch (Exception | LinkageError failure) {
+        throw denied();
+      }
+    }
+
+    void requireLive() {
+      anchor.requireLive();
+    }
+
+    CurrentObservation validateCurrent(SparkSession session) {
+      try {
+        if (this.session != session) throw denied();
+        requireRetained();
+        CurrentObservation current = anchor.validateCurrent(session);
+        if (!anchor.binding.nativeConfiguration.equals(current.nativeConfiguration)) throw denied();
+        requireRetained();
+        requireLive();
+        return current;
+      } catch (Exception | LinkageError failure) {
+        throw denied();
+      }
+    }
+
+    /** Omits the retained table, registration and metadata. */
+    @Override
+    public String toString() {
+      return "Bound native append target";
     }
   }
 
@@ -521,8 +661,15 @@ final class DeltaRangerRegistrationBindings {
           requireRetained();
           owner.reader.requireLive(before);
           owner.reader.requireLive(after);
+          CurrentObservation current =
+              new CurrentObservation(
+                  this,
+                  session,
+                  after,
+                  finalHead.version(),
+                  configurationSnapshot(finalHead.metadata()));
           operation.succeed();
-          return new CurrentObservation(this, session, after, finalHead.version());
+          return current;
         }
       } catch (Exception | LinkageError failure) {
         throw new SecurityException("Delta retained registration validation rejected");

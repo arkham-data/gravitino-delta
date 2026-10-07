@@ -22,10 +22,12 @@ package org.apache.gravitino.spark.connector.delta.ranger
 import java.io.Serializable
 import java.lang.ref.{ReferenceQueue, WeakReference}
 import java.lang.reflect.Modifier
+import java.nio.file.{Files, Path, Paths}
+import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.{Collections, HashMap, LinkedHashMap, Optional, OptionalLong}
 import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 
 import org.apache.gravitino.{Catalog, NameIdentifier}
 import org.apache.gravitino.catalog.lakehouse.delta.registration.{
@@ -38,10 +40,13 @@ import org.apache.gravitino.rel.{Column, Table => MetadataTable, TableCatalog}
 import org.apache.gravitino.spark.connector.SparkTypeConverter
 import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRegistrationBindings.IdentityKey
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.{Join, JoinHint, SubqueryAlias}
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog => NativeTableCatalog}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaRelation, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaRelation, DeltaTimeTravelSpec, Snapshot}
+import org.apache.spark.sql.delta.actions.Protocol
+import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
@@ -394,11 +399,12 @@ class TestDeltaRangerRegistrationBindings {
           classOf[DeltaRangerRegistrationBindings.RegistrationBinding].getDeclaredFields.filterNot(
             field => Modifier.isStatic(field.getModifiers)
           )
-        assertEquals(3, fields.count(_.getType == classOf[WeakReference[_]]))
+        assertEquals(4, fields.count(_.getType == classOf[WeakReference[_]]))
         val allowed = Set[Class[_]](
           classOf[WeakReference[_]],
           classOf[String],
           classOf[Long],
+          classOf[java.util.Map[_, _]],
           classOf[DeltaRangerRegistrationReader.PublishedObservation]
         )
         assertTrue(
@@ -407,6 +413,406 @@ class TestDeltaRangerRegistrationBindings {
         )
       } finally f.close()
     }
+
+  @Test
+  def appendTargetRequiresTheExactCompletedNamedLoad(): Unit =
+    NativeSelectFixture.withSpark { spark =>
+      val native = table(spark, "a")
+      val f = new Fixture(native)
+      try {
+        assertThrows(classOf[SecurityException], () => f.bindings.resolveAppendTarget(native))
+        f.bindings.load(name, () => native)
+        val target = f.bindings.resolveAppendTarget(native)
+        assertSame(native, target.table())
+        assertSame(native.catalogTable.get, target.descriptor())
+        assertSame(native.deltaLog, target.log())
+        assertSame(f.policy.engine, target.engine())
+        assertEquals("a", target.observation().catalog())
+        target.requireRetained()
+        target.requireLive()
+        target.validateCurrent(spark)
+        val equalPath = table(spark, "a")
+        assertEquals(native.path, equalPath.path)
+        assertThrows(classOf[SecurityException], () => f.bindings.resolveAppendTarget(equalPath))
+        assertNotNull(f.bindings.resolve(fallback(native)))
+        assertTrue(f.policy.requests.isEmpty)
+        assertTrue(f.policy.events.isEmpty)
+        assertFalse(classOf[Serializable].isAssignableFrom(target.getClass))
+        assertFalse(classOf[Product].isAssignableFrom(target.getClass))
+        assertTrue(
+          target.getClass.getDeclaredConstructors
+            .filterNot(_.isSynthetic)
+            .forall(c => Modifier.isPrivate(c.getModifiers))
+        )
+        assertFalse(target.toString.contains("token"))
+        assertFalse(target.toString.contains(native.path.toString))
+        assertNull(DeltaRangerNativeOperation.current())
+      } finally f.close()
+    }
+
+  @Test
+  def appendTargetRejectsSharedAndEqualDescriptorsRawPathsAndAlteredCopies(): Unit =
+    NativeSelectFixture.withSpark { spark =>
+      val native = table(spark, "a")
+      val f = new Fixture(native)
+      try {
+        f.bindings.load(name, () => native)
+        val descriptor = native.catalogTable.get
+        val descriptorCopy = descriptor.copy()
+        assertEquals(descriptor, descriptorCopy)
+        val copies = Seq(
+          native.copy(),
+          native.copy(catalogTable = Some(descriptorCopy)),
+          native.copy(catalogTable = Some(descriptor.copy(owner = "replacement-owner"))),
+          native.copy(catalogTable = None),
+          native.copy(timeTravelOpt = Some(DeltaTimeTravelSpec(None, Some(0L), Some("test")))),
+          native.copy(options = Map("versionAsOf" -> "0")),
+          native.copy(options = Map("readChangeFeed" -> "true")),
+          native.copy(options = Map("arbitrary-option" -> "value")),
+          native.copy(spark = spark.newSession())
+        )
+        copies.foreach { copy =>
+          assertNotSame(native, copy)
+          assertThrows(classOf[SecurityException], () => f.bindings.resolveAppendTarget(copy))
+          assertNull(DeltaRangerNativeOperation.current())
+        }
+        val filtered = mock(
+          classOf[DeltaTableV2],
+          withSettings().spiedInstance(native.copy()).defaultAnswer(CALLS_REAL_METHODS)
+        )
+        when(filtered.hasPartitionFilters).thenReturn(true)
+        assertThrows(classOf[SecurityException], () => f.bindings.load(name, () => filtered))
+        assertThrows(classOf[SecurityException], () => f.bindings.resolveAppendTarget(filtered))
+        assertNotNull(f.bindings.resolveAppendTarget(native))
+      } finally f.close()
+    }
+
+  @Test
+  def appendTargetRetainsNativeOwnerOrdinaryLoadAndSessionIdentity(): Unit =
+    NativeSelectFixture.withSpark { spark =>
+      val original = table(spark, "a")
+      val descriptor = mock(
+        classOf[CatalogTable],
+        withSettings().spiedInstance(original.catalogTable.get).defaultAnswer(CALLS_REAL_METHODS)
+      )
+      val native = mock(
+        classOf[DeltaTableV2],
+        withSettings()
+          .spiedInstance(original.copy(catalogTable = Some(descriptor)))
+          .defaultAnswer(CALLS_REAL_METHODS)
+      )
+      val f = new Fixture(native)
+      try {
+        f.bindings.load(name, () => native)
+        val target = f.bindings.resolveAppendTarget(native)
+        assertThrows(classOf[SecurityException], () => target.validateCurrent(spark.newSession()))
+        assertNull(DeltaRangerNativeOperation.current())
+        when(descriptor.owner).thenReturn("changed-owner")
+        assertThrows(classOf[SecurityException], () => target.requireRetained())
+        when(descriptor.owner).thenReturn("same-owner")
+        target.requireRetained()
+        when(native.hasPartitionFilters).thenReturn(true)
+        assertThrows(classOf[SecurityException], () => target.requireRetained())
+        when(native.hasPartitionFilters).thenReturn(false)
+        when(native.options).thenReturn(Map("replaceWhere" -> "id = 1"))
+        assertThrows(classOf[SecurityException], () => target.requireRetained())
+        when(native.options).thenReturn(Map.empty[String, String])
+        val replacementDescriptor = descriptor.copy()
+        when(native.catalogTable).thenReturn(Some(replacementDescriptor))
+        assertThrows(classOf[SecurityException], () => target.requireRetained())
+        when(native.catalogTable).thenReturn(Some(descriptor))
+        target.validateCurrent(spark)
+        assertTrue(f.policy.events.isEmpty)
+        assertNull(DeltaRangerNativeOperation.current())
+      } finally f.close()
+    }
+
+  @Test
+  def appendTargetsAndObservationsCannotCrossOwnersOrCompletedBindings(): Unit =
+    NativeSelectFixture.withSpark { spark =>
+      val first = table(spark, "a")
+      val second = table(spark, "a")
+      val f = new Fixture(first)
+      val other = new Fixture(second)
+      try {
+        f.bindings.load(name, () => first)
+        other.bindings.load(name, () => second)
+        val target = f.bindings.resolveAppendTarget(first)
+        val secondTarget = other.bindings.resolveAppendTarget(second)
+        assertSame(target.log(), secondTarget.log())
+        assertThrows(classOf[SecurityException], () => f.bindings.resolveAppendTarget(second))
+        assertThrows(classOf[SecurityException], () => other.bindings.resolveAppendTarget(first))
+        val observation = target.validateCurrent(spark)
+        observation.requireSame(target.validateCurrent(spark))
+        assertThrows(
+          classOf[SecurityException],
+          () => observation.requireSame(secondTarget.validateCurrent(spark))
+        )
+        assertThrows(
+          classOf[SecurityException],
+          () =>
+            observation.requireSame(f.bindings.resolveAppendTarget(first).validateCurrent(spark))
+        )
+        assertThrows(classOf[SecurityException], () => observation.requireSame(null))
+        f.bindings.load(name, () => first)
+        assertThrows(classOf[SecurityException], () => target.requireRetained())
+        secondTarget.validateCurrent(spark)
+        assertNull(DeltaRangerNativeOperation.current())
+      } finally { f.close(); other.close() }
+    }
+
+  @Test
+  def appendTargetRejectsReplacedRegistrationAndSchemaAtEitherPublicationRead(): Unit =
+    NativeSelectFixture.withSpark { spark =>
+      val native = table(spark, "a")
+      val f = new Fixture(native)
+      try {
+        f.bindings.load(name, () => native)
+        val target = f.bindings.resolveAppendTarget(native)
+        val original = f.properties.asScala.toMap
+        val columns = f.columns
+        for (
+          phase <- Seq(1, 2);
+          (key, value) <- Seq(
+            "id" -> "2",
+            "generation" -> "2",
+            "token" -> "replacement",
+            "nativeId" -> "replacement-native",
+            "location" -> "/tmp/replacement",
+            "nativeVersion" -> "999",
+            "state" -> "ADOPTING",
+            "schema" -> "changed"
+          )
+        ) {
+          val at = f.reads.get() + phase
+          f.onRead = count =>
+            if (count == at) {
+              if (key == "schema") f.columns = columns.dropRight(1)
+              else f.properties.put(prefix + key, value)
+            }
+          assertThrows(
+            classOf[SecurityException],
+            () => { target.validateCurrent(spark); () },
+            key + ":" + phase
+          )
+          assertNull(DeltaRangerNativeOperation.current())
+          f.onRead = _ => ()
+          f.properties.clear(); f.properties.putAll(original.asJava); f.columns = columns
+          target.validateCurrent(spark)
+        }
+        assertTrue(f.policy.events.isEmpty)
+      } finally f.close()
+    }
+
+  @Test
+  def appendTargetRejectsClosedOwnersAndExpiredLeasesBeforeAndDuringObservation(): Unit =
+    NativeSelectFixture.withSpark { spark =>
+      val native = table(spark, "a")
+      for (mode <- Seq("catalog", "metadata", "engine", "expiry"); phase <- Seq(0, 1, 2)) {
+        val f = new Fixture(native)
+        try {
+          f.bindings.load(name, () => native)
+          val target = f.bindings.resolveAppendTarget(native)
+          def close(): Unit = mode match {
+            case "catalog"  => f.bindings.close()
+            case "metadata" => f.metadata.close()
+            case "engine"   => f.policy.engine.close()
+            case "expiry"   => f.clock.set(Duration.ofSeconds(1).toNanos)
+          }
+          if (phase == 0) close()
+          else {
+            val at = f.reads.get() + phase
+            f.onRead = count => if (count == at) close()
+          }
+          assertThrows(
+            classOf[SecurityException],
+            () => { target.validateCurrent(spark); () },
+            mode + ":" + phase
+          )
+          assertThrows(classOf[SecurityException], () => target.requireLive())
+          assertThrows(classOf[SecurityException], () => target.requireRetained())
+          assertThrows(classOf[SecurityException], () => f.bindings.resolveAppendTarget(native))
+          assertNull(DeltaRangerNativeOperation.current())
+        } finally f.close()
+      }
+    }
+
+  @Test
+  def appendTargetAllowsDataAdvanceButRejectsNativeRegistrationVersionRegression(): Unit =
+    withAppendHistory { (spark, publish) =>
+      publish("data")
+      val native = table(spark, "a")
+      val f = new Fixture(native)
+      try {
+        assertEquals(1L, native.initialSnapshot.version)
+        f.bindings.load(name, () => native)
+        val target = f.bindings.resolveAppendTarget(native)
+        target.validateCurrent(spark)
+        f.properties.put(prefix + "nativeVersion", "0")
+        assertThrows(classOf[SecurityException], () => target.validateCurrent(spark))
+        assertNull(DeltaRangerNativeOperation.current())
+      } finally f.close()
+    }
+
+  @Test
+  def appendTargetCurrentObservationAcceptsCompatibleDataOnlyAdvance(): Unit =
+    withAppendHistory { (spark, publish) =>
+      val native = table(spark, "a")
+      val f = new Fixture(native)
+      try {
+        f.bindings.load(name, () => native)
+        val target = f.bindings.resolveAppendTarget(native)
+        val initial = target.validateCurrent(spark)
+        publish("data")
+        f.properties.put(prefix + "nativeVersion", "1")
+        val current = target.validateCurrent(spark)
+        current.requireSame(target.validateCurrent(spark))
+        assertThrows(classOf[SecurityException], () => initial.requireSame(current))
+        assertEquals(0L, native.initialSnapshot.version)
+        assertTrue(f.policy.requests.isEmpty)
+        assertTrue(f.policy.events.isEmpty)
+        assertNull(DeltaRangerNativeOperation.current())
+      } finally f.close()
+    }
+
+  @Test
+  def appendTargetAcceptsDataAdvanceDuringFirstPublicationReadBeforeNativeObservation(): Unit =
+    withAppendHistory { (spark, publish) =>
+      val native = table(spark, "a")
+      val f = new Fixture(native)
+      try {
+        f.bindings.load(name, () => native)
+        val target = f.bindings.resolveAppendTarget(native)
+        val at = f.reads.get() + 1
+        f.onRead = count => if (count == at) publish("data")
+        val current = target.validateCurrent(spark)
+        f.onRead = _ => ()
+        current.requireSame(target.validateCurrent(spark))
+        assertNull(DeltaRangerNativeOperation.current())
+      } finally f.close()
+    }
+
+  @Test
+  def appendTargetRejectsNativeAdvanceInsideFinalPublicationBracket(): Unit =
+    withAppendHistory { (spark, publish) =>
+      val native = table(spark, "a")
+      val f = new Fixture(native)
+      try {
+        f.bindings.load(name, () => native)
+        val target = f.bindings.resolveAppendTarget(native)
+        val at = f.reads.get() + 2
+        f.onRead = count => if (count == at) publish("data")
+        assertThrows(classOf[SecurityException], () => target.validateCurrent(spark))
+        assertEquals(at, f.reads.get())
+        assertNull(DeltaRangerNativeOperation.current())
+        f.onRead = _ => ()
+        target.validateCurrent(spark)
+      } finally f.close()
+    }
+
+  @Test
+  def appendTargetRejectsPropertySchemaProtocolPartitionAndMappingDrift(): Unit = {
+    Seq("property", "constraint", "protocol", "partition", "mapping", "schema", "nativeId")
+      .foreach { change =>
+        withAppendHistory { (spark, publish) =>
+          val native = table(spark, "a")
+          val f = new Fixture(native)
+          try {
+            f.bindings.load(name, () => native)
+            val target = f.bindings.resolveAppendTarget(native)
+            target.validateCurrent(spark)
+            publish(change)
+            val rejected =
+              try { target.validateCurrent(spark); false }
+              catch { case _: SecurityException => true }
+            val head = native.deltaLog.unsafeVolatileSnapshot
+            assertEquals(1L, head.version)
+            change match {
+              case "property" =>
+                assertEquals("true", head.metadata.configuration("delta.appendOnly"))
+              case "constraint" =>
+                assertEquals("id > 0", head.metadata.configuration("delta.constraints.positive_id"))
+              case "protocol"  => assertEquals(Protocol(2, 5), head.protocol)
+              case "partition" => assertEquals(Seq("region"), head.metadata.partitionColumns)
+              case "mapping" =>
+                assertEquals("100", head.metadata.configuration("delta.columnMapping.maxColumnId"))
+              case "schema" =>
+                assertEquals(Seq("id", "secret", "region", "extra"), head.schema.fieldNames.toSeq)
+              case "nativeId" => assertEquals("replacement-native-id", head.metadata.id)
+            }
+            assertTrue(rejected, change)
+            assertNull(DeltaRangerNativeOperation.current())
+            assertTrue(f.policy.requests.isEmpty)
+            assertTrue(f.policy.events.isEmpty)
+          } finally f.close()
+        }
+      }
+  }
+
+  private def withAppendHistory(test: (SparkSession, String => Unit) => Unit): Unit = {
+    var commit: Path = null
+    var data: Array[Byte] = null
+    NativeSelectFixture.withSpark(
+      spark => {
+        val original = table(spark, "a").initialSnapshot
+        test(
+          spark,
+          change => {
+            val metadata = original.metadata
+            val action = change match {
+              case "property" =>
+                metadata
+                  .copy(configuration = metadata.configuration + ("delta.appendOnly" -> "true"))
+                  .json
+              case "constraint" =>
+                metadata
+                  .copy(configuration =
+                    metadata.configuration + ("delta.constraints.positive_id" -> "id > 0")
+                  )
+                  .json
+              case "protocol"  => Protocol(2, 5).json
+              case "partition" => metadata.copy(partitionColumns = Seq("region")).json
+              case "mapping" =>
+                metadata
+                  .copy(configuration =
+                    metadata.configuration + ("delta.columnMapping.maxColumnId" -> "100")
+                  )
+                  .json
+              case "schema" =>
+                metadata.copy(schemaString = original.schema.add("extra", "string").json).json
+              case "nativeId" => metadata.copy(id = "replacement-native-id").json
+              case "data"     => ""
+            }
+            Files.write(
+              commit,
+              if (change == "data") data else (action + "\n").getBytes(StandardCharsets.UTF_8)
+            )
+            ()
+          }
+        )
+      },
+      beforeExtension = spark => {
+        val location = NativeSelectFixture.locations("a")
+        spark
+          .sql("SELECT 4L id, 'tail' secret, 'keep' region")
+          .write
+          .format("delta")
+          .mode("append")
+          .save(location)
+        commit = Paths.get(location, "_delta_log", "00000000000000000001.json")
+        data = Files.readAllBytes(commit)
+        Files.delete(commit)
+        // The replay may replace the metadata action. A checksum from the original data commit
+        // would cause Delta to reconstruct version 1 from that old checksum's embedded metadata.
+        Seq(
+          "00000000000000000001.crc",
+          ".00000000000000000001.crc.crc",
+          ".00000000000000000001.json.crc"
+        ).foreach(name => Files.deleteIfExists(commit.resolveSibling(name)))
+        DeltaLog.clearCache()
+      }
+    )
+  }
 
   private def table(spark: SparkSession, catalog: String): DeltaTableV2 =
     spark.sessionState.catalogManager
@@ -466,7 +872,11 @@ class TestDeltaRangerRegistrationBindings {
     when(catalog.name()).thenReturn("a")
     when(catalog.provider()).thenReturn("lakehouse-delta")
     when(catalog.asTableCatalog()).thenReturn(tables)
-    when(tables.loadTable(NameIdentifier.of("db", "t"))).thenReturn(registration)
+    val reads = new AtomicInteger()
+    var onRead: Int => Unit = (_: Int) => ()
+    when(tables.loadTable(NameIdentifier.of("db", "t"))).thenAnswer(_ => {
+      onRead(reads.incrementAndGet()); registration
+    })
     when(registration.name()).thenReturn("t")
     when(registration.properties()).thenAnswer(_ => properties)
     when(registration.columns()).thenAnswer(_ => columns)

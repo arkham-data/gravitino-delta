@@ -93,6 +93,21 @@ class TestDeltaRangerRegistrationBindingsNative {
           classOf[SecurityException],
           () => other.wrapper.registrationBindings().resolve(logical)
         )
+        val target = f.wrapper.registrationBindings().resolveAppendTarget(loaded)
+        assertSame(loaded, target.table())
+        target.validateCurrent(spark)
+        assertThrows(
+          classOf[SecurityException],
+          () => other.wrapper.registrationBindings().resolveAppendTarget(loaded)
+        )
+        assertThrows(
+          classOf[SecurityException],
+          () => f.wrapper.registrationBindings().resolveAppendTarget(second)
+        )
+        other.wrapper.registrationBindings().resolveAppendTarget(second).validateCurrent(spark)
+        assertTrue(policy.requests.isEmpty)
+        assertTrue(otherPolicy.requests.isEmpty)
+        assertNull(DeltaRangerNativeOperation.current())
         val secondLogical = fallback(second)
         assertThrows(
           classOf[SecurityException],
@@ -260,12 +275,51 @@ class TestDeltaRangerRegistrationBindingsNative {
             assertNotNull(f.wrapper.registrationBindings().resolve(fallback(cold)))
             val warm = f.wrapper.loadTable(name).asInstanceOf[DeltaTableV2]
             assertNotNull(f.wrapper.registrationBindings().resolve(fallback(warm)))
+            f.wrapper.registrationBindings().resolveAppendTarget(cold).validateCurrent(spark)
+            f.wrapper.registrationBindings().resolveAppendTarget(warm).validateCurrent(spark)
+            assertTrue(policy.requests.isEmpty)
+            assertTrue(policy.events.isEmpty)
+            assertNull(DeltaRangerNativeOperation.current())
           } finally f.close()
         },
         Some(extensions => NativeSelectFixture.extension(policy)(extensions))
       )
     finally policy.engine.close()
   }
+
+  @Test
+  def concurrentCloseRejectsRetainedTargetWhilePublicationReadIsBlocked(): Unit =
+    withWrapperSpark { spark =>
+      val f = new WrapperFixture(spark, new TestDeltaRangerNativeSelect.Fixture)
+      val entered = new CountDownLatch(1)
+      val release = new CountDownLatch(1)
+      val executor = Executors.newSingleThreadExecutor()
+      try {
+        val loaded = f.wrapper.loadTable(name).asInstanceOf[DeltaTableV2]
+        val target = f.wrapper.registrationBindings().resolveAppendTarget(loaded)
+        val at = f.reads.get() + 2
+        f.onRead = number =>
+          if (number == at) {
+            entered.countDown()
+            assertTrue(release.await(10, TimeUnit.SECONDS))
+          }
+        val validating = executor.submit(new Runnable {
+          override def run(): Unit = {
+            SparkSession.setActiveSession(spark)
+            try {
+              assertThrows(classOf[SecurityException], () => target.validateCurrent(spark))
+              assertNull(DeltaRangerNativeOperation.current())
+            } finally SparkSession.clearActiveSession()
+          }
+        })
+        assertTrue(entered.await(10, TimeUnit.SECONDS))
+        f.wrapper.close()
+        assertEquals(1L, release.getCount)
+        release.countDown()
+        validating.get(10, TimeUnit.SECONDS)
+        assertThrows(classOf[SecurityException], () => target.requireRetained())
+      } finally { release.countDown(); executor.shutdownNow(); f.close() }
+    }
 
   private def withWrapperSpark(
       test: SparkSession => Unit,

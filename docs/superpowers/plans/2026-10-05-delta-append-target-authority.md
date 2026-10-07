@@ -96,7 +96,7 @@ static final class BoundAppendTarget {
 
 All constructors remain private. The class is neither Serializable nor a Scala Product. The returned `CurrentObservation` is a transient metadata observation tied to this target's private retained metadata anchor, not transferable authorization. `requireRetained` includes exact table identity and all frozen target metadata checks; it is stronger than merely comparing the path/name. No public catalog method needs changing.
 
-- [ ] **Write failing exact-target tests in the existing binding test class.** Its existing private `table`, `Fixture`, `fallback`, and `name` helpers are available there. Include this positive/foreign-copy core:
+- [x] **Write failing exact-target tests in the existing binding test class.** Its existing private `table`, `Fixture`, `fallback`, and `name` helpers are available there. Include this positive/foreign-copy core:
 
 ```scala
 @Test
@@ -122,10 +122,10 @@ def appendTargetRequiresTheExactCompletedNamedLoad(): Unit =
   }
 ```
 
-- [ ] **Add the full target-identity negative matrix before implementation.** Test unloaded/raw-path DeltaTableV2; equal descriptor copy on a distinct table; separate catalog binding at the same native location; historical or partition-filtered/option-bearing copies; closed owner/expired metadata lease; replacement numeric ID/generation/token/native ID/location/schema; protocol/partition/mapping drift; native version regression; concurrent close during publication read. Extend existing wrapper tests so a real `wrapper.loadTable` result resolves while the other wrapper rejects it. Keep original SELECT assertions unchanged.
-- [ ] **Run RED:** use the Task 1 command below. New method absence is the initial RED; after introducing signatures, preserve a behavioral RED for an equal-path copy or changed publication. Do not count only compilation failure as security evidence.
-- [ ] **Retain exact native identity during the existing successful load.** Add a weak `DeltaTableV2` reference to the existing private `RegistrationBinding`, supplied by `load`. Keep the map weak by descriptor identity and existing close/drain behavior. Do not store a second strong catalog-lifetime table registry. The target receipt later retains its exact table strongly only for its own lifetime.
-- [ ] **Implement the target resolver using existing membership checks.** Lookup by exact descriptor identity, require the stored weak table referent is the supplied object, enforce the same ordinary-load table conditions, and create a `BoundAppendTarget` with a private metadata anchor from that completed binding. This anchor can reuse `BoundRegistrationScan` for metadata checks; do not create a `LogicalRelation`, call the source resolver, evaluate SELECT, or expose the anchor as a source receipt. Example invariant inside the resolver:
+- [x] **Add the full target-identity negative matrix before implementation.** Test unloaded/raw-path DeltaTableV2; equal descriptor copy on a distinct table; separate catalog binding at the same native location; historical or partition-filtered/option-bearing copies; closed owner/expired metadata lease; replacement numeric ID/generation/token/native ID/location/schema; protocol/partition/mapping drift; native version regression; concurrent close during publication read. Extend existing wrapper tests so a real `wrapper.loadTable` result resolves while the other wrapper rejects it. Keep original SELECT assertions unchanged.
+- [x] **Run RED:** use the Task 1 command below. New method absence is the initial RED; after introducing signatures, preserve a behavioral RED for an equal-path copy or changed publication. Do not count only compilation failure as security evidence.
+- [x] **Retain exact native identity during the existing successful load.** Add a weak `DeltaTableV2` reference to the existing private `RegistrationBinding`, supplied by `load`. Keep the map weak by descriptor identity and existing close/drain behavior. Do not store a second strong catalog-lifetime table registry. The target receipt later retains its exact table strongly only for its own lifetime.
+- [x] **Implement the target resolver using existing membership checks.** Lookup by exact descriptor identity, require the stored weak table referent is the supplied object, enforce the same ordinary-load table conditions, and create a `BoundAppendTarget` with a private metadata anchor from that completed binding. This anchor can reuse `BoundRegistrationScan` for metadata checks; do not create a `LogicalRelation`, call the source resolver, evaluate SELECT, or expose the anchor as a source receipt. Example invariant inside the resolver:
 
 ```java
 if (binding == null || binding.table.get() != table) {
@@ -133,7 +133,7 @@ if (binding == null || binding.table.get() != table) {
 }
 ```
 
-- [ ] **Implement retained target metadata checks using the existing final native observation.** Freeze native descriptor owner and a defensive immutable copy of all initial native metadata configuration entries, alongside the existing schema/protocol/partition/mapping stamps. `requireRetained` rechecks original table/descriptor/log identities, ordinary-load restrictions and these frozen values. A target's write behavior can change when constraints or maintenance properties change, even with unchanged schema/protocol.
+- [x] **Implement retained target metadata checks using the existing final native observation.** Freeze native descriptor owner and a defensive immutable copy of all initial native metadata configuration entries, alongside the existing schema/protocol/partition/mapping stamps. `requireRetained` rechecks original table/descriptor/log identities, ordinary-load restrictions and these frozen values. A target's write behavior can change when constraints or maintenance properties change, even with unchanged schema/protocol.
 
   Add a private final `Map<String, String> nativeConfiguration` field to `CurrentObservation`. Extend its private constructor to receive the defensive copy captured from the existing local `finalHead.metadata()` inside `BoundRegistrationScan.validateCurrent`, while the existing `validateRetained` operation is still active and after the existing final-head compatibility/version checks. Retain `nativeVersion = finalHead.version()` from that same object. No additional native I/O is needed. The existing `CurrentObservation.requireSame` semantics for SELECT stay unchanged; SELECT does not start comparing this extra field. Use the same private helper to freeze the initial target configuration and the final observation:
 
@@ -153,8 +153,8 @@ private static Map<String, String> configurationSnapshot(Metadata metadata) {
 
   Descriptor-owner checks bind `descriptor.owner` on the exact retained native object and reject replacement descriptors/table copies (including a copy with a changed owner). `PublishedObservation.owner` is only reader identity. Its registration reader does not obtain a fresh Gravitino table owner, so this task neither claims nor tests detection of an ownership change solely in external Gravitino metadata. Current-owner authority, if required by the integrated append route, is an explicit downstream metadata requirement.
 
-- [ ] **Add happy and drift tests for current target observation.** Use the local Delta history fixture pattern in `TestDeltaRangerActionValidation.withHistory`: a compatible data-only advance before entry is accepted, an advance within either publication bracket rejects, a property-only native metadata change rejects, and two observations from different target bindings cannot satisfy `requireSame`. Prove no SELECT access/mask/filter requests were issued merely by binding or observing the target. Assert `DeltaRangerNativeOperation.current() == null` after success and all failures.
-- [ ] **Run GREEN, formatting and regression command below.** Independently review the target map's weak-reference lifecycle, authority identity comparisons, full failure cleanup and unchanged source resolution. After review, root may make a local commit with only these three files; no push.
+- [x] **Add happy and drift tests for current target observation.** Use the local Delta history fixture pattern in `TestDeltaRangerActionValidation.withHistory`: a compatible data-only advance before the first native head is accepted (including during the initial publication read), an advance between the first and final native heads rejects (including during the second publication read), registration incompatibility at either publication read rejects, a property-only native metadata change rejects, and two observations from different target bindings cannot satisfy `requireSame`. Prove no SELECT access/mask/filter requests were issued merely by binding or observing the target. Assert `DeltaRangerNativeOperation.current() == null` after success and all failures.
+- [x] **Run GREEN, formatting and regression command below.** Independently review the target map's weak-reference lifecycle, authority identity comparisons, full failure cleanup and unchanged source resolution. After review, root may make a local commit with only these three files; no push.
 
 ```bash
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests org.apache.gravitino.spark.connector.delta.ranger.TestDeltaRangerRegistrationBindings --tests org.apache.gravitino.spark.connector.delta.ranger.TestDeltaRangerRegistrationBindingsNative -PskipITs -PdeltaSparkVersion=3.5.4 -PdeltaVersion=3.3.0 --offline --console=plain
@@ -345,3 +345,26 @@ The existing module exposes guarded production endpoint configuration via `-Pran
 - Spec coverage is partial by design: target binding/UPDATE observations are delivered here; complete source/command receipt, modeled txn reset, native continuation, commit boundary, all frontend support and real Ranger/S3 append remain explicitly unimplemented requirements of the next integrated gate.
 - Existing MODIFY mapping is not repeated. SELECT regression source and strict provenance remain unchanged. Target read masks/filters remain independent from source obligations.
 - No tests/builds, native operations, services, Git mutations, commits or pushes were performed while preparing this draft. Root self-reviewed the plan against the approved design and existing binding source, corrected final-head configuration capture and owner-observation scope, and promoted it after the native four-pair gate. Tasks 1–2 remain unimplemented; execution uses the user's existing continuous authorization.
+
+## Task 1 local acceptance — October 7, 2026
+
+Exact named-target binding passed independent spec/quality review and 45 focused
+primary tests on Spark 3.5.4 / Delta 3.3.0: 21 binding, 7 native binding and 17
+unchanged action-validation tests, with no failures, errors or skips. Scoped
+formatting passed. Meaningful copied-target/session and native-configuration
+regressions were observed before their checks passed. A stale-checksum error in
+the disposable history fixture was corrected and retained separately from
+production findings.
+
+Root verified the frozen/current source hashes, exact patch, all 76 archived
+artifact hashes, XML counts and 10 resolved classpath JAR hashes. The recorded
+launcher is JDK 17.0.16; classpath versions are Spark 3.5.4, Delta 3.3.0 and Scala
+2.12.21. This is launcher/classpath evidence, not an in-JVM loaded-class audit.
+Private report/review/evidence live under
+`.superpowers/sdd/2026-10-05-delta-append-target-authority/`.
+
+Task 2 and the combined four-pair regression remain pending. Target binding does
+not authorize UPDATE, admit commands, refresh external Gravitino ownership, or
+establish a policy/registration fence. Existing worktree revision-detection,
+unchanged test type-check and Gradle deprecation warnings remain recorded;
+no unrelated build cleanup is included.
