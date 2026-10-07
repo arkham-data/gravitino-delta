@@ -369,3 +369,16 @@ inventory, governed DML/DDL, history and change data feed, streaming and restart
 maintenance, recovery and policy reconciliation, and isolated catalog-demo and
 migration qualification. Keep each later package tied to the requirement coverage
 table above; an intermediate passing suite does not replace those requirements.
+
+## Priority update — October 7, 2026
+
+The user's highest-priority feature once the Delta integration is mature is
+**Change Data Feed (CDF) enablement through the catalog**. Continue the current
+registration and governed-write foundations; prioritize catalog-mediated CDF
+next once those maturity gates are satisfied. This does not change the required
+Spark/Delta versions, Ranger 2.8.0, S3 qualification or unchanged-core constraint.
+
+CDF remains part of the full-support contract. Its later plan must distinguish
+enabling the table feature through the named catalog from qualifying CDF reads
+and policy enforcement. No default-on behavior or present CDF support is implied
+by this priority update.
