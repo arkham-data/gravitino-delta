@@ -23,6 +23,7 @@ import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.net.URI;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -38,6 +39,7 @@ import org.apache.spark.sql.catalyst.expressions.AttributeReference;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.OptimisticTransaction;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.SnapshotDescriptor;
 import org.apache.spark.sql.delta.actions.Metadata;
@@ -567,10 +569,130 @@ final class DeltaRangerRegistrationBindings {
       }
     }
 
+    BoundAppendTransaction bindTransaction(
+        SparkSession session, OptimisticTransaction transaction) {
+      return new BoundAppendTransaction(this, session, transaction);
+    }
+
     /** Omits the retained table, registration and metadata. */
     @Override
     public String toString() {
       return "Bound native append target";
+    }
+  }
+
+  /** Phase-local association with the exact active target transaction. */
+  @SuppressWarnings("ReferenceEquality")
+  static final class BoundAppendTransaction implements AutoCloseable {
+    private final BoundAppendTarget target;
+    private final SparkSession session;
+    private final OptimisticTransaction transaction;
+    private final Snapshot snapshot;
+    private final Thread thread;
+    private final DeltaRangerQuerySubject subject;
+    private final DeltaRangerPolicyEngine.SnapshotStamp stamp;
+    private final Map<String, String> settings;
+    private final PublishedObservation publication;
+    private volatile boolean closed;
+
+    private BoundAppendTransaction(
+        BoundAppendTarget target, SparkSession session, OptimisticTransaction transaction) {
+      this.target = Objects.requireNonNull(target);
+      this.session = Objects.requireNonNull(session);
+      this.transaction = Objects.requireNonNull(transaction);
+      this.snapshot = transaction.snapshot();
+      this.thread = Thread.currentThread();
+      this.subject = DeltaRangerQuerySubject.current(session);
+      this.stamp = target.engine().snapshotStamp();
+      this.settings = settings(session);
+      this.publication = target.anchor.readCurrent();
+      requireLive();
+      PublishedObservation registered = target.observation();
+      String owner = target.descriptor().owner();
+      target
+          .engine()
+          .authorize(
+              subject,
+              new DeltaRangerResourceKey(
+                  registered.catalog(),
+                  registered.database(),
+                  registered.table(),
+                  null,
+                  "update",
+                  owner.isEmpty() ? null : owner),
+              Instant.now());
+      requireLive();
+    }
+
+    SparkSession session() {
+      return session;
+    }
+
+    Snapshot snapshot() {
+      return snapshot;
+    }
+
+    void requireLive() {
+      if (closed
+          || Thread.currentThread() != thread
+          || SparkSession.getActiveSession().isEmpty()
+          || SparkSession.getActiveSession().get() != session
+          || target.session != session
+          || OptimisticTransaction.getActive().isEmpty()
+          || OptimisticTransaction.getActive().get() != transaction
+          || transaction.snapshot() != snapshot
+          || transaction.deltaLog() != target.log()
+          || transaction.catalogTable().isEmpty()
+          || transaction.catalogTable().get() != target.descriptor()
+          || snapshot.deltaLog() != target.log()) throw denied();
+      requireContext();
+      target.requireRetained();
+      target.requireLive();
+      BoundRegistrationScan anchor = target.anchor;
+      PublishedObservation before = anchor.readCurrent();
+      if (!publication.samePublication(before)) throw denied();
+      anchor.requireCompatiblePublication(before);
+      anchor.requireCompatibleHead(snapshot, before);
+      if (!anchor.binding.nativeConfiguration.equals(configurationSnapshot(snapshot.metadata())))
+        throw denied();
+      PublishedObservation after = anchor.readCurrent();
+      if (!before.samePublication(after)) throw denied();
+      anchor.owner.reader.requireLive(before);
+      anchor.owner.reader.requireLive(after);
+      target.requireRetained();
+      target.requireLive();
+      requireContext();
+    }
+
+    /** Irreversibly expires the transaction association, including on exceptional exits. */
+    @Override
+    public void close() {
+      closed = true;
+    }
+
+    /** Omits all registration, native and subject authority. */
+    @Override
+    public String toString() {
+      return "Bound native append transaction";
+    }
+
+    private void requireContext() {
+      DeltaRangerQuerySubject current = DeltaRangerQuerySubject.current(session);
+      if (!subject.user().equals(current.user())
+          || !subject.groups().equals(current.groups())
+          || !settings.equals(settings(session))) throw denied();
+      target.engine().requireSnapshot(stamp);
+    }
+
+    private static Map<String, String> settings(SparkSession session) {
+      Map<String, String> values = new TreeMap<>();
+      Iterator<Tuple2<String, String>> entries =
+          session.sessionState().conf().getAllConfs().iterator();
+      while (entries.hasNext()) {
+        Tuple2<String, String> entry = entries.next();
+        values.put(entry._1(), entry._2());
+      }
+      return Collections.unmodifiableMap(values);
     }
   }
 

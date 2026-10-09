@@ -95,6 +95,13 @@ private[ranger] object DeltaRangerPlanAdmission {
         return true
       case _ =>
     }
+    if (operation != null && operation.transactionState()) {
+      return plan match {
+        case rdd: LogicalRDD if rdd.getClass == classOf[LogicalRDD] =>
+          operation.contains(rdd, false)
+        case _ => false
+      }
+    }
     plan match {
       case binding: DeserializeToObject
           if binding.deserializer.dataType == ObjectType(
