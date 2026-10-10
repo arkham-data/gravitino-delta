@@ -76,6 +76,8 @@ dependencies {
   testImplementation(libs.junit.jupiter.params)
   testImplementation(libs.mockito.core)
   testRuntimeOnly(project(":spark-connector:spark-delta-runtime-3.5", configuration = "shadow"))
+  // Live discovery uses the unshaded, non-transitive spark-common test dependency.
+  testRuntimeOnly(libs.caffeine)
   testRuntimeOnly(libs.junit.jupiter.engine)
 }
 tasks.named<JavaCompile>("compileJava") { options.release.set(8) }

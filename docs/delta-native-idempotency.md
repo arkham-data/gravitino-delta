@@ -1,5 +1,9 @@
 # Native Delta idempotency execution
 
+Subsequent [live qualification](delta-live-idempotency.md) covers the finite helper
+against deployed Ranger 2.8.0, Gravitino and MinIO. The results below describe the
+earlier offline checkpoint and its distinct scope.
+
 The internal `DeltaRangerNativeIdempotency.hasBeenExecuted` phase now executes Delta's native
 transaction-id lookup under the registered target's UPDATE authority. It owns the native transaction
 and returns only a Boolean after revalidation and cleanup. This is a dependency within governed
@@ -91,8 +95,8 @@ completed or successfully skipped governed append. The append orchestrator must 
 source preparation and writing within its owned transaction. It must preserve the bound
 command/source obligations, including same-target transactional sources and helper-created plans.
 Native transaction-version reset continuation, action generation, precommit revalidation, commit and
-postcommit handling remain open. Uncached/CRC-absent reconstruction and live S3/Ranger/demo
-qualification are also unqualified here.
+postcommit handling remain open. Uncached/CRC-absent reconstruction and live integrated
+append/demo qualification are also unqualified here.
 
 No Gravitino core/API/server/client/storage-schema, dependency, Spark or Delta fork changes are
 introduced. The platform's exclusion of concurrent dataset writers remains an assumption, not an
