@@ -3,6 +3,8 @@
 The test-only `DeltaRangerLiveIdempotency` entry point exercises the existing native
 idempotency helper against deployed Ranger 2.8.0, real Gravitino registrations and
 MinIO. It does not enable installed append or change production code.
+The [command-owned follow-up](delta-append-idempotency.md) records the later
+refactor and its fresh standalone-helper regression on Spark 3.5.6 / Delta 3.3.2.
 
 ## Fixture and authority
 
@@ -59,7 +61,7 @@ the complete before/after manifests and bytes must remain identical.
 
 The focused harness suite has eight passing tests, including the three observer
 regressions reproduced as failures before the correction. Runtime qualification
-uses JDK 17.0.16 and Scala 2.12.21. All five resolved Ranger artifacts are 2.8.0.
+uses JDK 17.0.16 and Scala 2.12.21. All six resolved Apache Ranger artifacts, including `ugsync-util`, are 2.8.0.
 Each frozen classpath contains 205 entries; source manifests cover the same 79
 files in all four builds. The only dependency change is test-runtime Caffeine
 2.9.3, using the existing repository pin, for unshaded discovery classes.

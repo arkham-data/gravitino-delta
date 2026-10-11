@@ -3,6 +3,8 @@
 Subsequent [live qualification](delta-live-idempotency.md) covers the finite helper
 against deployed Ranger 2.8.0, Gravitino and MinIO. The results below describe the
 earlier offline checkpoint and its distinct scope.
+The [command-owned follow-up](delta-append-idempotency.md) composes this lookup
+with the retained append association and original source obligations.
 
 The internal `DeltaRangerNativeIdempotency.hasBeenExecuted` phase now executes Delta's native
 transaction-id lookup under the registered target's UPDATE authority. It owns the native transaction

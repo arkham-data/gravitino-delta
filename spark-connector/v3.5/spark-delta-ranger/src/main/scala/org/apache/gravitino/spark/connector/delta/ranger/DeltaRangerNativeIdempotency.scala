@@ -41,6 +41,50 @@ private[ranger] object DeltaRangerNativeIdempotency {
       ) != "false"
     )
       throw new SecurityException("Native idempotency entry rejected")
+    validateOptions(spark, options)
+    val receipt = DeltaRangerAppendTargetReceipt.capture(spark, target)
+    val result = target.log().withNewTransaction(target.table().catalogTable) { txn =>
+      receipt.validate(spark)
+      val binding = target.bindTransaction(spark, txn)
+      val result =
+        try readInTransaction(binding, txn, options)
+        finally binding.close()
+      receipt.validate(spark)
+      result
+    }
+    receipt.validate(spark)
+    result
+  }
+
+  def readInTransaction(
+      owner: DeltaRangerRegistrationBindings.BoundAppendTransaction,
+      transaction: OptimisticTransaction,
+      options: Map[String, String]
+  ): Boolean = {
+    if (owner == null || transaction == null || DeltaRangerNativeOperation.current() != null)
+      throw new SecurityException("Native idempotency entry rejected")
+    owner.requireTransaction(transaction)
+    val spark = owner.session()
+    val nativeOptions = validateOptions(spark, options)
+    val operation = DeltaRangerNativeOperation.transactionState(owner)
+    try {
+      operation.captureTransactionState()
+      val value = Driver.read(transaction, spark, nativeOptions)
+      owner.requireTransaction(transaction)
+      operation.succeed()
+      value
+    } finally operation.close()
+  }
+
+  def validateOptions(spark: SparkSession, options: Map[String, String]): DeltaOptions = {
+    if (
+      spark == null || options == null ||
+      spark.sessionState.conf.getConfString(
+        "spark.databricks.delta.write.txnVersion.autoReset.enabled",
+        "true"
+      ) != "false"
+    )
+      throw new SecurityException("Native idempotency entry rejected")
     val copied = options.iterator.toMap
     val names = copied.keysIterator.map { key =>
       if (key == null) throw new IllegalArgumentException("Invalid idempotency option")
@@ -52,27 +96,7 @@ private[ranger] object DeltaRangerNativeIdempotency {
       copied.values.exists(_ == null)
     )
       throw new IllegalArgumentException("Invalid idempotency options")
-    val nativeOptions = new DeltaOptions(copied, spark.sessionState.conf)
-    val receipt = DeltaRangerAppendTargetReceipt.capture(spark, target)
-    val result = target.log().withNewTransaction(target.table().catalogTable) { txn =>
-      receipt.validate(spark)
-      val binding = target.bindTransaction(spark, txn)
-      val result =
-        try {
-          val operation = DeltaRangerNativeOperation.transactionState(binding)
-          try {
-            operation.captureTransactionState()
-            val value = Driver.read(txn, spark, nativeOptions)
-            binding.requireLive()
-            operation.succeed()
-            value
-          } finally operation.close()
-        } finally binding.close()
-      receipt.validate(spark)
-      result
-    }
-    receipt.validate(spark)
-    result
+    new DeltaOptions(copied, spark.sessionState.conf)
   }
 
   private object Driver extends DeltaCommand {

@@ -632,6 +632,11 @@ final class DeltaRangerRegistrationBindings {
       return snapshot;
     }
 
+    void requireTransaction(OptimisticTransaction candidate) {
+      if (candidate != transaction) throw denied();
+      requireLive();
+    }
+
     void requireLive() {
       if (closed
           || Thread.currentThread() != thread

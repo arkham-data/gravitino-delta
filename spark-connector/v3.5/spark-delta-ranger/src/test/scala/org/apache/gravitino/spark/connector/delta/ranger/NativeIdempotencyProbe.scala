@@ -25,8 +25,13 @@ import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.util.QueryExecutionListener
 import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
-import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, DeserializeToObject, LogicalPlan}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, ExprId}
+import org.apache.spark.sql.catalyst.plans.logical.{
+  Aggregate,
+  AppendData,
+  DeserializeToObject,
+  LogicalPlan
+}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.{DeltaOptions, OptimisticTransaction, Snapshot}
@@ -66,12 +71,14 @@ private[ranger] object NativeIdempotencyProbe {
   ) {
     var transaction: Option[OptimisticTransaction] = None
     val completions = new ConcurrentLinkedQueue[QueryExecution]()
+    val aggregateOutputs = new ConcurrentLinkedQueue[Vector[ExprId]]()
     val completion = new CountDownLatch(1)
-    val listenerFailures = new ConcurrentLinkedQueue[Exception]()
+    val listenerFailures = new ConcurrentLinkedQueue[Throwable]()
     var operation: Option[DeltaRangerNativeOperation] = None
     var expectedPublication: Option[DeltaRangerPolicyEngine.SnapshotStamp] = None
     var observe: LogicalPlan => Unit = (_: LogicalPlan) => ()
     var uncachedStorage: Map[String, String] = Map.empty
+    val appends: ArrayBuffer[AppendData] = ArrayBuffer.empty
     val aggregates: ArrayBuffer[Aggregate] = ArrayBuffer.empty
     val bindings: ArrayBuffer[DeserializeToObject] = ArrayBuffer.empty
   }
@@ -257,6 +264,7 @@ private[ranger] object NativeIdempotencyProbe {
                 "resolution-observed",
                 s"root=${trace.id(plan)} operation=${trace.id(DeltaRangerNativeOperation.current())} activeTxn=${trace.id(OptimisticTransaction.getActive.orNull)} tree=${plan.treeString}"
               )
+              plan.foreach { case append: AppendData => c.appends += append; case _ => () }
               val operation = DeltaRangerNativeOperation.current()
               if (operation != null && operation.transactionState()) {
                 val txn = OptimisticTransaction.getActive.get
@@ -280,6 +288,7 @@ private[ranger] object NativeIdempotencyProbe {
                         "State computed before Aggregate extraction"
                       )
                     c.aggregates += aggregate
+                    c.aggregateOutputs.add(aggregate.output.map(_.exprId).toVector)
                     trace.record(
                       "native-aggregate",
                       s"txn=${trace.id(txn)} snapshot=${trace.id(txn.snapshot)} computed=${computed(txn.snapshot)} root=${trace.id(plan)} aggregate=${trace.id(aggregate)} resolved=${aggregate.resolved} grouping=${aggregate.groupingExpressions} output=${aggregate.output} tree=${aggregate.treeString}"
@@ -322,7 +331,8 @@ private[ranger] object NativeIdempotencyProbe {
                 if (
                   qe.analyzed.exists {
                     case aggregate: Aggregate =>
-                      aggregate.aggregateExpressions.map(_.name).toSet == ExpectedAliases
+                      aggregate.aggregateExpressions.map(_.name).toSet == ExpectedAliases &&
+                      c.aggregateOutputs.contains(aggregate.output.map(_.exprId).toVector)
                     case _ => false
                   }
                 ) {
@@ -334,7 +344,7 @@ private[ranger] object NativeIdempotencyProbe {
                   c.completion.countDown()
                 }
               } catch {
-                case error: Exception => c.listenerFailures.add(error); c.completion.countDown()
+                case error: Throwable => c.listenerFailures.add(error); c.completion.countDown()
               }
             }
             override def onFailure(name: String, qe: QueryExecution, error: Exception): Unit = ()

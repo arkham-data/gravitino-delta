@@ -30,8 +30,8 @@ import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
-/** Driver-local inert association of a supplied command, registered target and receipted source.
-  * This is neither proof of command origin nor execution authority. Validation makes separate
+/** Driver-local association of a supplied command, registered target and receipted source. This is
+  * neither proof of command origin nor append execution authority. Validation makes separate
   * observations of each participant, not an atomic policy, registration or native-state fence.
   */
 private[ranger] final class DeltaRangerAppendCommandBinding private (
@@ -46,8 +46,43 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
 ) {
   import DeltaRangerAppendCommandBinding._
 
+  def hasBeenExecuted(candidate: AppendData, session: SparkSession): Boolean = {
+    validate(candidate, session)
+    val options = command.writeOptions.iterator.toMap
+    DeltaRangerNativeIdempotency.validateOptions(session, options)
+    val result = target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+      val owner = target.bindTransaction(session, transaction)
+      try {
+        validateOwned(candidate, session, owner, transaction)
+        val value = DeltaRangerNativeIdempotency.readInTransaction(owner, transaction, options)
+        validateOwned(candidate, session, owner, transaction)
+        value
+      } finally owner.close()
+    }
+    validate(candidate, session)
+    result
+  }
+
   def validate(candidate: AppendData, session: SparkSession): Unit = {
     requireIdle()
+    validateParticipants(candidate, session)
+    requireIdle()
+  }
+
+  private def validateOwned(
+      candidate: AppendData,
+      session: SparkSession,
+      owner: DeltaRangerRegistrationBindings.BoundAppendTransaction,
+      transaction: OptimisticTransaction
+  ): Unit = {
+    if (DeltaRangerNativeOperation.current() != null) denied("active native scope")
+    owner.requireTransaction(transaction)
+    validateParticipants(candidate, session)
+    owner.requireTransaction(transaction)
+    if (DeltaRangerNativeOperation.current() != null) denied("active native scope")
+  }
+
+  private def validateParticipants(candidate: AppendData, session: SparkSession): Unit = {
     context.requireCurrent(session)
     shape.requireSame(candidate, session)
     target.requireRetained()
@@ -65,7 +100,6 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
     }
     shape.requireSame(candidate, session)
     context.requireCurrent(session)
-    requireIdle()
   }
 
   override def toString: String = "Checked Delta append association"
@@ -120,8 +154,12 @@ private[ranger] object DeltaRangerAppendCommandBinding {
       settings: Map[String, String],
       engines: Vector[(DeltaRangerPolicyEngine, DeltaRangerPolicyEngine.SnapshotStamp)]
   ) {
+    private val creatorThread = Thread.currentThread()
+
     def requireCurrent(session: SparkSession): Unit = {
-      if (!(session eq spark)) denied("session changed")
+      if (Thread.currentThread() ne creatorThread) denied("creator thread changed")
+      if (!(session eq spark) || !SparkSession.getActiveSession.exists(_ eq spark))
+        denied("session changed")
       val current = DeltaRangerQuerySubject.current(session)
       if (current.user() != subject.user() || current.groups() != subject.groups())
         denied("subject changed")
