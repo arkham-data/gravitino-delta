@@ -593,8 +593,11 @@ class TestDeltaRangerAppendIdempotency {
         else data.write.mode("append").saveAsTable("a.db.t")
       }
     )
-    assertEquals("Derived or reused Delta plans are not qualified", failure.getMessage)
-    val command = c.appends.filter(a => a.resolved && (a.query eq source)).last
+    assertEquals("Delta append inventory rejected: resolution rules", failure.getMessage)
+    // Unsupported preceding observation captures a genuine early object and keeps scalar state cold.
+    val command = c.appends
+      .filter(a => a.resolved && (a.query eq source) && a.write.isEmpty && a.analyzedQuery.isEmpty)
+      .last
     assertTrue(command.write.isEmpty)
     assertTrue(command.analyzedQuery.isEmpty)
     assertTrue(command.writeOptions.isEmpty)

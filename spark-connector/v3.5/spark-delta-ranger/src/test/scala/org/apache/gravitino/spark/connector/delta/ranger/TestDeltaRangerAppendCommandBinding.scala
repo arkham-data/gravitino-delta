@@ -649,9 +649,9 @@ class TestDeltaRangerAppendCommandBinding {
           }
         )
         val reason = route match {
-          case "insertInto" | "saveAsTable" => "Derived or reused Delta plans are not qualified"
+          case "insertInto" | "saveAsTable" => "Delta append inventory rejected: resolution rules"
           case "raw-select"                 => "Raw Delta paths are not admitted"
-          case _                            => "Unqualified Delta Ranger route: AppendData"
+          case _                            => "Delta append inventory rejected: resolution rules"
         }
         assertTrue(
           causes(error).exists(e => Option(e.getMessage).exists(_.contains(reason))),
@@ -819,10 +819,14 @@ class TestDeltaRangerAppendCommandBinding {
             )
             assertTrue(
               causes(failure).exists(
-                _.getMessage == "Derived or reused Delta plans are not qualified"
+                _.getMessage == "Delta append inventory rejected: resolution rules"
               )
             )
-            val observed = trace.observedAppends.filter(a => a.resolved && (a.query eq sourceRoot))
+            // This preceding foreign observer is deliberately unsupported. It records the real early
+            // command, then the inventory gate rejects before native writer construction.
+            val observed = trace.observedAppends.filter(a =>
+              a.resolved && (a.query eq sourceRoot) && a.write.isEmpty && a.analyzedQuery.isEmpty
+            )
             assertTrue(observed.nonEmpty, "No actual receipted command/source association observed")
             val command = observed.last
             val relation = command.table.asInstanceOf[DataSourceV2Relation]

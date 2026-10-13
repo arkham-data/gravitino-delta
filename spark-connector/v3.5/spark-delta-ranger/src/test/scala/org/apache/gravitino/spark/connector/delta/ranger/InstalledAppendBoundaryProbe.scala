@@ -115,7 +115,7 @@ private[ranger] object InstalledAppendBoundaryProbe {
                 }
                 record(
                   phase + "-append",
-                  s"command=${id(append)} target=$table byName=${append.isByName} options=${append.writeOptions} query=${describe(append.query)} analyzedQuery=${append.analyzedQuery.map(describe).getOrElse("ABSENT")} physicalV1=NOT_REACHED"
+                  s"command=${id(append)} target=$table byName=${append.isByName} options=${append.writeOptions} query=${describe(append.query)} analyzedQuery=${append.analyzedQuery.map(describe).getOrElse("ABSENT")} physicalV1=UNOBSERVED_BY_RESOLUTION"
                 )
               case _ => ()
             }

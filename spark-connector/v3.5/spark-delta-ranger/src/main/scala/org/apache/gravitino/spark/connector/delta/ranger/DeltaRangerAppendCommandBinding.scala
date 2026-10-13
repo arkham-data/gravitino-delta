@@ -102,6 +102,10 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
     context.requireCurrent(session)
   }
 
+  // Distinct later-stage seam: validates the retained early object without weakening validate's
+  // exact candidate identity contract. A phase owner independently checks its actual successor.
+  private[ranger] def validateRetained(session: SparkSession): Unit = validate(command, session)
+
   override def toString: String = "Checked Delta append association"
 }
 

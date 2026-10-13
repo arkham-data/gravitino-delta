@@ -46,9 +46,10 @@ class DeltaRangerSparkExtension private[ranger] (
         DeltaRangerSparkExtension.validateExtensions(spark.conf.get("spark.sql.extensions", ""))
       new DeltaRangerReadRule(spark, scan => catalogs(spark, scan))
     })
+    extensions.injectPlannerStrategy(spark => new DeltaRangerAppendInputStrategy(spark))
     extensions.injectColumnar(spark => new DeltaRangerColumnarRule(spark))
     extensions.injectPreCBORule(spark => new DeltaRangerPreCboRule(spark))
-    extensions.injectCheckRule(spark => plan => DeltaRangerReadRule.check(plan, spark))
+    extensions.injectCheckRule(spark => new DeltaRangerAppendCheck(spark))
   }
 }
 
@@ -60,7 +61,7 @@ private[ranger] object DeltaRangerSparkExtension {
     if (
       configured.contains("org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension") ||
       configured.count(_ == companion) != 1 || configured.count(_ == native) != 1 ||
-      configured.indexOf(companion) > configured.indexOf(native)
+      configured != Seq(companion, native)
     ) {
       throw new IllegalArgumentException(
         "Configure one DeltaRangerSparkExtension before one DeltaSparkSessionExtension; stock RangerSparkExtension conflicts"

@@ -31,6 +31,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.catalyst.plans.logical.{
   LogicalPlan,
+  AppendData,
   Project,
   Filter,
   Join,
@@ -59,6 +60,31 @@ private[ranger] class DeltaRangerReadRule(
   import DeltaRangerReadRule._
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
+    plan match {
+      case append: AppendData if append.resolved =>
+        DeltaRangerAppendV1Input.inspect(append, spark)
+        val table = append.table match {
+          case relation: DataSourceV2Relation =>
+            relation.table match {
+              case native: DeltaTableV2 => native
+              case _ =>
+                throw new SecurityException("Delta append input rejected: unsupported target")
+            }
+          case _ => throw new SecurityException("Delta append input rejected: unsupported target")
+        }
+        val id = table.catalogTable
+          .getOrElse(throw new SecurityException("Delta append input rejected: unnamed target"))
+          .identifier
+        return DeltaRangerAppendV1Input.resolve(
+          append,
+          spark,
+          catalogs(Scan(null, id.catalog.get, id.database.get, id.table, None))
+        )
+      case append: AppendData =>
+        DeltaRangerAppendV1Input.inspect(append, spark)
+        return plan
+      case _ =>
+    }
     if (!plan.resolved || nativeAdmission(plan, spark) != DeltaRangerNativeProvenance.UserPlan)
       return plan
     // Our pre-CBO ordering also places this resolution rule before Delta's native V1 fallback.
@@ -166,11 +192,17 @@ private[ranger] object DeltaRangerReadRule {
   }
 
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
+    if (plan.isInstanceOf[AppendData]) {
+      DeltaRangerAppendV1Input.analyzed(plan.asInstanceOf[AppendData], spark)
+      return
+    }
     if (nativeAdmission(plan, spark) == DeltaRangerNativeProvenance.UserPlan)
       DeltaRangerDecisionReceipt.check(plan, spark, optimized = false)
   }
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
+    if (plan.isInstanceOf[AppendData])
+      return DeltaRangerAppendV1Input.prepare(plan.asInstanceOf[AppendData], spark)
     nativeAdmission(plan, spark) match {
       case native: DeltaRangerNativeProvenance.SealedNative =>
         return DeltaRangerPhysicalPlanning.sealNative(plan, spark, native.witness)

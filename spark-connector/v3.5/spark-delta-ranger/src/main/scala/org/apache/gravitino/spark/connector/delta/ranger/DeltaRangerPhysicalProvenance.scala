@@ -106,6 +106,14 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     override def validateExecution(plan: SparkPlan): Unit = validateCollection(plan)
     override def toString: String = "Delta user collection evidence"
   }
+  final class AppendTicket(private val spark: SparkSession) extends Ticket {
+    override def requireSession(session: SparkSession): Unit =
+      if (!(session eq spark)) denied("append planning session changed")
+    override def verify(plan: SparkPlan): Unit = plan match {
+      case guard: DeltaRangerAppendInputExec => guard.verify(spark)
+      case _                                 => denied("append physical product changed")
+    }
+  }
   final class NativeTicket(
       private val expected: SparkPlan,
       private val raw: SparkPlan,
@@ -142,6 +150,14 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   private val tag = TreeNodeTag[Reference]("gravitino.delta.ranger.physical-evidence")
 
   def capture(plan: SparkPlan, spark: SparkSession): SparkPlan = {
+    plan match {
+      case guard: DeltaRangerAppendInputExec =>
+        val ticket = new AppendTicket(spark)
+        ticket.verify(guard)
+        guard.setTagValue(tag, new Reference(ticket))
+        return guard
+      case _ =>
+    }
     val inherited = nodes(plan).flatMap(_.getTagValue(tag).map(_.get)).distinct
     if (inherited.nonEmpty) {
       if (inherited.size != 1 || !inherited.head.isInstanceOf[NativeTicket])
@@ -188,6 +204,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     ticket match {
       case user: UserTicket => DeltaRangerCollectGuardExec(plan)(user)
       case _: NativeTicket  => plan
+      case _: AppendTicket  => plan
     }
   }
 

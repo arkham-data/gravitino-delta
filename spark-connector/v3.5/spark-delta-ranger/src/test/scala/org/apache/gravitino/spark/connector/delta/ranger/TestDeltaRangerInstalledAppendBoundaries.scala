@@ -49,7 +49,7 @@ class TestDeltaRangerInstalledAppendBoundaries {
       val error = rejected(trace, "command-analysis") {
         spark.sql("INSERT INTO a.db.t VALUES (9L, 'new', 'keep')").collect()
       }
-      assertCause(error, "Unqualified Delta Ranger route:")
+      assertCause(error, "Delta append inventory rejected: resolution rules")
       assertTrue(
         trace.events.exists(_.contains("phase=resolution")),
         "Missing command analysis trace evidence"
@@ -170,10 +170,10 @@ class TestDeltaRangerInstalledAppendBoundaries {
         assertTrue(targetFailure.isEmpty, targetFailure.toString)
         assertTrue(sourceFailures.isEmpty, sourceFailures.toString)
         val expected = frontend match {
-          case "insertInto" | "saveAsTable" => "Derived or reused Delta plans are not qualified"
+          case "insertInto" | "saveAsTable" => "Delta append inventory rejected: resolution rules"
           case "create"                     => "Unqualified Delta Ranger route: CreateTableAsSelect"
           case "replace" => "Unqualified Delta Ranger route: ReplaceTableAsSelect"
-          case _         => "Unqualified Delta Ranger route: AppendData"
+          case _         => "Delta append inventory rejected: resolution rules"
         }
         assertCause(error, expected)
         if (!Set("create", "replace")(frontend)) assertTrue(trace.observedAppends.nonEmpty)
@@ -256,7 +256,7 @@ class TestDeltaRangerInstalledAppendBoundaries {
             rejected(trace, "paired-command") {
               spark.sql("INSERT INTO a.db.t VALUES (9L, 'new', 'keep')").collect()
             },
-            "Unqualified Delta Ranger route:"
+            "Delta append inventory rejected: resolution rules"
           )
         }
       }

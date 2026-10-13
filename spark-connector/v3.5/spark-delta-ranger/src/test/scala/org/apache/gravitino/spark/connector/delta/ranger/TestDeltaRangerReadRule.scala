@@ -60,8 +60,9 @@ class TestDeltaRangerReadRule {
   def startupRequiresOneCompanionBeforeNativeAndRejectsStockRules(): Unit = {
     val companion = classOf[DeltaRangerSparkExtension].getName
     val native = "io.delta.sql.DeltaSparkSessionExtension"
-    DeltaRangerSparkExtension.validateExtensions(s"$companion,$native,example.Compatible")
+    DeltaRangerSparkExtension.validateExtensions(s"$companion,$native")
     Seq(
+      s"$companion,$native,example.Compatible",
       s"$native,$companion",
       s"$companion,$companion,$native",
       s"$companion,$native,org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension",

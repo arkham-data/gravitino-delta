@@ -21,7 +21,7 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.optimizer.ConstantFolding
-import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
@@ -155,6 +155,12 @@ private[ranger] object DeltaRangerPhysicalPlanning {
     QueryExecution.createSparkPlan(spark, qualified, logical.clone())
   }
 
+  def appendRaw(
+      spark: SparkSession,
+      logical: AppendData
+  ): SparkPlan =
+    QueryExecution.createSparkPlan(spark, planner(spark), logical)
+
   def lower(spark: SparkSession, logical: LogicalPlan): SparkPlan =
     new PhysicalPrefix(spark, logical).applyTo(raw(spark, logical))
 
@@ -169,7 +175,8 @@ private[ranger] object DeltaRangerPhysicalPlanning {
         Seq(new PreprocessTableWithDVsStrategy(spark))
     }
     if (
-      spark.sessionState.planner.strategies.map(_.getClass) != expected.strategies.map(_.getClass)
+      spark.sessionState.planner.strategies.map(_.getClass) !=
+        (classOf[DeltaRangerAppendInputStrategy] +: expected.strategies.map(_.getClass))
     )
       denied("unqualified planner strategies")
     expected
@@ -198,7 +205,7 @@ private[ranger] object DeltaRangerPhysicalPlanning {
       val prefix = super.preparations
         .takeWhile(_.getClass != classOf[ApplyColumnarRulesAndInsertTransitions])
         .filterNot(_.getClass == classOf[InsertAdaptiveSparkPlan])
-      val expected = Vector(
+      val expected: Vector[Class[_]] = Vector(
         CoalesceBucketsInJoin.getClass,
         classOf[PlanDynamicPruningFilters],
         classOf[PlanSubqueries],
