@@ -26,7 +26,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
-import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.{OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.stats.{DeltaScan, PreparedDeltaFileIndex}
@@ -35,7 +35,8 @@ import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, 
 /** Complete receipt owner retained outside Spark products and executor serialization. */
 private[ranger] final class DeltaRangerNativeScans private (
     val session: SparkSession,
-    private val receipt: DeltaRangerDecisionReceipt
+    private val receipt: DeltaRangerDecisionReceipt,
+    private val source: Option[DeltaRangerAppendCoordinator.Source] = None
 ) extends DeltaRangerNativeOperation.ScanOwner {
   val obligations = receipt.obligations
   private var frozen = false
@@ -80,22 +81,32 @@ private[ranger] final class DeltaRangerNativeScans private (
     if (frozen || !operation.ownedBy(this) || !operation.active())
       throw new SecurityException("Native preparation issuance is closed")
     frozen = true
-    DeltaRangerNativeScans.attach(
-      plan,
-      new DeltaRangerNativeScans.Prepared(
-        this,
-        operation,
-        mapped,
-        plan.output,
-        emptyBinding,
-        new DeltaRangerPhysicalPlanning.LogicalWitness(plan, session)
-      )
+    val evidence = new DeltaRangerNativeScans.Prepared(
+      this,
+      operation,
+      mapped,
+      plan.output,
+      emptyBinding,
+      new DeltaRangerPhysicalPlanning.LogicalWitness(plan, session)
     )
+    DeltaRangerNativeScans.attach(plan, evidence)
+    source.foreach(_.complete(evidence))
     plan
   }
   override def bindings(): java.util.List[DeltaRangerRegistrationBindings.BoundRegistrationScan] =
     obligations.map(_.binding).asJava
-  override def requireLive(): Unit = obligations.foreach(_.binding.requireLive())
+  override def requireLive(): Unit = {
+    source.foreach(_.requireLive())
+    obligations.foreach(_.binding.requireLive())
+  }
+  def requireExecutable(): Unit =
+    if (source.nonEmpty) throw new SecurityException("Delta append source is preparation-only")
+
+  def requireGenerator(transaction: OptimisticTransaction): Unit = source match {
+    case Some(owner) => owner.requireGenerator(transaction)
+    case None =>
+      throw new SecurityException("Native transactional scan preparation is not qualified")
+  }
 
   override def freezeCache(
       actual: org.apache.spark.sql.execution.LogicalRDD
@@ -235,6 +246,12 @@ private[ranger] object DeltaRangerNativeScans {
 
   def prepared(plan: LogicalPlan): Prepared =
     plan.getTagValue(tag).getOrElse(throw new SecurityException("Missing native preparation")).get
+
+  def forAppend(
+      spark: SparkSession,
+      receipt: DeltaRangerDecisionReceipt,
+      source: DeltaRangerAppendCoordinator.Source
+  ): DeltaRangerNativeScans = new DeltaRangerNativeScans(spark, receipt, Some(source))
 
   def consume(
       plan: LogicalPlan,

@@ -63,6 +63,34 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
     result
   }
 
+  /** Finite retained-input entry, with no raw target or caller-supplied transaction body. */
+  private[ranger] def coordinate(input: DeltaRangerAppendV1Input.RetainedV1Input): Nothing = {
+    requireInput(input)
+    validate(command, input.session)
+    val options = command.writeOptions.iterator.toMap
+    DeltaRangerNativeIdempotency.validateOptions(input.session, options)
+    target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+      val owner = target.bindTransaction(input.session, transaction)
+      try DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, options)
+      finally owner.close()
+    }
+  }
+
+  private[ranger] def validateRetainedOwned(
+      input: DeltaRangerAppendV1Input.RetainedV1Input,
+      owner: DeltaRangerRegistrationBindings.BoundAppendTransaction,
+      transaction: OptimisticTransaction
+  ): Unit = {
+    requireInput(input)
+    validateOwned(command, input.session, owner, transaction)
+    requireInput(input)
+  }
+
+  private def requireInput(input: DeltaRangerAppendV1Input.RetainedV1Input): Unit = {
+    if (input == null || !(input.association eq this)) denied("foreign actual input")
+    input.requireLive()
+  }
+
   def validate(candidate: AppendData, session: SparkSession): Unit = {
     requireIdle()
     validateParticipants(candidate, session)

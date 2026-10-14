@@ -125,6 +125,10 @@ class TestDeltaRangerAppendV1Input {
               trace.source(originalReceipt)
               spark.sessionState.analyzer.batches
               val settings = spark.sessionState.conf.getAllConfs.toMap
+              Files.write(
+                trace.directory.resolve("before-settings.txt"),
+                settings.toVector.sorted.mkString("\n").getBytes(StandardCharsets.UTF_8)
+              )
               val error = assertThrows(
                 classOf[Exception],
                 () => {
@@ -141,12 +145,12 @@ class TestDeltaRangerAppendV1Input {
               )
               assertTrue(
                 causes.exists(
-                  _.getMessage == "Delta append input validated; writes remain disabled"
+                  _.getMessage == "Delta append source prepared; writes remain disabled"
                 ),
                 causes.mkString(" | ")
               )
               val terminal = causes
-                .find(_.getMessage == "Delta append input validated; writes remain disabled")
+                .find(_.getMessage == "Delta append source prepared; writes remain disabled")
                 .get
               assertTrue(terminal.getStackTrace.exists(_.getClassName.contains("SupportsV1Write")))
               assertTrue(
@@ -181,6 +185,12 @@ class TestDeltaRangerAppendV1Input {
               )
               trace.record("physical", qe.executedPlan.treeString)
               trace.record("case-complete", "case=" + frontend + " terminalInputValidated=true")
+              Files.write(
+                trace.directory.resolve("after-settings.txt"),
+                spark.sessionState.conf.getAllConfs.toVector.sorted
+                  .mkString("\n")
+                  .getBytes(StandardCharsets.UTF_8)
+              )
               assertEquals(settings, spark.sessionState.conf.getAllConfs.toMap)
             } finally {
               spark.listenerManager.unregister(listener)
@@ -203,7 +213,8 @@ class TestDeltaRangerAppendV1Input {
               )
             }
           },
-          Some(NativeSelectFixture.extension(target))
+          Some(NativeSelectFixture.extension(target)),
+          Map("spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false")
         )
       finally {
         NativeSelectFixture.catalogPolicies = previous
@@ -355,7 +366,7 @@ class TestDeltaRangerAppendV1Input {
             assertEquals(occurrences, receipt.obligations.size)
             assertTrue(receipt.obligations.forall(_.columns.nonEmpty))
           }
-        assertReason(appendFailure(c, data), DeltaRangerAppendV1Input.terminalMessage)
+        assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
         assertTrue(reached)
         c.trace.record(
           "original-obligations",
@@ -478,7 +489,7 @@ class TestDeltaRangerAppendV1Input {
             "nested/session/thread/canonicalized/serialized-reference/writer/refresh/plan rejected"
           )
         }
-      assertReason(appendFailure(c, data), DeltaRangerAppendV1Input.terminalMessage)
+      assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
       assertTrue(fired)
       c.source.onRequest = _ => ()
       assertReason(
@@ -494,7 +505,7 @@ class TestDeltaRangerAppendV1Input {
       )
       assertReason(
         appendFailure(c, c.spark.sql("SELECT id, secret, region FROM b.db.t")),
-        DeltaRangerAppendV1Input.terminalMessage
+        DeltaRangerAppendCoordinator.preparedMessage
       )
       assertEquals(2, c.spark.sql("SELECT id, secret, region FROM b.db.t").collect().length)
     }
@@ -583,7 +594,7 @@ class TestDeltaRangerAppendV1Input {
       )
       assertReason(
         appendFailure(c, c.spark.sql("SELECT id, secret, region FROM b.db.t")),
-        DeltaRangerAppendV1Input.terminalMessage
+        DeltaRangerAppendCoordinator.preparedMessage
       )
   }
 
@@ -673,7 +684,7 @@ class TestDeltaRangerAppendV1Input {
           "mutationFired=true diagnostic=terminal-writer-already-issued"
         )
       }
-    assertReason(appendFailure(c, data), DeltaRangerAppendV1Input.terminalMessage)
+    assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
     assertTrue(fired)
   }
 
@@ -726,7 +737,7 @@ class TestDeltaRangerAppendV1Input {
             "planner stage changed"
           )
         }
-      assertReason(appendFailure(c, data), DeltaRangerAppendV1Input.terminalMessage)
+      assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
       assertTrue(fired)
   }
 
@@ -734,7 +745,7 @@ class TestDeltaRangerAppendV1Input {
   def missingAmbiguousAndExpiredReferencesCannotIssueAuthority(): Unit =
     withCase("reference-negatives") { c =>
       val prior = c.spark.sql("SELECT id, secret, region FROM b.db.t")
-      assertReason(appendFailure(c, prior), DeltaRangerAppendV1Input.terminalMessage)
+      assertReason(appendFailure(c, prior), DeltaRangerAppendCoordinator.preparedMessage)
       val tag =
         TreeNodeTag[DeltaRangerAppendV1Input.Reference]("gravitino.delta.ranger.append-input")
       val expired = prior.queryExecution.analyzed.getTagValue(tag).get
@@ -778,7 +789,7 @@ class TestDeltaRangerAppendV1Input {
           )
           c.trace.record("phase-reference-negatives", "missing=true ambiguous=true expired=true")
         }
-      assertReason(appendFailure(c, data), DeltaRangerAppendV1Input.terminalMessage)
+      assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
       assertTrue(fired)
       c.source.onRequest = _ => ()
       assertReason(appendFailure(c, data), "source already has an append owner")
@@ -1029,7 +1040,8 @@ class TestDeltaRangerAppendV1Input {
             install(extensions)
             after.foreach(_(extensions))
           }
-        })
+        }),
+        Map("spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false")
       )
     finally {
       NativeSelectFixture.catalogPolicies = previous

@@ -39,7 +39,6 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 /** Finite denial-only ownership of Spark's actual V1 fallback input. */
 private[ranger] object DeltaRangerAppendV1Input {
   private val executing = new ThreadLocal[Owner]()
-  val terminalMessage = "Delta append input validated; writes remain disabled"
   private val tag = TreeNodeTag[Reference]("gravitino.delta.ranger.append-input")
   final class Reference(@transient private val owner: Owner) extends Serializable {
     def get: Owner = if (owner == null) denied("inert phase reference") else owner
@@ -275,9 +274,43 @@ private[ranger] object DeltaRangerAppendV1Input {
       receipt.consume(actual, spark, optimized = false)
       receipt.consume(finalSource, spark, optimized = false)
       current(spark)
-      throw new SecurityException(terminalMessage)
+      DeltaRangerAppendCoordinator.run(new RetainedV1Input(this, data))
     }
+    private[DeltaRangerAppendV1Input] def requireInputLive(): Unit = {
+      if (expired || !running || !leafRunning || !inputEntered || !(executing.get() eq this))
+        denied("expired actual input lease")
+      if (Thread.currentThread() ne thread) denied("creator thread changed")
+      if (!SparkSession.getActiveSession.exists(_ eq spark)) denied("session changed")
+    }
+    private[DeltaRangerAppendV1Input] def retainedAssociation = association
+    private[DeltaRangerAppendV1Input] def retainedReceipt = receipt
     override def toString: String = "Delta append input owner"
+  }
+
+  /** Exact native insert input; only its running V1 owner can mint this lease. */
+  final class RetainedV1Input private[DeltaRangerAppendV1Input] (
+      private val issuer: Owner,
+      private val data: Dataset[Row]
+  ) {
+    val session: SparkSession = data.sparkSession
+    val queryExecution = data.queryExecution
+    val analyzed = queryExecution.analyzed
+    val receipt = issuer.retainedReceipt
+    val association = issuer.retainedAssociation
+    private var closed = false
+
+    def requireLive(): Unit = {
+      if (closed) denied("expired actual input lease")
+      issuer.requireInputLive()
+      if (
+        !(data.sparkSession eq session) || !(data.queryExecution eq queryExecution) ||
+        !(queryExecution.sparkSession eq session) || !(queryExecution.analyzed eq analyzed)
+      )
+        denied("retained actual input changed")
+      receipt.revalidate()
+      issuer.requireInputLive()
+    }
+    def close(): Unit = { closed = true }
   }
   private final class TerminalWriter(owner: Owner) extends V1Write {
     override def toInsertableRelation(): InsertableRelation = owner.terminalRelation()

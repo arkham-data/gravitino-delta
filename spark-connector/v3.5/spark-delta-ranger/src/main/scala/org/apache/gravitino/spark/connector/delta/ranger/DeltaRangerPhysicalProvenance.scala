@@ -66,6 +66,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       prepared: DeltaRangerNativeScans.Prepared,
       spark: SparkSession
   ): Witness = {
+    prepared.owner.requireExecutable()
     val expectedLogical = prepared.verifyExecutable(logical, spark)
     val witness = userWitness(expectedLogical, spark)
     witness.verify(plan)
@@ -94,6 +95,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     override def requireSession(session: SparkSession): Unit =
       if (!(session eq spark)) denied("user planning session changed")
     override def verify(plan: SparkPlan): Unit = {
+      prepared.owner.requireExecutable()
       if (spark.sessionState.conf.adaptiveExecutionEnabled)
         denied("unsupported user AQE")
       witness.verify(plan)
@@ -175,6 +177,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       val authorities = users.map(_._2).distinct
       if (authorities.size != 1) denied("mixed user preparation evidence")
       val prepared = authorities.head
+      prepared.owner.requireExecutable()
       val logical = prepared.recoverExecutable(spark)
       val witness = userWitness(logical, spark)
       witness.verify(plan)

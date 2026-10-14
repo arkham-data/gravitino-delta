@@ -9,6 +9,10 @@ continues the [command-owned idempotency checkpoint](delta-append-idempotency.md
 That earlier scalar phase remains separate; reaching a writer input does not
 compose it into an append coordinator.
 
+The [transaction-owned source continuation](delta-append-transaction-source.md)
+connects these boundaries. The results below describe this historical input-only
+checkpoint.
+
 ## Validated boundary
 
 For a matching-schema, already authorized source, named `insertInto` and

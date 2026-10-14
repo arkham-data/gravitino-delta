@@ -19,6 +19,8 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
+import org.apache.spark.sql.delta.OptimisticTransaction
+
 import java.util.{IdentityHashMap, UUID}
 import java.time.Instant
 
@@ -215,7 +217,9 @@ private[ranger] object DeltaRangerReadRule {
     }
     if (spark.sessionState.conf.adaptiveExecutionEnabled)
       throw new SecurityException("Unsupported user AQE for Delta Ranger collection")
-    val owner = DeltaRangerNativeScans.consume(plan, spark)
+    val owner = DeltaRangerAppendCoordinator
+      .source(plan, spark)
+      .getOrElse(DeltaRangerNativeScans.consume(plan, spark))
     owner.run { operation =>
       val prepared = new PrepareDeltaScan(spark) {
         override protected def prepareDeltaScanWithoutFileSkipping(
@@ -262,6 +266,9 @@ private[ranger] object DeltaRangerReadRule {
           val generator = super.getDeltaScanGenerator(index)
           generator match {
             case snapshot: Snapshot => DeltaRangerPlanAdmission.registerSnapshot(index, snapshot)
+            case transaction: OptimisticTransaction =>
+              owner.requireGenerator(transaction)
+              DeltaRangerPlanAdmission.registerSnapshot(index, transaction.snapshot)
             case _ =>
               throw new SecurityException("Native transactional scan preparation is not qualified")
           }
