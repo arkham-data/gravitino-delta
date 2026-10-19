@@ -23,6 +23,7 @@ import java.nio.file.Files
 
 import org.apache.hadoop.fs.Path
 import org.apache.kyuubi.plugin.spark.authz.PrivilegesBuilder
+import org.apache.kyuubi.plugin.spark.authz.rule.Authorization.KYUUBI_AUTHZ_TAG
 import org.apache.kyuubi.plugin.spark.authz.rule.RuleEliminateMarker
 import org.apache.kyuubi.plugin.spark.authz.rule.datamasking.{
   DataMaskingStage0Marker,
@@ -30,7 +31,7 @@ import org.apache.kyuubi.plugin.spark.authz.rule.datamasking.{
 }
 import org.apache.kyuubi.plugin.spark.authz.rule.rowfilter.RowFilterMarker
 import org.apache.spark.sql.catalyst.expressions.Alias
-import org.apache.spark.sql.catalyst.plans.logical.{Filter, Project}
+import org.apache.spark.sql.catalyst.plans.logical.{Filter, Project, SubqueryAlias}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.{Row, SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -180,6 +181,101 @@ class TestDeltaRangerReadRule {
       }
     }
   }
+
+  /** Bare and passthrough roots must demand their original full output identities. */
+  @Test
+  def bareNativeRootsPreserveFullOutputDemand(): Unit = {
+    NativeSelectFixture.withSpark { spark =>
+      val bare = spark.table("a.db.t").queryExecution.analyzed
+      assertTrue(bare.isInstanceOf[SubqueryAlias], bare.treeString)
+      assertFalse(bare.exists(_.isInstanceOf[Project]), bare.treeString)
+      val leaf = bare.collectFirst { case relation: LogicalRelation => relation }.get
+      assertEquals(leaf.output.map(_.exprId), bare.output.map(_.exprId))
+      val filtered = spark
+        .sql("SELECT * FROM a.db.t x WHERE id = 1")
+        .queryExecution
+        .analyzed
+        .asInstanceOf[Project]
+        .child
+      val explicit = spark.sql("SELECT id, secret, region FROM a.db.t").queryExecution.analyzed
+      Seq(bare, leaf, SubqueryAlias("fresh", leaf), filtered, explicit).foreach { plan =>
+        val originalLeaves = plan.collect { case relation: LogicalRelation => relation }
+        val (inputs, outputs, _) = PrivilegesBuilder.build(plan, spark)
+        assertTrue(outputs.isEmpty)
+        assertEquals(1, inputs.size)
+        assertEquals(Set("id", "secret", "region"), inputs.head.columns.toSet)
+        val extracted = DeltaRangerReadRule.extract(plan, spark)
+        assertEquals(1, extracted.size)
+        assertSame(originalLeaves.head, extracted.head._1.relation)
+        assertEquals(
+          originalLeaves.head.output.map(_.exprId),
+          extracted.head._1.relation.output.map(_.exprId)
+        )
+        assertEquals(Set("id", "secret", "region"), extracted.head._2)
+      }
+    }
+  }
+
+  /** Full join output must retain each independent native occurrence and its columns. */
+  @Test
+  def passthroughJoinRequiresEveryReturnedColumnPerOccurrence(): Unit = {
+    NativeSelectFixture.withSpark { spark =>
+      Seq(("a", "b"), ("a", "a")).foreach { case (left, right) =>
+        val plan = spark
+          .sql(s"SELECT * FROM $left.db.t x JOIN $right.db.t y ON x.id = y.id")
+          .queryExecution
+          .analyzed
+          .asInstanceOf[Project]
+          .child
+        val leaves = plan.collect { case relation: LogicalRelation => relation }
+        val scans = DeltaRangerReadRule.extract(plan, spark)
+        assertEquals(2, scans.size)
+        assertTrue(scans.forall(_._2 == Set("id", "secret", "region")))
+        assertTrue(leaves.forall(leaf => scans.count(s => s._1.relation eq leaf) == 1))
+        assertTrue(
+          leaves.head.output
+            .map(_.exprId)
+            .toSet
+            .intersect(leaves.last.output.map(_.exprId).toSet)
+            .isEmpty
+        )
+      }
+    }
+  }
+
+  /** A real pinned-builder skipped occurrence must not disappear from source obligations. */
+  @Test
+  def taggedNativeOccurrenceCannotSilentlyDisappear(): Unit = {
+    NativeSelectFixture.withSpark { spark =>
+      val plan = spark
+        .sql("SELECT x.secret, y.secret FROM a.db.t x JOIN b.db.t y ON x.id = y.id")
+        .queryExecution
+        .analyzed
+      val leaves = plan.collect { case relation: LogicalRelation => relation }
+      assertEquals(2, leaves.size)
+      leaves.head.setTagValue(KYUUBI_AUTHZ_TAG, ())
+      val (inputs, _, _) = PrivilegesBuilder.build(plan, spark)
+      assertEquals(1, inputs.size)
+      val failure =
+        assertThrows(classOf[SecurityException], () => DeltaRangerReadRule.extract(plan, spark))
+      assertEquals("Unsupported or ambiguous Delta SELECT extraction", failure.getMessage)
+    }
+  }
+
+  /** Constant-only native projections remain rejected when pinned extraction skips the leaf. */
+  @Test
+  def constantNativeProjectionCannotSubstituteAllLeafColumns(): Unit = {
+    NativeSelectFixture.withSpark { spark =>
+      val plan = spark.sql("SELECT 1 AS constant FROM a.db.t").queryExecution.analyzed
+      assertEquals(1, plan.collect { case relation: LogicalRelation => relation }.size)
+      val (inputs, _, _) = PrivilegesBuilder.build(plan, spark)
+      assertTrue(inputs.isEmpty)
+      val failure =
+        assertThrows(classOf[SecurityException], () => DeltaRangerReadRule.extract(plan, spark))
+      assertEquals("Unsupported or ambiguous Delta SELECT extraction", failure.getMessage)
+    }
+  }
+
   @Test
   def pinnedMarkersResolveFreshAliasIdsAndFilterBeforeMasks(): Unit = {
     NativeSelectFixture.withSpark { spark =>

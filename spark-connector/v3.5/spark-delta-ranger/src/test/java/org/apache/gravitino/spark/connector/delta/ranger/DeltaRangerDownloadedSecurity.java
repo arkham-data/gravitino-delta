@@ -112,11 +112,28 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
   }
 
   DeltaRangerDownloadedSecurity(
+      Path source, Path target, Path evidence, String service, boolean retainResponseBodies)
+      throws Exception {
+    this(source, target, evidence, service, Optional.empty(), retainResponseBodies);
+  }
+
+  DeltaRangerDownloadedSecurity(
       Path source,
       Path target,
       Path evidence,
       String service,
       Optional<DeltaRangerStartupCache.Snapshot> snapshot)
+      throws Exception {
+    this(source, target, evidence, service, snapshot, false);
+  }
+
+  private DeltaRangerDownloadedSecurity(
+      Path source,
+      Path target,
+      Path evidence,
+      String service,
+      Optional<DeltaRangerStartupCache.Snapshot> snapshot,
+      boolean retainResponseBodies)
       throws Exception {
     if (Files.isSymbolicLink(target) || !Files.isDirectory(target)) {
       throw new IllegalArgumentException("Driver security directory must be a real directory");
@@ -144,7 +161,11 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
             : Map.of("files", List.of());
     gateway =
         new DeltaRangerCallbackGateway(
-            URI.create(original.get(URL)), evidence.resolve("downloads.jsonl"), service);
+            URI.create(original.get(URL)),
+            evidence.resolve("downloads.jsonl"),
+            0,
+            retainResponseBodies,
+            service);
     try {
       var nodes = document.getElementsByTagName("property");
       for (int i = 0; i < nodes.getLength(); i++) {

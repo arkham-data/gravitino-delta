@@ -106,6 +106,14 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       verify(plan)
     }
     override def validateExecution(plan: SparkPlan): Unit = validateCollection(plan)
+
+    /** Initializes only the exact verified append scans before asynchronous broadcast preparation.
+      */
+    def prepareInputs(plan: SparkPlan): Unit = if (prepared.owner.appendInput) {
+      validateCollection(plan)
+      prepared.owner.prepareInputs(plan)
+      validateCollection(plan)
+    }
     override def toString: String = "Delta user collection evidence"
   }
   final class AppendTicket(private val spark: SparkSession) extends Ticket {
@@ -142,6 +150,17 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     }
     override def toString: String = "Native Delta physical evidence"
   }
+  final class RawMetadataContext private[DeltaRangerPhysicalProvenance] (
+      native: NativeTicket,
+      metadata: DeltaRangerRawMetadata
+  ) extends DeltaRangerCollectValidationContext {
+    override def validateCollection(child: SparkPlan): Unit = native.verify(child)
+    override def validateExecution(child: SparkPlan): Unit = {
+      native.verify(child)
+      metadata.recordExecution(child)
+    }
+  }
+
   final class Reference(@transient private val authority: Ticket) extends Serializable {
     def get: Ticket = {
       if (authority == null) denied("inert physical reference")
@@ -152,6 +171,11 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   private val tag = TreeNodeTag[Reference]("gravitino.delta.ranger.physical-evidence")
 
   def capture(plan: SparkPlan, spark: SparkSession): SparkPlan = {
+    DeltaRangerNativeOperation.requireNoRawSelection()
+    plan match {
+      case raw: DeltaRangerRawProducer => raw.owner.beforeTransitions(raw.child); return raw
+      case _                           =>
+    }
     plan match {
       case guard: DeltaRangerAppendInputExec =>
         val ticket = new AppendTicket(spark)
@@ -199,15 +223,36 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   }
 
   def finish(plan: SparkPlan, spark: SparkSession = SparkSession.active): SparkPlan = {
+    DeltaRangerNativeOperation.requireNoRawSelection()
+    plan match {
+      case raw: DeltaRangerRawProducer => raw.owner.afterTransitions(raw.child); return raw
+      case _                           =>
+    }
     val tickets = nodes(plan).flatMap(_.getTagValue(tag).map(_.get)).distinct
     if (tickets.size != 1) denied("missing or mixed physical transition evidence")
     val ticket = tickets.head
     ticket.requireSession(spark)
     ticket.verify(plan)
     ticket match {
-      case user: UserTicket => DeltaRangerCollectGuardExec(plan)(user)
-      case _: NativeTicket  => plan
-      case _: AppendTicket  => plan
+      case user: UserTicket =>
+        user.prepareInputs(plan)
+        DeltaRangerCollectGuardExec(plan)(user)
+      case native: NativeTicket =>
+        DeltaRangerRawMetadata.current.foreach { metadata =>
+          return DeltaRangerRawMetadataGuardExec(plan)(new RawMetadataContext(native, metadata))
+        }
+        DeltaRangerAppendCommit.current match {
+          case Some(commit) =>
+            DeltaRangerCollectGuardExec(plan)(new DeltaRangerCollectValidationContext {
+              override def validateCollection(child: SparkPlan): Unit = native.verify(child)
+              override def validateExecution(child: SparkPlan): Unit = {
+                native.verify(child)
+                commit.recordExecution(child)
+              }
+            })
+          case None => plan
+        }
+      case _: AppendTicket => plan
     }
   }
 

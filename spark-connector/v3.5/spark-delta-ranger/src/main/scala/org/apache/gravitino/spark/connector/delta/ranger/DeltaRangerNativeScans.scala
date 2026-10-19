@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.stats.{DeltaScan, PreparedDeltaFileIndex}
 import org.apache.spark.sql.execution.datasources.{FileIndex, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.{FileSourceScanExec, SparkPlan}
 
 /** Complete receipt owner retained outside Spark products and executor serialization. */
 private[ranger] final class DeltaRangerNativeScans private (
@@ -100,7 +101,23 @@ private[ranger] final class DeltaRangerNativeScans private (
     obligations.foreach(_.binding.requireLive())
   }
   def requireExecutable(): Unit =
-    if (source.nonEmpty) throw new SecurityException("Delta append source is preparation-only")
+    source.foreach(_.requireExecutable(this))
+
+  /** Identifies the retained append-source lifetime for eager native file-list planning. */
+  def appendInput: Boolean = source.nonEmpty
+
+  /** Resolves lazy native file listing on the issuing driver before broadcast workers start. */
+  def prepareInputs(plan: SparkPlan): Unit = if (source.nonEmpty) {
+    requireExecutable()
+    DeltaRangerPhysicalProvenance.nodes(plan).foreach {
+      case scan: FileSourceScanExec =>
+        requireLive()
+        scan.inputRDD
+        requireLive()
+      case _ =>
+    }
+    requireExecutable()
+  }
 
   def requireGenerator(transaction: OptimisticTransaction): Unit = source match {
     case Some(owner) => owner.requireGenerator(transaction)

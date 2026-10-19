@@ -62,6 +62,7 @@ private[ranger] class DeltaRangerReadRule(
   import DeltaRangerReadRule._
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
+    DeltaRangerNativeOperation.requireNoRawSelection()
     plan match {
       case append: AppendData if append.resolved =>
         DeltaRangerAppendV1Input.inspect(append, spark)
@@ -87,6 +88,7 @@ private[ranger] class DeltaRangerReadRule(
         return plan
       case _ =>
     }
+    if (DeltaRangerAppendHelper.analysis(plan, spark)) return plan
     if (!plan.resolved || nativeAdmission(plan, spark) != DeltaRangerNativeProvenance.UserPlan)
       return plan
     // Our pre-CBO ordering also places this resolution rule before Delta's native V1 fallback.
@@ -194,6 +196,7 @@ private[ranger] object DeltaRangerReadRule {
   }
 
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
+    if (DeltaRangerAppendHelper.analysis(plan, spark)) return
     if (plan.isInstanceOf[AppendData]) {
       DeltaRangerAppendV1Input.analyzed(plan.asInstanceOf[AppendData], spark)
       return
@@ -203,6 +206,10 @@ private[ranger] object DeltaRangerReadRule {
   }
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
+    plan match {
+      case raw: DeltaRangerRawMaintenance.Carrier => return raw.owner.prepare(raw.child)
+      case _                                      =>
+    }
     if (plan.isInstanceOf[AppendData])
       return DeltaRangerAppendV1Input.prepare(plan.asInstanceOf[AppendData], spark)
     nativeAdmission(plan, spark) match {
@@ -217,8 +224,9 @@ private[ranger] object DeltaRangerReadRule {
     }
     if (spark.sessionState.conf.adaptiveExecutionEnabled)
       throw new SecurityException("Unsupported user AQE for Delta Ranger collection")
-    val owner = DeltaRangerAppendCoordinator
+    val owner = DeltaRangerAppendHelper
       .source(plan, spark)
+      .orElse(DeltaRangerAppendCoordinator.source(plan, spark))
       .getOrElse(DeltaRangerNativeScans.consume(plan, spark))
     owner.run { operation =>
       val prepared = new PrepareDeltaScan(spark) {
@@ -317,9 +325,9 @@ private[ranger] object DeltaRangerReadRule {
       requireQuery(privilege.catalog.isEmpty || privilege.catalog.contains(scan.catalog))
       val columns = privilege.columns.toSet
       requireQuery(columns.nonEmpty && columns.subsetOf(scan.relation.output.map(_.name).toSet))
-      // Independently require every original leaf attribute referenced by an admitted plan.
-      // This catches lossy predicate/join extraction without deriving identity from names.
-      val usedIds = plan
+      // Root output is implicit demand, including passthrough relations, filters and joins.
+      // Preserve expression demand for projected producers and predicate/join references.
+      val usedIds = plan.output.map(_.exprId).toSet ++ plan
         .collect {
           case node if !node.isInstanceOf[LogicalRelation] =>
             node.expressions.flatMap(_.references.map(_.exprId))

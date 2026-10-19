@@ -85,7 +85,23 @@ private[ranger] object DeltaRangerPlanAdmission {
   def internalMetadata(plan: LogicalPlan): Boolean =
     DeltaRangerNativeProvenance.classify(plan) != DeltaRangerNativeProvenance.UserPlan
 
+  private[ranger] def rawAggregate(plan: LogicalPlan): Boolean =
+    snapshotStateAggregate(plan) || snapshotStateBinding(plan) || (plan match {
+      case GlobalLimit(
+            Literal(1, IntegerType),
+            LocalLimit(Literal(1, IntegerType), aggregate: Aggregate)
+          ) =>
+        snapshotStateAggregate(aggregate)
+      case _ => false
+    })
+
   private[ranger] def nativeShape(plan: LogicalPlan): Boolean = {
+    DeltaRangerNativeOperation.requireNoRawSelection()
+    DeltaRangerRawMetadata.current.foreach(owner => return owner.executable(plan))
+    if (
+      operation != null && operation.committing() &&
+      DeltaRangerAppendCommit.current.exists(_.checkpointPlan(plan))
+    ) return true
     if (snapshotStateAggregate(plan) || snapshotStateBinding(plan)) return true
     plan match {
       case GlobalLimit(
@@ -148,13 +164,16 @@ private[ranger] object DeltaRangerPlanAdmission {
             fs.location match {
               case index: DeltaLogFileIndex =>
                 index.getClass == classOf[DeltaLogFileIndex] && fs.fileFormat == index.format &&
-                index.rootPaths.nonEmpty && index.rootPaths.forall { path =>
-                  path.getParent != null && path.getParent.getName == "_delta_log" &&
-                  operation != null && operation.ownsLogRoot(path.getParent) &&
-                  path.getName.matches(
-                    "[0-9]{20}(\\.json|\\.checkpoint(\\.[0-9]{10}\\.[0-9]{10})?\\.parquet)"
-                  )
-                }
+                (if (operation != null && operation.committing())
+                   DeltaRangerAppendCommit.current.exists(_.ownsLog(fs, index))
+                 else
+                   index.rootPaths.nonEmpty && index.rootPaths.forall { path =>
+                     path.getParent != null && path.getParent.getName == "_delta_log" &&
+                     operation != null && operation.ownsLogRoot(path.getParent) &&
+                     path.getName.matches(
+                       "[0-9]{20}(\\.json|\\.checkpoint(\\.[0-9]{10}\\.[0-9]{10})?\\.parquet)"
+                     )
+                   })
               case _ => false
             }
           case _ => false

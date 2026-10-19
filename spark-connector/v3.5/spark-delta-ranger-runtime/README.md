@@ -28,15 +28,17 @@ Build the companion and the base Delta runtime for the selected deployment pair:
 ```
 
 The supported qualification matrix is Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2,
-Scala 2.12, and Java 17. See the [production results](../../../../docs/delta-ranger-production-results.md)
-for executed evidence and outstanding gates. Building a JAR does not qualify a
-query route or complete the full Delta authorization goal.
+Scala 2.12, and Java 17. See the [production results](../../../docs/delta-ranger-production-results.md)
+for separate SELECT evidence and the [October 18 append result](../../../docs/delta-native-governed-append.md)
+for the accepted bounded append matrix. Building a JAR does not qualify a query
+route or complete the full Delta authorization goal.
 
-As of September 21, 2026, the qualification environment's Docker services are
-stopped and ongoing verification is offline only. Historical policy/role versions
-and readiness records are not current service attestations. Re-establish exact
-service and fixture continuity before resuming the live matrix; do not replay
-completed or failed public mutations to reconstruct it.
+The September 21, 2026 stopped-service/offline-only state is historical. October 18
+append acceptance used fresh readiness and installed Ranger 2.8.0 association for
+each fixture; it is not a current service-liveness assertion. Historical policy/role
+versions are not current service attestations. Re-establish exact service and
+fixture continuity for any later work; do not replay completed or failed public
+mutations to reconstruct it.
 
 Install exactly one `gravitino-spark-connector-delta-runtime-3.5_2.12` and one
 `gravitino-spark-connector-delta-ranger-runtime-3.5_2.12` in the trusted Spark
@@ -46,6 +48,15 @@ Native S3 access additionally requires the distribution-compatible Hadoop S3A
 implementation and its AWS SDK. Do not replace distribution JARs with the test
 classpath. The companion contains no connector/client/protocol implementations,
 Spark/Scala/Hadoop/Delta platform classes, or project test applications.
+
+The accepted append profile is a separately manifested isolated `local[2]` launcher:
+Hadoop client API/runtime/S3A 3.3.6, AWS SDK bundle 1.12.367, ordinary Guava
+32.1.3-jre and matched Scala library/reflect/compiler 2.12.21, with native Delta
+Spark/storage matching each selected patch. It uses one base runtime and one
+companion and omits the older YARN web-proxy JAR. Its actual loader/origin smoke and
+live S3 phases passed; it is not a stock/YARN/cluster deployment qualification or a
+global replacement of the older stock Hadoop 3.3.4 profile. Retain the complete
+frozen closure; see the [append runtime digests](../../../docs/delta-native-governed-append.md#executed-qualification).
 
 The companion uses plain Kyuubi authz 1.10.2 and pins every resolved Ranger
 artifact to 2.8.0, including split `ranger-audit-core`. It retains original Maven
@@ -108,14 +119,16 @@ column reader keeps only catalog visibility in Gravitino; the separate metadata
 reader resolves registration/schema/table metadata. Gravitino table reads require
 scoped catalog-use, schema-use, and table-select permissions. Historical public
 checks passed all three metadata-reader table loads and rejected all nine direct
-query-user table loads. The complete four-pair live query matrix remains pending. A hidden catalog is absent
+query-user table loads. See the [SELECT results](../../../docs/delta-ranger-production-results.md)
+for its later accepted scope. A hidden catalog is absent
 from Spark registration even when metadata credentials could read it. Token query
 attestation and broader application authentication remain unqualified.
 
-Create ordinary roles with an admitted catalog-use, schema-use, or table SELECT
+Create ordinary roles with an admitted catalog-use, schema-use, or table SELECT/MODIFY
 object before assigning membership. Visibility-role membership mirrors the Ranger
 principal and role while granting zero data access; table SELECT contributes the
-managed access policy. Creating an empty role and adding membership does not
+managed access policy, while table MODIFY contributes distinct `update` access.
+Creating an empty role and adding membership does not
 dispatch those Ranger initialization callbacks. `addUser` creates only the local Gravitino
 user; the first relevant `grantRolesToUser` dispatches Ranger user creation.
 Observed callback failure after local persistence requires independent Admin and
@@ -124,7 +137,22 @@ callbacks, and same-owner PUT repairs owner state only. Preserve actual request
 attempts and completion evidence; gateway drain alone cannot settle unfinished
 work in the owning Gravitino server.
 
-## Explicit external acceptance gate
+## Accepted bounded append qualification
+
+The [October 18 append result](../../../docs/delta-native-governed-append.md)
+records seven original phases per pair, including public MODIFY propagation, both
+named frontends/duplicates, both native warm-cache orders and entry/after-helper
+revocation. This is separate from the historical SELECT harness below. Empty
+explicit writer options and session transaction settings with
+`spark.databricks.delta.write.txnVersion.autoReset.enabled=false` are required.
+The private harness runs with owner-only configuration; credential-bearing argv or
+fixture contents are not installation examples.
+
+## Historical SELECT external acceptance contract
+
+This section preserves the earlier harness/resume contract and private input shape;
+its pending statements describe that checkpoint. Current accepted SELECT scope is
+recorded in the [production results](../../../docs/delta-ranger-production-results.md).
 
 The `TestDeltaRangerDownloadedPolicies` test application uses public Gravitino
 client calls, ordinary forwarding/recording gateways, and independent direct Admin

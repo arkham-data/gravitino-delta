@@ -52,10 +52,14 @@ private[ranger] object DeltaRangerAppendV1Input {
         command.query
       )
     ) {
-      def fields(output: Seq[Attribute]): Vector[Any] =
-        output.map(a => (a.name, a.dataType, a.nullable)).toVector
-      if (fields(command.query.output) != fields(command.table.output))
-        denied("native source normalization is not qualified")
+      val source = command.query.output
+      val target = command.table.output
+      if (
+        source.size != target.size || !source.zip(target).forall { case (from, to) =>
+          from.name == to.name && from.dataType == to.dataType &&
+          (!from.nullable || to.nullable)
+        }
+      ) denied("native source normalization is not qualified")
     }
   }
 
@@ -310,6 +314,7 @@ private[ranger] object DeltaRangerAppendV1Input {
       receipt.revalidate()
       issuer.requireInputLive()
     }
+    private[ranger] def retainedData: Dataset[Row] = { requireLive(); data }
     def close(): Unit = { closed = true }
   }
   private final class TerminalWriter(owner: Owner) extends V1Write {
@@ -341,8 +346,9 @@ private[ranger] object DeltaRangerAppendV1Input {
 private[ranger] final class DeltaRangerAppendInputStrategy(spark: SparkSession)
     extends SparkStrategy {
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
-    case append: AppendData => Seq(DeltaRangerAppendV1Input.plan(append, spark))
-    case _                  => Nil
+    case raw: DeltaRangerRawMaintenance.Carrier => Seq(raw.owner.plan(raw.child))
+    case append: AppendData                     => Seq(DeltaRangerAppendV1Input.plan(append, spark))
+    case _                                      => Nil
   }
 }
 

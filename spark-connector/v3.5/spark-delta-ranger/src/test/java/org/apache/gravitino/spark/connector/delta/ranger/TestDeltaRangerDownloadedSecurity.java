@@ -54,6 +54,64 @@ class TestDeltaRangerDownloadedSecurity {
   @TempDir Path directory;
 
   @Test
+  void optInRetainsRealResponseBytesAndLegacyDefaultDoesNot() throws Exception {
+    AtomicReference<String> response =
+        new AtomicReference<>("{\"serviceName\":\"service\",\"policyVersion\":1}");
+    HttpServer upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    upstream.createContext(
+        "/",
+        exchange -> {
+          byte[] bytes = response.get().getBytes(StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(200, bytes.length);
+          exchange.getResponseBody().write(bytes);
+          exchange.close();
+        });
+    upstream.start();
+    Path source = source("http://127.0.0.1:" + upstream.getAddress().getPort());
+    try {
+      for (boolean retain : new boolean[] {false, true}) {
+        Path evidence = Files.createDirectory(directory.resolve("bodies-" + retain));
+        Path driver = Files.createDirectory(directory.resolve("driver-" + retain));
+        try (DeltaRangerDownloadedSecurity security =
+            retain
+                ? new DeltaRangerDownloadedSecurity(source, driver, evidence, "service", true)
+                : new DeltaRangerDownloadedSecurity(source, driver, evidence, "service")) {
+          request(
+              security.uri(),
+              RangerRESTUtils.REST_URL_POLICY_GET_FOR_SECURE_SERVICE_IF_UPDATED + "service");
+          assertTrue(security.awaitDrained());
+          JsonNode event = new ObjectMapper().readTree(security.startupEvents().get(1));
+          assertEquals(retain, event.has("responseBodyFile"));
+          if (retain) {
+            Path body = Path.of(event.path("responseBodyFile").asText());
+            assertEquals(response.get(), Files.readString(body));
+            assertEquals(
+                PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(body));
+            assertEquals(
+                event.path("responseSha256").asText(),
+                HexFormat.of()
+                    .formatHex(
+                        MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(body))));
+            response.set("malformed-real-upstream-response");
+            request(
+                security.uri(),
+                RangerRESTUtils.REST_URL_POLICY_GET_FOR_SECURE_SERVICE_IF_UPDATED + "service");
+            assertTrue(security.awaitDrained());
+            JsonNode failed = new ObjectMapper().readTree(security.startupEvents().get(3));
+            assertTrue(failed.has("downloadMetadataInvalid"));
+            assertTrue(!failed.has("responseSha256"));
+            assertEquals(
+                response.get(),
+                Files.readString(Path.of(failed.path("responseBodyFile").asText())));
+          }
+        }
+      }
+    } finally {
+      upstream.stop(0);
+    }
+  }
+
+  @Test
   void postCursorPolicyAndBothSelectExactAppliedResponseDigests() throws Exception {
     String policyBody = "{\"serviceName\":\"service\",\"policyVersion\":1}";
     String roleBody = "{\"serviceName\":\"service\",\"roleVersion\":1}";

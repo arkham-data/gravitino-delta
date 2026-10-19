@@ -53,9 +53,13 @@ Ranger dependencies.
 
 * TABLE / SELECT_TABLE / ALLOW becomes `select` on exactly
   `catalog / database / table / column=*`.
-* Canonical CATALOG / USE_CATALOG / ALLOW supplies Gravitino catalog visibility
-  and contributes **zero** Ranger resources or access items. Visibility-only and
-  mixed visibility/SELECT roles are supported.
+* TABLE / MODIFY_TABLE / ALLOW becomes `update` on exactly
+  `catalog / database / table / column=*`. Mixed SELECT/MODIFY objects retain
+  distinct `select` and `update` accesses.
+* Canonical CATALOG / USE_CATALOG / ALLOW and SCHEMA / USE_SCHEMA / ALLOW
+  supply local Gravitino visibility and contribute **zero** Ranger resources or
+  access items. Visibility-only and admitted visibility/SELECT/MODIFY combinations
+  are supported; visibility grants no data access.
 * Other privilege/type/condition combinations fail before Admin mutations.
 * Literal resource names containing `*` or `?` are not admitted. Internally generated
   descendant selectors remain distinct; braces, backslashes and token-looking
@@ -111,7 +115,8 @@ POST failure uses the existing exact same-creator/command pending POST replay,
 subject to its existing ownership and serialization gates. Ownership presence is
 never evidence of Ranger convergence.
 
-Create a SELECT-bearing role before assigning membership. Empty-role creation and
+Create a role carrying an admitted catalog/schema visibility or table SELECT/MODIFY
+object before assigning membership. Empty-role creation and
 membership do not dispatch catalog callbacks. A first relevant privilege update
 establishes/verifies its Ranger role but does not infer prior user/group membership.
 The tested ordinary membership replay plus readback is required for that order.
@@ -125,6 +130,10 @@ provide a catalog callback route. Admin state and later genuine downloaded polic
 role versions must be checked independently before claiming enforcement convergence.
 
 ## Packaging and qualification
+
+The [October 18 named append result](../../docs/delta-native-governed-append.md)
+qualifies public MODIFY propagation through deployed Ranger 2.8.0 on four pinned
+local Spark/Delta profiles. This mapping does not qualify all DML.
 
 ```bash
 ./gradlew :authorizations:authorization-ranger-delta:copyLibAndConfig

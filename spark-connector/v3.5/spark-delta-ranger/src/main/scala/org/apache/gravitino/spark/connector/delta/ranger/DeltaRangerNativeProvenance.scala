@@ -101,6 +101,8 @@ private[ranger] object DeltaRangerNativeProvenance {
 
     def requireValid(plan: LogicalPlan, session: SparkSession): Unit = {
       operation.requireEvidence(session)
+      if (operation.rawOwner() != null && !operation.active())
+        throw new SecurityException("Closed raw metadata invocation")
       parent.foreach(_.originalUnchanged(session))
       if (
         recipe != binding(plan) || cache
@@ -129,11 +131,30 @@ private[ranger] object DeltaRangerNativeProvenance {
   private val tag = TreeNodeTag[Reference]("gravitino.delta.ranger.native-evidence")
 
   def classify(plan: LogicalPlan): Admission = {
+    DeltaRangerNativeOperation.requireNoRawSelection()
     val session = SparkSession.getActiveSession.orElse(SparkSession.getDefaultSession)
     if (
       session.isEmpty || !safelyResolved(plan) || plan.isStreaming ||
       plan.exists(DeltaRangerDecisionReceipt.present)
     ) return UserPlan
+    DeltaRangerRawMetadata.current.foreach { owner =>
+      if (owner.executable(plan)) {
+        val operation = DeltaRangerNativeOperation.current()
+        operation.requireEvidence(session.get)
+        val witness = new Witness(
+          operation,
+          plan,
+          None,
+          functionBindings(plan),
+          logInputs(plan),
+          hasProjectionAcrossUnion(plan)
+        )
+        plan.setTagValue(tag, new Reference(witness))
+        return new SealedNative(witness)
+      }
+      if (owner.analysis(plan)) return AnalysisOnlyNative
+      return UserPlan
+    }
     // Existing native evidence can survive qualified optimizer removals, but cannot mint a
     // replacement for a captured function occurrence, even during another owned invocation.
     // A copied child tag cannot authorize new function occurrences on its own. Only a captured

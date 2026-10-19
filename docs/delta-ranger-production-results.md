@@ -203,7 +203,12 @@ reviews. Ordinary grant reconciliation remains a separate rollout requirement.
 Publication uses a normal push and exact remote-SHA verification; subsequent
 full-Delta work continues locally.
 
-## Subsequent local write-policy development
+## Historical local write-policy checkpoint
+
+Current continuation (October 18, 2026): the [bounded named append milestone](delta-native-governed-append.md)
+now qualifies the two named batch frontends and public MODIFY propagation on the
+four pinned local packaged profiles. The checkpoint below retains its original
+commit, tests and then-open gates; it is not the current append support statement.
 
 After the SELECT milestone, local source commit `651e669fa` added the narrow
 TABLE/MODIFY_TABLE/ALLOW → Ranger `update` mapping. Mixed SELECT/MODIFY grants

@@ -64,7 +64,7 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
   }
 
   /** Finite retained-input entry, with no raw target or caller-supplied transaction body. */
-  private[ranger] def coordinate(input: DeltaRangerAppendV1Input.RetainedV1Input): Nothing = {
+  private[ranger] def coordinate(input: DeltaRangerAppendV1Input.RetainedV1Input): Unit = {
     requireInput(input)
     validate(command, input.session)
     val options = command.writeOptions.iterator.toMap
@@ -74,6 +74,9 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
       try DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, options)
       finally owner.close()
     }
+    // DeltaTableV2's V1 writer refreshes this relation after both writes and duplicate returns.
+    input.session.sharedState.cacheManager
+      .recacheByPlan(input.session, target.table().toLogicalRelation)
   }
 
   private[ranger] def validateRetainedOwned(

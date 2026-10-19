@@ -40,6 +40,15 @@ exact Hadoop version shipped by Spark, together with its matching transitive AWS
 org.apache.hadoop:hadoop-aws:3.3.4
 ```
 
+Optional Ranger 2.8.0 enforcement has separate [SELECT results](../delta-ranger-production-results.md)
+and [bounded named append results](../delta-native-governed-append.md). Follow the
+[companion runtime contract](../../spark-connector/v3.5/spark-delta-ranger-runtime/README.md)
+for its additional startup and identity requirements. The October 18 append matrix
+uses a separately manifested local Hadoop/S3A 3.3.6 profile; the stock 3.3.4
+coordinate above remains the historical base-runtime profile, not a universal
+coordinate for all distributions. The append result does not qualify YARN, IAM,
+all Delta operations or general cached governed queries.
+
 ## Spark configuration
 
 Set the following properties before the first `SparkSession` is created:
@@ -87,5 +96,6 @@ If a registration or publication result is uncertain:
    choose `PUBLISH`, `HANDOFF`, or `ABORT` through the authenticated recovery API.
 
 Recovery does not replay uncertain requests, fabricate stop proof, delete native data, or bypass
-authorization. Ranger 2.8 engine enforcement and full S3/provider behavior require separate
-deployment qualification; including this artifact does not establish either one.
+authorization. Ranger 2.8 engine enforcement has separately bounded SELECT/append
+qualification linked above. Broader S3/provider deployment behavior still requires
+its own qualification; including this artifact does not establish it.

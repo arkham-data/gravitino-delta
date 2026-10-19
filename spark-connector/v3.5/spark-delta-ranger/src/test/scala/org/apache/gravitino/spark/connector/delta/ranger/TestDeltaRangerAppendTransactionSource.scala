@@ -21,6 +21,7 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.nio.file.{Files, Path, Paths}
 import java.nio.charset.StandardCharsets
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.util.concurrent.{LinkedBlockingQueue, TimeUnit}
 import scala.collection.JavaConverters._
 import org.apache.hadoop.security.UserGroupInformation
@@ -39,7 +40,7 @@ class TestDeltaRangerAppendTransactionSource {
   def realNamedFrontendsPrepareActualInputInOneTransaction(): Unit = {
     Seq("insertInto", "saveAsTable").foreach { frontend =>
       attempt("frontend-" + frontend, frontend, "SELECT id, secret, region FROM b.db.t") { e =>
-        assertEquals(DeltaRangerAppendCoordinator.preparedMessage, e.failure.getMessage)
+        assertNull(e.failure)
         assertEquals(1, e.transactions.size)
         assertTrue(e.scalarSeen)
         assertEquals(1, e.sourceEntries)
@@ -79,7 +80,7 @@ class TestDeltaRangerAppendTransactionSource {
         sql,
         noSkipping = noSkipping
       ) { e =>
-        assertEquals(DeltaRangerAppendCoordinator.preparedMessage, e.failure.getMessage)
+        assertNull(e.failure)
         assertEquals(1, e.transactions.size)
         assertTrue(e.scalarSeen)
         assertActualPreparedInput(e)
@@ -150,13 +151,15 @@ class TestDeltaRangerAppendTransactionSource {
         "SELECT id, secret, region FROM b.db.t",
         duplicate = true
       ) { e =>
-        assertEquals(DeltaRangerAppendCoordinator.duplicateMessage, e.failure.getMessage)
+        assertNull(e.failure)
         assertEquals(1, e.transactions.size)
         assertTrue(e.sourceActions > 0)
         assertTrue(e.targetActions > 0)
         assertNull(e.input)
         assertNull(e.prepared)
         assertEquals(0, e.sourceEntries)
+        assertEquals(0, e.helpers.size())
+        assertEquals(0, e.commits.size())
         assertTrue(e.scalarSeen)
       }
     }
@@ -270,7 +273,7 @@ class TestDeltaRangerAppendTransactionSource {
         } else {
           assertNotNull(nested)
           assertReason(nested, "source planning tracker changed")
-          assertEquals(DeltaRangerAppendCoordinator.preparedMessage, e.failure.getMessage)
+          assertNull(e.failure)
         }
       }
     }
@@ -321,7 +324,7 @@ class TestDeltaRangerAppendTransactionSource {
         }
     ) { e =>
       assertTrue(e.mutationFired)
-      assertEquals(DeltaRangerAppendCoordinator.preparedMessage, e.failure.getMessage)
+      assertNull(e.failure)
     }
   }
 
@@ -429,7 +432,7 @@ class TestDeltaRangerAppendTransactionSource {
         }
     ) { e =>
       assertTrue(e.mutationFired)
-      assertEquals(DeltaRangerAppendCoordinator.preparedMessage, e.failure.getMessage)
+      assertNull(e.failure)
     }
   }
 
@@ -454,7 +457,7 @@ class TestDeltaRangerAppendTransactionSource {
         }
     ) { e =>
       assertTrue(e.mutationFired)
-      assertEquals(DeltaRangerAppendCoordinator.preparedMessage, e.failure.getMessage)
+      assertNull(e.failure)
     }
   }
 
@@ -533,7 +536,7 @@ class TestDeltaRangerAppendTransactionSource {
         }
     ) { e =>
       assertTrue(e.mutationFired)
-      assertEquals(DeltaRangerAppendCoordinator.preparedMessage, e.failure.getMessage)
+      assertNull(e.failure)
       assertActualPreparedInput(e)
     }
   }
@@ -570,7 +573,7 @@ class TestDeltaRangerAppendTransactionSource {
         }
     ) { e =>
       assertTrue(e.mutationFired)
-      assertEquals(DeltaRangerAppendCoordinator.preparedMessage, e.failure.getMessage)
+      assertNull(e.failure)
       assertActualPreparedInput(e)
     }
   }
@@ -593,6 +596,9 @@ class TestDeltaRangerAppendTransactionSource {
   private case class Reads(predicates: Vector[String], files: Set[String], whole: Boolean)
   private class Evidence(val spark: SparkSession, val trace: InstalledAppendBoundaryProbe.Trace) {
     var failure: Throwable = _
+    var returned = false
+    var assertionsPassed = false
+    var failures = Vector.empty[Throwable]
     var input: DeltaRangerAppendV1Input.RetainedV1Input = _
     var data: Dataset[Row] = _
     var prepared: DeltaRangerNativeScans.Prepared = _
@@ -610,6 +616,8 @@ class TestDeltaRangerAppendTransactionSource {
     var restore: () => Unit = () => ()
     var originalFiles = Set.empty[String]
     var expectedSelectiveFiles = Set.empty[String]
+    val helpers = new java.util.IdentityHashMap[DeltaRangerAppendHelper, java.lang.Boolean]()
+    val commits = new java.util.IdentityHashMap[DeltaRangerAppendCommit, java.lang.Boolean]()
     val transactions = scala.collection.mutable.ArrayBuffer.empty[OptimisticTransaction]
   }
 
@@ -716,6 +724,11 @@ class TestDeltaRangerAppendTransactionSource {
           val preparing = field(DeltaRangerAppendCoordinator, "preparing")
             .asInstanceOf[ThreadLocal[DeltaRangerAppendCoordinator.Source]]
           def observe(): Unit = {
+            val helper = field(DeltaRangerAppendHelper, "active")
+              .asInstanceOf[ThreadLocal[DeltaRangerAppendHelper]]
+              .get()
+            if (helper != null) e.helpers.put(helper, true)
+            DeltaRangerAppendCommit.current.foreach(e.commits.put(_, true))
             val operation = DeltaRangerNativeOperation.current()
             if (
               operation != null && Thread
@@ -791,32 +804,35 @@ class TestDeltaRangerAppendTransactionSource {
                 optimized = false
               )
             )
-            val failure = assertThrows(
-              classOf[Exception],
-              () => {
-                if (frontend == "insertInto") data.write.mode("append").insertInto("a.db.t")
-                else data.write.mode("append").saveAsTable("a.db.t")
-              }
-            )
-            val causes =
-              Iterator.iterate[Throwable](failure)(_.getCause).takeWhile(_ != null).toVector
-            e.failure = causes.last
-            trace.record("failure", causes.mkString(" | "))
-            trace.record(
-              "failure-stack",
-              causes.map(_.getStackTrace.mkString("\n")).mkString("\nCaused by:\n")
-            )
+            try {
+              if (frontend == "insertInto") data.write.mode("append").insertInto("a.db.t")
+              else data.write.mode("append").saveAsTable("a.db.t")
+              e.returned = true
+              trace.record("write-return", "success=true")
+            } catch {
+              case failure: Exception =>
+                val causes =
+                  Iterator.iterate[Throwable](failure)(_.getCause).takeWhile(_ != null).toVector
+                e.failure = causes.last
+                e.failures = causes
+                trace.record("failure", causes.mkString(" | "))
+                trace.record(
+                  "failure-stack",
+                  causes.map(_.getStackTrace.mkString("\n")).mkString("\nCaused by:\n")
+                )
+            }
             trace.record(
               "read-state",
               s"before=${e.before} after=${e.after} expectedSelective=$expectedSelectiveFiles originalFiles=$originalFiles"
             )
             trace.record(
               "phase-evidence",
-              s"transactions=${e.transactions.map(trace.id).mkString(",")} scalarSeen=${e.scalarSeen} sourceEntries=${e.sourceEntries} sourceActions=${e.sourceActions} targetActions=${e.targetActions}"
+              s"transactions=${e.transactions.map(trace.id).mkString(",")} scalarSeen=${e.scalarSeen} sourceEntries=${e.sourceEntries} sourceActions=${e.sourceActions} targetActions=${e.targetActions} helperOwners=${e.helpers.size()} commitOwners=${e.commits.size()}"
             )
             trace.requests(target, "target-policy-requests")
             trace.requests(source, "source-policy-requests")
             check(e)
+            e.assertionsPassed = true
             trace.record("case-complete", name)
           } finally {
             metadata.foreach(_.onRead = _ => ())
@@ -825,10 +841,21 @@ class TestDeltaRangerAppendTransactionSource {
             source.onRequest = _ => ()
             assertTrue(spark.sql("SELECT id FROM b.db.t").collect().nonEmpty)
             trace.record("healthy-select", "rowsPresent=true")
-            assertEquals(
-              before,
+            val after =
               InstalledAppendBoundaryProbe.manifest(root, trace.directory.resolve("after"))
-            )
+            val committed = e.returned && !duplicate
+            if (committed) {
+              assertNotEquals(before, after)
+              val transaction = e.transactions.head
+              val published = transaction.deltaLog.unsafeVolatileSnapshot
+              assertEquals(transaction.readVersion + 1, published.version)
+              assertEquals(transaction.snapshot.metadata, published.metadata)
+              assertEquals(transaction.snapshot.protocol, published.protocol)
+              trace.record(
+                "native-state",
+                s"beforeVersion=${transaction.readVersion} afterVersion=${published.version}"
+              )
+            } else assertEquals(before, after)
             val afterObjects = inventory(root)
             Files.write(
               trace.directory.resolve("after-objects.txt"),
@@ -840,14 +867,58 @@ class TestDeltaRangerAppendTransactionSource {
                 .mkString("\n")
                 .getBytes(StandardCharsets.UTF_8)
             )
-            assertEquals(objects, afterObjects)
-            assertEquals(settings, spark.sessionState.conf.getAllConfs.toMap)
+            if (!committed) assertEquals(objects, afterObjects)
+            val expectedSettings =
+              if (committed)
+                settings + ("spark.databricks.delta.lastCommitVersionInSession" -> (e.transactions.head.readVersion + 1).toString)
+              else settings
+            assertEquals(expectedSettings, spark.sessionState.conf.getAllConfs.toMap)
             assertTrue(OptimisticTransaction.getActive.isEmpty)
             assertNull(DeltaRangerNativeOperation.current())
             assertNull(preparing.get())
             trace.record(
               "cleanup",
-              "noTxn=true noNative=true noSource=true fullSQLConfEqual=true allFilesEqual=true objectsEqual=true"
+              s"noTxn=true noNative=true noSource=true fullSQLConfEqual=${settings == spark.sessionState.conf.getAllConfs.toMap} allFilesEqual=${before == after} objectsEqual=${objects == afterObjects} returned=${e.returned} committed=$committed"
+            )
+            val method = Thread
+              .currentThread()
+              .getStackTrace
+              .find(frame =>
+                frame.getClassName == classOf[TestDeltaRangerAppendTransactionSource].getName &&
+                  !frame.getMethodName.contains("$") && frame.getMethodName != "attempt"
+              )
+              .get
+              .getMethodName
+            val outcome = Map[String, Any](
+              "schemaVersion" -> 1,
+              "testMethod" -> method,
+              "scenario" -> ("transaction-source-" + name),
+              "frontend" -> frontend,
+              "duplicate" -> duplicate,
+              "returned" -> e.returned,
+              "assertionsPassed" -> e.assertionsPassed,
+              "failureCauses" -> e.failures
+                .map(error =>
+                  Map("class" -> error.getClass.getName, "message" -> error.getMessage).asJava
+                )
+                .asJava,
+              "sourcePreparationCount" -> e.sourceEntries,
+              "helperOwnerCount" -> e.helpers.size(),
+              "commitOwnerCount" -> e.commits.size(),
+              "confBefore" -> settings.asJava,
+              "confAfter" -> spark.sessionState.conf.getAllConfs.asJava,
+              "cleanup" -> Map(
+                "transactionActive" -> OptimisticTransaction.getActive.nonEmpty,
+                "nativeOperationActive" -> (DeltaRangerNativeOperation.current() != null),
+                "helperActive" -> (field(DeltaRangerAppendHelper, "active")
+                  .asInstanceOf[ThreadLocal[DeltaRangerAppendHelper]]
+                  .get() != null),
+                "commitOwnerActive" -> DeltaRangerAppendCommit.current.nonEmpty
+              ).asJava
+            )
+            Files.write(
+              trace.directory.resolve("outcome.json"),
+              new ObjectMapper().writeValueAsBytes(outcome.asJava)
             )
           }
         },

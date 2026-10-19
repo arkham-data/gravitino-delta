@@ -101,7 +101,7 @@ final class DeltaRangerCallbackGateway implements AutoCloseable {
     this(upstream, evidence, port, retainResponseBodies, null);
   }
 
-  private DeltaRangerCallbackGateway(
+  DeltaRangerCallbackGateway(
       URI upstream, Path evidence, int port, boolean retainResponseBodies, String downloadService)
       throws IOException {
     this.upstream = upstream;

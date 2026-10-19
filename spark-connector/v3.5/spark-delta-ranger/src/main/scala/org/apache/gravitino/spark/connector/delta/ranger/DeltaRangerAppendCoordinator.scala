@@ -19,18 +19,19 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{SaveMode, SparkSession}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaOptions, DeltaOperations}
+import org.apache.spark.sql.delta.commands.WriteIntoDelta
+import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.delta.OptimisticTransaction
 
-/** One denial-only transaction joining the actual native input, scalar and source preparation. */
+/** One governed native append transaction joining the actual input, helper and commit owners. */
 private[ranger] object DeltaRangerAppendCoordinator {
   private val preparing = new ThreadLocal[Source]()
-  val preparedMessage = "Delta append source prepared; writes remain disabled"
-  val duplicateMessage = "Delta append duplicate validated; writes remain disabled"
 
-  def run(input: DeltaRangerAppendV1Input.RetainedV1Input): Nothing =
+  def run(input: DeltaRangerAppendV1Input.RetainedV1Input): Unit =
     try input.association.coordinate(input)
     finally input.close()
 
@@ -39,20 +40,55 @@ private[ranger] object DeltaRangerAppendCoordinator {
       owner: DeltaRangerRegistrationBindings.BoundAppendTransaction,
       transaction: OptimisticTransaction,
       options: Map[String, String]
-  ): Nothing = {
+  ): Unit = {
     def validate(): Unit = input.association.validateRetainedOwned(input, owner, transaction)
     validate()
     val duplicate = DeltaRangerNativeIdempotency.readInTransaction(owner, transaction, options)
     validate()
     if (duplicate) {
       validate()
-      throw new SecurityException(duplicateMessage)
+      return
     }
     val source = new Source(input, owner, transaction)
     try {
       source.prepare()
       validate()
-      throw new SecurityException(preparedMessage)
+      val spark = input.session
+      val effective =
+        if (spark.sessionState.conf.useNullsForMissingDefaultColumnValues)
+          options + (ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION -> "true")
+        else options
+      if (AutoCompact.getAutoCompactType(spark.sessionState.conf, transaction.metadata).nonEmpty)
+        denied("auto-compaction is not qualified")
+      val native = WriteIntoDelta(
+        transaction.deltaLog,
+        SaveMode.Append,
+        new DeltaOptions(effective, spark.sessionState.conf),
+        Nil,
+        transaction.metadata.configuration,
+        input.retainedData,
+        transaction.catalogTable
+      )
+      val helper = new DeltaRangerAppendHelper(input, source, transaction, native)
+      source.helper = helper
+      try {
+        val operation = DeltaOperations.Write(
+          SaveMode.Append,
+          Some(native.partitionColumns),
+          native.options.replaceWhere,
+          native.options.userMetadata
+        )
+        val tagged = helper.write()
+        validate()
+        helper.close()
+        new DeltaRangerAppendCommit(
+          owner,
+          transaction,
+          tagged.actions,
+          operation,
+          tagged.stringTags
+        ).run()
+      } finally helper.close()
     } finally source.close()
   }
 
@@ -65,6 +101,7 @@ private[ranger] object DeltaRangerAppendCoordinator {
       transactionOwner: DeltaRangerRegistrationBindings.BoundAppendTransaction,
       transaction: OptimisticTransaction
   ) {
+    private[ranger] var helper: DeltaRangerAppendHelper = _
     private var closed = false
     private var entered = false
     private var claimed = false
@@ -99,7 +136,13 @@ private[ranger] object DeltaRangerAppendCoordinator {
       nativeOwner
     }
 
+    def requireExecutable(owner: DeltaRangerNativeScans): Unit = {
+      if (helper == null) throw new SecurityException("Delta append source is preparation-only")
+      helper.requireExecutable(owner, nativeOwner)
+    }
+
     def complete(prepared: DeltaRangerNativeScans.Prepared): Unit = {
+      if (helper != null) { helper.complete(prepared); return }
       requireLive()
       if (
         !claimed || issued != null || !(preparing.get() eq this) ||

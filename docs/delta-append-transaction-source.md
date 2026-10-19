@@ -1,5 +1,10 @@
 # Transaction-owned Delta append source
 
+Historical checkpoint: the results below describe October 14 preparation only.
+The [October 18 native governed append continuation](delta-native-governed-append.md)
+qualifies successful bounded named append and the four-pair packaged public-grant
+matrix; the original counts, blockers and limitations below remain unchanged.
+
 The four-pair compatibility matrix passed on 2026-10-14. This checkpoint enables
 transaction-owned source preparation, not successful append.
 

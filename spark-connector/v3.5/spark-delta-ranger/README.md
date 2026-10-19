@@ -20,11 +20,15 @@
 # Optional Spark Delta Ranger adapters
 
 This optional module supplies the native Delta catalog wrapper, separate metadata reader,
-policy engine and bounded SELECT collection extension. The base/default Delta runtime has no
-Ranger dependency. Spark 3.5.4/3.5.6, Delta 3.3.0/3.3.2 and Scala 2.12 remain deployment inputs.
-Packaged four-pair public Gravitino/Ranger acceptance is a separate qualification gate.
+policy engine, bounded SELECT collection extension and matching-schema named batch
+append through insertInto or existing-table saveAsTable. The base/default Delta runtime
+has no Ranger dependency. Spark 3.5.4/3.5.6, Delta 3.3.0/3.3.2 and Scala 2.12 remain
+deployment inputs. The [October 18 append result](../../../docs/delta-native-governed-append.md)
+records accepted four-pair packaged public-grant evidence and its limits. Explicit
+writer options are empty; session transaction identity/version require
+`spark.databricks.delta.write.txnVersion.autoReset.enabled=false`.
 
-## SELECT startup and boundary
+## Shared startup and SELECT boundary
 
 Configure the Gravitino driver plugin before creating the first Spark session. Both
 `spark.gravitino.enableDeltaSupport=true` and
@@ -87,7 +91,8 @@ Application discovery must already expose each catalog using the local-only
 metadata credentials do not discover it. Visibility grants no table SELECT. The separate reader
 needs scoped registration/schema/table metadata reads, while query SELECT decisions use the
 current authenticated UGI and Ranger policies. Actual public visibility/revocation/metadata-only
-transport composition is part of the packaged acceptance gate.
+transport composition has separate [SELECT evidence](../../../docs/delta-ranger-production-results.md)
+and [bounded append evidence](../../../docs/delta-native-governed-append.md).
 
 The fresh-plan logical grammar accepts resolved named native Delta scans with projections,
 predicates, top-level columns, ordinary aliases and inner equijoins/predicate joins.
@@ -97,8 +102,10 @@ CUSTOM expressions and typed NULL masks preserve original column types; cross-co
 expressions, nested references, UDFs and unsupported expressions reject. Row filters operate
 on original rows before masks; user predicates operate on the rewritten columns. Table and
 column identity remains case-sensitive. Count, aggregates and columnless SELECT are currently
-rejected, along with outer joins, views, subqueries, raw paths, DML/DDL, streaming, time travel
-and maintenance commands. Standard mask kinds beyond CUSTOM/NULL remain unqualified.
+rejected, along with outer joins, views, subqueries, raw paths, unsupported DML/DDL,
+streaming, time travel and maintenance commands. The separately qualified write surface
+is limited to the two named batch append frontends above. Standard mask kinds beyond
+CUSTOM/NULL remain unqualified.
 
 Pinned Kyuubi V1 privilege extraction loses catalog names. The companion first characterizes
 and validates the original whole-plan extraction, then extracts an otherwise identical copy
@@ -188,7 +195,9 @@ Partial/skew/local/unknown adaptive shuffle mappings are unqualified. User SQL c
 including populated or nested caches carrying copied receipts, rejects; owned native persisted
 RDDs remain supported. These controls qualify Dataset collection, not arbitrary raw RDD/iterator
 or execute APIs, running-action cancellation, full native-index serialization, or every Delta route.
-Packaged deployment and full Delta-operation acceptance remain separate gates.
+The [append result](../../../docs/delta-native-governed-append.md) separately qualifies
+bounded raw native recache in both warm orders; it does not enable governed cached
+SELECT. Broader deployment and full Delta-operation acceptance remain separate gates.
 
 ## Deployment
 
@@ -196,7 +205,9 @@ Use plain `kyuubi-spark-authz_2.12:1.10.2` and the complete Ranger 2.8.0 depende
 The base Delta runtime alone supplies its 33 Kyuubi utility classes; this module excludes
 `kyuubi-util` and `kyuubi-util-scala_2.12` after member-descriptor and executed helper checks.
 Preserve the base runtime's private Guava and relocated publicsuffix classes. Companion
-packaging and qualification on all four Spark/Delta pairs remain separate runtime gates.
+packaging has separate [SELECT](../../../docs/delta-ranger-production-results.md) and
+[append](../../../docs/delta-native-governed-append.md) evidence on all four pairs;
+retain their exact runtime profiles and qualification boundaries.
 
 Provision the optional provider's closed four-level service definition and one service for
 exactly one canonical metalake. The mandatory service binding is
@@ -295,6 +306,6 @@ required metadata read permissions. Keep the accepted catalog constructor's acto
 the existing current-actor transport. Application catalog discovery uses its separate minimal
 Gravitino visibility grant, never table SELECT inferred from visibility.
 
-These adapters do not establish DML/DDL, cached-plan, streaming, arbitrary-job or full Delta
-security. Companion packaging, live Gravitino transport acceptance and the remaining runtime
-matrix are subsequent gates.
+The qualified write surface is the [bounded named append milestone](../../../docs/delta-native-governed-append.md),
+including its packaged public-grant matrix. Broader DML/DDL, governed cached queries,
+streaming, arbitrary-job security and full Delta support remain subsequent work.

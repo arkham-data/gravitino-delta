@@ -20,6 +20,10 @@
 package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.security.PrivilegedExceptionAction
+import java.util.UUID
+import org.apache.spark.sql.catalyst.expressions.{ExprId, NamedExpression}
+import org.apache.spark.sql.catalyst.plans.logical.Project
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.sql.{Row, SparkSession}
@@ -46,6 +50,65 @@ class TestDeltaRangerMaskRules {
         Some(extensions => NativeSelectFixture.extension(f)(extensions))
       )
     } finally f.engine.close()
+  }
+
+  /** Output names must never replace the original leaf attribute identities. */
+  @Test
+  def aliasNamesDoNotDemandUnrelatedDeniedLeafColumns(): Unit = {
+    NativeSelectFixture.withBoundSpark { (spark, f) =>
+      f.denied.add("a:secret")
+      Seq(
+        "SELECT id AS secret FROM a.db.t" -> Set(Row(1L), Row(3L)),
+        "SELECT id + 1L AS secret FROM a.db.t" -> Set(Row(2L), Row(4L))
+      ).foreach { case (sql, expected) =>
+        val frame = spark.sql(sql)
+        val receipt = DeltaRangerDecisionReceipt.consumeOwned(
+          frame.queryExecution.analyzed,
+          spark,
+          optimized = false
+        )
+        assertEquals(1, receipt.obligations.size)
+        assertEquals(Set("id"), receipt.obligations.head.columns)
+        assertEquals(expected, frame.collect().toSet)
+      }
+      f.events.clear()
+      assertThrows(classOf[SecurityException], () => spark.sql("SELECT secret FROM a.db.t"))
+      assertFalse(f.events.contains("mask")); assertFalse(f.events.contains("filter"))
+    }
+  }
+
+  /** Same-name attributes with foreign full ExprIds cannot acquire or borrow a receipt. */
+  @Test
+  def foreignAttributeIdentityCannotAcquireOrReuseSourceAuthority(): Unit = {
+    NativeSelectFixture.withBoundSpark { (spark, f) =>
+      val rule = NativeSelectFixture.rule(spark, f)
+      val bare = spark.table("a.db.t").queryExecution.analyzed
+      val bareReceipt = DeltaRangerDecisionReceipt.consumeOwned(bare, spark, optimized = false)
+      assertEquals(Set("id", "secret", "region"), bareReceipt.obligations.head.columns)
+      val leaf = bareReceipt.obligations.head.scan.relation
+      val id = leaf.output.find(_.name == "id").get
+      val original = Project(Seq(id), leaf)
+      val approved = rule(original)
+      val receipt = DeltaRangerDecisionReceipt.consumeOwned(approved, spark, optimized = false)
+      assertEquals(Set("id"), receipt.obligations.head.columns)
+      Seq(ExprId(id.exprId.id, UUID.randomUUID()), NamedExpression.newExprId).foreach { foreign =>
+        val changed = original.copy(projectList = Seq(id.withExprId(foreign)))
+        assertEquals(id.name, changed.output.head.name)
+        assertFalse(DeltaRangerDecisionReceipt.present(changed))
+        val failure = assertThrows(classOf[SecurityException], () => rule(changed))
+        assertEquals("Unsupported or ambiguous Delta SELECT extraction", failure.getMessage)
+        assertFalse(DeltaRangerDecisionReceipt.present(changed))
+      }
+      val changed = bare.transformUp { case relation: LogicalRelation =>
+        relation.copy(output =
+          relation.output.map(a => a.withExprId(ExprId(a.exprId.id, UUID.randomUUID())))
+        )
+      }
+      changed.copyTagsFrom(bare)
+      val failure =
+        assertThrows(classOf[SecurityException], () => DeltaRangerReadRule.check(changed, spark))
+      assertTrue(failure.getMessage.contains("attribute producer changed"), failure.getMessage)
+    }
   }
 
   @Test

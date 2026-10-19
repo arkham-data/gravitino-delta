@@ -56,6 +56,7 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   private final State state;
   @Nullable private DeltaRangerPolicyEngine engine;
   @Nullable private DeltaRangerRegistrationBindings bindings;
+  @Nullable private DeltaRangerRawMaintenanceDeployment rawMaintenance;
   @Nullable private SparkContext context;
   @Nullable private SparkListener shutdown;
   private boolean initialized;
@@ -122,9 +123,12 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
           builder -> builder.withSimpleAuth(metadata.principal));
       engine = state.engines.apply(conf);
       super.initialize(name, options);
-      bindings =
-          new DeltaRangerRegistrationBindings(
-              new DeltaRangerRegistrationReader(state.metadata, metalake, name), engine);
+      DeltaRangerRegistrationReader reader =
+          new DeltaRangerRegistrationReader(state.metadata, metalake, name);
+      bindings = new DeltaRangerRegistrationBindings(reader, engine);
+      rawMaintenance =
+          DeltaRangerRawMaintenanceDeployment.install(
+              this, session, metalake, name, reader, engine);
       context = session.sparkContext();
       shutdown =
           new SparkListener() {
@@ -164,6 +168,7 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   public synchronized void close() {
     if (closed) return;
     closed = true;
+    if (rawMaintenance != null) rawMaintenance.close();
     if (bindings != null) bindings.close();
     try {
       state.metadata.close();

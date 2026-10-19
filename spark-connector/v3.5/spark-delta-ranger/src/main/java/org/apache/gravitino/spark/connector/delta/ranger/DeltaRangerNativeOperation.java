@@ -38,18 +38,22 @@ import org.apache.spark.sql.catalyst.expressions.AttributeReference;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.catalyst.plans.physical.UnknownPartitioning;
+import org.apache.spark.sql.delta.DeltaUDF;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.files.TahoeFileIndex;
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex;
 import org.apache.spark.sql.execution.LogicalRDD;
+import org.apache.spark.sql.expressions.UserDefinedFunction;
 import scala.Option;
 import scala.collection.Iterator;
 import scala.collection.Seq;
+import scala.runtime.AbstractFunction0;
 
 /** Driver-only, finite native invocation. Java owns the lifecycle of ordinary catalog loads. */
 @SuppressWarnings("ReferenceEquality") // Native authority binds backing objects by identity.
 final class DeltaRangerNativeOperation implements AutoCloseable {
   private static final ThreadLocal<DeltaRangerNativeOperation> CURRENT = new ThreadLocal<>();
+  private static final ThreadLocal<Boolean> RAW_SELECTION = new ThreadLocal<>();
 
   static final class OptimizerRejected extends SecurityException {
     private static final long serialVersionUID = 1L;
@@ -65,6 +69,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   enum Callback {
     LOAD,
     TRANSACTION_STATE,
+    COMMIT,
     PREPARE,
     VALIDATE_RETAINED_BINDING,
     MATCHING_FILES,
@@ -92,6 +97,28 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     }
   }
 
+  interface CommitOwner {
+    SparkSession session();
+
+    void requireLive();
+
+    boolean contains(LogicalRDD candidate);
+  }
+
+  /** Exact selected-head owner; never a named scan or log-root permit. */
+  interface RawOwner {
+    /** Returns the captured compilation session. */
+    SparkSession session();
+
+    /** Revalidates the retained registration, profile, native head and cache association. */
+    void requireLive();
+
+    /** Matches an exact stock getter-returned cache and its frozen dependency graph. */
+    boolean contains(LogicalRDD candidate, boolean stats);
+  }
+
+  @Nullable private RawOwner rawOwner;
+  @Nullable private CommitOwner commitOwner;
   private final SparkSession session;
   @Nullable private final DeltaRangerRegistrationBindings loadOwner;
   @Nullable private final DeltaRangerRegistrationReader reader;
@@ -123,6 +150,42 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       @Nullable ScanOwner scanOwner,
       @Nullable BoundRegistrationScan retainedOwner,
       @Nullable BoundAppendTransaction transactionOwner) {
+    this(session, loadOwner, reader, before, scanOwner, retainedOwner, transactionOwner, null);
+  }
+
+  private DeltaRangerNativeOperation(
+      SparkSession session,
+      @Nullable DeltaRangerRegistrationBindings loadOwner,
+      @Nullable DeltaRangerRegistrationReader reader,
+      @Nullable PublishedObservation before,
+      @Nullable ScanOwner scanOwner,
+      @Nullable BoundRegistrationScan retainedOwner,
+      @Nullable BoundAppendTransaction transactionOwner,
+      @Nullable CommitOwner commitOwner) {
+    this(
+        session,
+        loadOwner,
+        reader,
+        before,
+        scanOwner,
+        retainedOwner,
+        transactionOwner,
+        commitOwner,
+        null);
+  }
+
+  private DeltaRangerNativeOperation(
+      SparkSession session,
+      @Nullable DeltaRangerRegistrationBindings loadOwner,
+      @Nullable DeltaRangerRegistrationReader reader,
+      @Nullable PublishedObservation before,
+      @Nullable ScanOwner scanOwner,
+      @Nullable BoundRegistrationScan retainedOwner,
+      @Nullable BoundAppendTransaction transactionOwner,
+      @Nullable CommitOwner commitOwner,
+      @Nullable RawOwner rawOwner) {
+    this.rawOwner = rawOwner;
+    this.commitOwner = commitOwner;
     this.session = Objects.requireNonNull(session);
     this.loadOwner = loadOwner;
     this.reader = reader;
@@ -137,6 +200,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
                 ? Callback.VALIDATE_RETAINED_BINDING
                 : scanOwner == null ? Callback.LOAD : Callback.PREPARE;
     if (CURRENT.get() != null) throw denied();
+    requireNoRawSelection();
     requireOwner();
     CURRENT.set(this);
   }
@@ -163,6 +227,99 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   static DeltaRangerNativeOperation transactionState(BoundAppendTransaction owner) {
     Objects.requireNonNull(owner).requireLive();
     return new DeltaRangerNativeOperation(owner.session(), null, null, null, null, null, owner);
+  }
+
+  static DeltaRangerNativeOperation commit(CommitOwner owner) {
+    DeltaRangerNativeOperation operation =
+        new DeltaRangerNativeOperation(owner.session(), null, null, null, null, null, null, owner);
+    operation.callback = Callback.COMMIT;
+    return operation;
+  }
+
+  static void requireNoRawSelection() {
+    if (Boolean.TRUE.equals(RAW_SELECTION.get())) throw denied();
+  }
+
+  static <T> T selectRaw(Supplier<T> callback) {
+    requireNoRawSelection();
+    if (CURRENT.get() != null) throw denied();
+    RAW_SELECTION.set(Boolean.TRUE);
+    try {
+      return callback.get();
+    } finally {
+      RAW_SELECTION.remove();
+    }
+  }
+
+  static <T> T withRawSession(RawOwner owner, Supplier<T> callback) {
+    return withRawSession(owner.session(), callback);
+  }
+
+  static <T> T withRawSession(SparkSession session, Supplier<T> callback) {
+    return session.withActive(
+        new AbstractFunction0<T>() {
+          /** Runs the finite callback under its captured session. */
+          @Override
+          public T apply() {
+            return callback.get();
+          }
+        });
+  }
+
+  static DeltaRangerNativeOperation rawPrepare(RawOwner owner) {
+    DeltaRangerNativeOperation operation =
+        new DeltaRangerNativeOperation(
+            owner.session(), null, null, null, null, null, null, null, owner);
+    operation.callback = Callback.PREPARE;
+    return operation;
+  }
+
+  static DeltaRangerNativeOperation rawScan(
+      RawOwner owner, TahoeFileIndex index, Callback callback) {
+    if (callback != Callback.MATCHING_FILES
+        && callback != Callback.GET_SNAPSHOT
+        && callback != Callback.INPUT_FILES
+        && callback != Callback.SIZE_IN_BYTES) throw denied();
+    DeltaRangerNativeOperation operation = rawPrepare(owner);
+    operation.invokedIndex = Objects.requireNonNull(index);
+    operation.callback = callback;
+    return operation;
+  }
+
+  @Nullable
+  RawOwner rawOwner() {
+    return rawOwner;
+  }
+
+  static long retentionTimestamp(Snapshot snapshot) {
+    return snapshot.minFileRetentionTimestamp();
+  }
+
+  static Option<Object> transactionRetentionTimestamp(Snapshot snapshot) {
+    return snapshot.minSetTransactionRetentionTimestamp();
+  }
+
+  static int snapshotPartitions(Snapshot snapshot) {
+    return snapshot.getNumPartitions();
+  }
+
+  static UserDefinedFunction canonicalPathFunction(scala.Function1<String, String> function) {
+    return DeltaUDF.stringFromString(function);
+  }
+
+  static boolean stockCacheWrapper(LogicalRDD candidate, SparkSession session) {
+    Seq<Object> origins = candidate.otherCopyArgs();
+    return candidate.rdd().getClass() == MapPartitionsRDD.class
+        && origins.size() == 3
+        && origins.apply(0) == session
+        && origins.apply(1) instanceof Option
+        && ((Option<?>) origins.apply(1)).isEmpty()
+        && origins.apply(2) instanceof Option
+        && ((Option<?>) origins.apply(2)).isEmpty();
+  }
+
+  boolean committing() {
+    return commitOwner != null;
   }
 
   boolean transactionState() {
@@ -197,6 +354,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
         || partitions == null
         || data == null
         || callback == null
+        || callback == Callback.COMMIT
         || callback == Callback.TRANSACTION_STATE
         || callback == Callback.LOAD
         || callback == Callback.PREPARE
@@ -254,7 +412,9 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   }
 
   void requireEvidence(SparkSession expected) {
-    if (transactionOwner != null && (closed || !active())) throw denied();
+    requireNoRawSelection();
+    if ((transactionOwner != null || commitOwner != null || rawOwner != null)
+        && (closed || !active())) throw denied();
     if (invalid || session != expected || (closed && !successful) || (!closed && !active()))
       throw denied();
     requireOwner();
@@ -262,7 +422,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
 
   boolean ownsLogRoot(Path root) {
     requireEvidence(session);
-    if (transactionOwner != null) return false;
+    if (transactionOwner != null || commitOwner != null || rawOwner != null) return false;
     if (retainedOwner != null) return retainedOwner.log().logPath().equals(root);
     if (scanOwner != null) {
       return scanOwner.bindings().stream().anyMatch(b -> b.log().logPath().equals(root));
@@ -283,7 +443,11 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
 
   void succeed() {
     requireActive();
-    if (scanOwner == null && retainedOwner == null && transactionOwner == null) throw denied();
+    if (scanOwner == null
+        && retainedOwner == null
+        && transactionOwner == null
+        && commitOwner == null
+        && rawOwner == null) throw denied();
     successful = true;
   }
 
@@ -357,6 +521,8 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
 
   boolean contains(LogicalRDD rdd, boolean stats) {
     requireEvidence(session);
+    if (rawOwner != null) return rawOwner.contains(rdd, stats);
+    if (commitOwner != null) return !stats && commitOwner.contains(rdd);
     if (transactionOwner != null)
       return !stats && transactionCache != null && transactionCache.matches(rdd);
     if (!stats && statePreparation != null) {
@@ -384,9 +550,15 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   @Override
   public void close() {
     if (closed) return;
-    if (CURRENT.get() != this) throw denied();
+    if (CURRENT.get() != this) {
+      if (commitOwner != null) {
+        closed = true;
+        CURRENT.remove();
+      }
+      throw denied();
+    }
     try {
-      requireOwner();
+      if (commitOwner == null) requireOwner();
     } catch (RuntimeException | Error failure) {
       successful = false;
       throw failure;
@@ -408,7 +580,11 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   }
 
   private void requireOwner() {
-    if (transactionOwner != null) {
+    if (rawOwner != null) {
+      rawOwner.requireLive();
+    } else if (commitOwner != null) {
+      commitOwner.requireLive();
+    } else if (transactionOwner != null) {
       transactionOwner.requireLive();
     } else if (retainedOwner != null) {
       retainedOwner.requireRetained();

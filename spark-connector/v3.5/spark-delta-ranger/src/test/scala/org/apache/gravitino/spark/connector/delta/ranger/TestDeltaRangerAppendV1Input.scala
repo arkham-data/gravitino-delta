@@ -21,6 +21,16 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.nio.file.{Files, Path, Paths}
 import java.nio.charset.StandardCharsets
+import java.security.PrivilegedExceptionAction
+import org.apache.gravitino.spark.connector.authorization.{
+  GravitinoAuthorizationSparkSessionExtensions,
+  RequiredPrivilegesCheck
+}
+import org.apache.parquet.example.data.Group
+import org.apache.parquet.hadoop.ParquetReader
+import org.apache.parquet.hadoop.example.GroupReadSupport
+import org.apache.hadoop.fs.{Path => HadoopPath}
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, ObjectOutputStream}
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
@@ -38,7 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.sql.catalyst.plans.logical.AppendData
-import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 
@@ -85,12 +95,13 @@ class TestDeltaRangerAppendV1Input {
               "normalization-inventory",
               spark.sessionState.planNormalizationRules.map(_.getClass.getName).mkString("\n")
             )
-            val failures = new LinkedBlockingQueue[QueryExecution]()
+            val completed = new LinkedBlockingQueue[QueryExecution]()
             val listener = new QueryExecutionListener {
-              override def onSuccess(name: String, qe: QueryExecution, duration: Long): Unit = ()
-              override def onFailure(name: String, qe: QueryExecution, failure: Exception): Unit = {
-                failures.add(qe)
+              override def onSuccess(name: String, qe: QueryExecution, duration: Long): Unit = {
+                if (qe.analyzed.isInstanceOf[AppendData]) completed.add(qe)
               }
+              override def onFailure(name: String, qe: QueryExecution, failure: Exception): Unit =
+                ()
             }
             spark.listenerManager.register(listener)
             val root = Paths.get(NativeSelectFixture.locations("a")).getParent
@@ -129,34 +140,10 @@ class TestDeltaRangerAppendV1Input {
                 trace.directory.resolve("before-settings.txt"),
                 settings.toVector.sorted.mkString("\n").getBytes(StandardCharsets.UTF_8)
               )
-              val error = assertThrows(
-                classOf[Exception],
-                () => {
-                  if (frontend == "insertInto") data.write.mode("append").insertInto("a.db.t")
-                  else data.write.mode("append").saveAsTable("a.db.t")
-                }
-              )
-              val causes =
-                Iterator.iterate[Throwable](error)(_.getCause).takeWhile(_ != null).toVector
-              trace.record("failure", causes.map(_.toString).mkString(" | "))
-              trace.record(
-                "failure-stack",
-                causes.map(c => c.getStackTrace.mkString("\n")).mkString("\nCaused by:\n")
-              )
-              assertTrue(
-                causes.exists(
-                  _.getMessage == "Delta append source prepared; writes remain disabled"
-                ),
-                causes.mkString(" | ")
-              )
-              val terminal = causes
-                .find(_.getMessage == "Delta append source prepared; writes remain disabled")
-                .get
-              assertTrue(terminal.getStackTrace.exists(_.getClassName.contains("SupportsV1Write")))
-              assertTrue(
-                terminal.getStackTrace.exists(_.getClassName.contains("V1FallbackWriters"))
-              )
-              val qe = failures.poll(10, TimeUnit.SECONDS)
+              if (frontend == "insertInto") data.write.mode("append").insertInto("a.db.t")
+              else data.write.mode("append").saveAsTable("a.db.t")
+              trace.record("write-return", "success=true")
+              val qe = completed.poll(10, TimeUnit.SECONDS)
               assertNotNull(qe)
               val command = qe.analyzed.asInstanceOf[AppendData]
               assertSame(original, command.analyzedQuery.get)
@@ -175,9 +162,13 @@ class TestDeltaRangerAppendV1Input {
               assertSame(planned.delegate.plan, executed.delegate.plan)
               assertSame(planned.delegate.refreshCache, executed.delegate.refreshCache)
               assertNotSame(optimized.write.get, executed.delegate.write)
-              DeltaRangerDecisionReceipt
-                .consumeOwned(original, spark, optimized = false)
-                .consume(executed.delegate.plan, spark, optimized = false)
+              assertReason(
+                assertThrows(
+                  classOf[SecurityException],
+                  () => DeltaRangerDecisionReceipt.consumeOwned(original, spark, optimized = false)
+                ),
+                "configuration changed"
+              )
               assertTrue(inputObserved)
               trace.record(
                 "physical-transition",
@@ -191,10 +182,33 @@ class TestDeltaRangerAppendV1Input {
                   .mkString("\n")
                   .getBytes(StandardCharsets.UTF_8)
               )
-              assertEquals(settings, spark.sessionState.conf.getAllConfs.toMap)
+              assertEquals(
+                settings + ("spark.databricks.delta.lastCommitVersionInSession" -> "1"),
+                spark.sessionState.conf.getAllConfs.toMap
+              )
+              val outcome = Map[String, Any](
+                "schemaVersion" -> 1,
+                "testMethod" -> "realNamedFrontendsReachTerminalInputValidation",
+                "scenario" -> ("v1-frontend-" + frontend),
+                "frontend" -> frontend,
+                "returned" -> true,
+                "assertionsPassed" -> true,
+                "failureCauses" -> java.util.Collections.emptyList[AnyRef](),
+                "confBefore" -> settings.asJava,
+                "confAfter" -> spark.sessionState.conf.getAllConfs.asJava,
+                "cleanup" -> Map(
+                  "transactionActive" -> OptimisticTransaction.getActive.nonEmpty,
+                  "nativeOperationActive" -> (DeltaRangerNativeOperation.current() != null),
+                  "commitOwnerActive" -> DeltaRangerAppendCommit.current.nonEmpty
+                ).asJava
+              )
+              Files.write(
+                trace.directory.resolve("outcome.json"),
+                new ObjectMapper().writeValueAsBytes(outcome.asJava)
+              )
             } finally {
               spark.listenerManager.unregister(listener)
-              assertEquals(
+              assertNotEquals(
                 before,
                 InstalledAppendBoundaryProbe.manifest(root, trace.directory.resolve("after"))
               )
@@ -205,11 +219,11 @@ class TestDeltaRangerAppendV1Input {
                 trace.directory.resolve("after-objects.txt"),
                 afterObjects.mkString("\n").getBytes(StandardCharsets.UTF_8)
               )
-              assertEquals(objects, afterObjects)
+              assertNotEquals(objects, afterObjects)
               source.onRequest = _ => ()
               trace.record(
                 "cleanup",
-                "case=" + frontend + " noTxn=true noNative=true fullSQLConfEqual=true allFilesEqual=true objectsEqual=true"
+                "case=" + frontend + " noTxn=true noNative=true nativeCommitVersion=1 allFilesEqual=false objectsEqual=false"
               )
             }
           },
@@ -225,6 +239,104 @@ class TestDeltaRangerAppendV1Input {
       }
     }
   }
+
+  /** Literal public bare-table insertInto must reach the owned native append input. */
+  @Test
+  def bareTableInsertIntoCommitsMaskedFilteredRows(): Unit = bareFrontend("insertInto")
+
+  /** Literal public bare-table saveAsTable must append to the existing native target. */
+  @Test
+  def bareTableSaveAsTableCommitsMaskedFilteredRows(): Unit = bareFrontend("saveAsTable")
+
+  /** The literal insertInto frontend must continue through the installed authorization rule. */
+  @Test
+  def installedAuthorizationBareTableInsertIntoCommits(): Unit =
+    bareFrontend("insertInto", installedAuthorization = true)
+
+  /** The literal saveAsTable frontend must continue through the installed authorization rule. */
+  @Test
+  def installedAuthorizationBareTableSaveAsTableCommits(): Unit =
+    bareFrontend("saveAsTable", installedAuthorization = true)
+
+  /** Each implicit output column must be authorized before target access or source rewrites. */
+  @Test
+  def bareTableDeniesEverySourceColumnBeforeSideEffects(): Unit = {
+    Seq("insertInto", "saveAsTable").foreach { frontend =>
+      Seq("id", "secret", "region").foreach { column =>
+        withCase(s"bare-denied-$frontend-$column") { c =>
+          val registration = NativeSelectFixture.bindingFixture(c.spark, "a")
+          val properties = registration.properties.asScala.toMap
+          c.source.denied.add("b:" + column)
+          c.source.requests.clear(); c.source.events.clear()
+          c.target.requests.clear(); c.target.events.clear()
+          asApp {
+            val failure = assertThrows(
+              classOf[SecurityException],
+              () => {
+                if (frontend == "insertInto")
+                  c.spark.table("b.db.t").write.mode("append").insertInto("a.db.t")
+                else c.spark.table("b.db.t").write.mode("append").saveAsTable("a.db.t")
+              }
+            )
+            assertReason(failure, "denied")
+          }
+          assertTrue(
+            c.source.requests.asScala.exists(r =>
+              r.getAccessType == "select" && r.getResource.getValue(
+                "column"
+              ) == column && r.getUser == "APP"
+            )
+          )
+          assertFalse(c.source.events.contains("mask"));
+          assertFalse(c.source.events.contains("filter"))
+          assertFalse(c.target.requests.asScala.exists(_.getAccessType == "update"))
+          assertEquals(properties, registration.properties.asScala.toMap)
+          assertFalse(
+            Files.exists(
+              Paths.get(
+                NativeSelectFixture.locations("a"),
+                "_delta_log",
+                "00000000000000000001.json"
+              )
+            )
+          )
+          c.trace.record(
+            "bare-column-denial",
+            s"frontend=$frontend column=$column user=APP noUpdate=true noRewrite=true"
+          )
+        }
+      }
+    }
+  }
+
+  /** Bare-source authority is revalidated when retained input reaches a writer. */
+  @Test
+  def bareRetainedSourceCannotReuseChangedMaskOrPublication(): Unit = {
+    Seq("mask", "publication").foreach { change =>
+      withCase("bare-retained-" + change) { c =>
+        asApp {
+          val data = c.spark.table("b.db.t")
+          val receipt = DeltaRangerDecisionReceipt.consumeOwned(
+            data.queryExecution.analyzed,
+            c.spark,
+            optimized = false
+          )
+          assertEquals(Set("id", "secret", "region"), receipt.obligations.head.columns)
+          if (change == "mask") c.source.mask = "upper({col})"
+          else {
+            val next = c.source.plugin.getPoliciesVersion + 1L
+            when(c.source.plugin.getPoliciesVersion).thenReturn(next)
+            c.source.start()
+          }
+          assertReason(
+            appendFailure(c, data, recordSource = false),
+            if (change == "mask") "action decision changed" else "publication changed"
+          )
+        }
+      }
+    }
+  }
+
   @Test
   def failedEntryValidationExpiresTheActualExecutionOwner(): Unit = withCase("entry-lifetime") {
     c =>
@@ -366,7 +478,7 @@ class TestDeltaRangerAppendV1Input {
             assertEquals(occurrences, receipt.obligations.size)
             assertTrue(receipt.obligations.forall(_.columns.nonEmpty))
           }
-        assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
+        appendSuccess(c, data, publishes = name != "empty")
         assertTrue(reached)
         c.trace.record(
           "original-obligations",
@@ -489,7 +601,7 @@ class TestDeltaRangerAppendV1Input {
             "nested/session/thread/canonicalized/serialized-reference/writer/refresh/plan rejected"
           )
         }
-      assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
+      appendSuccess(c, data)
       assertTrue(fired)
       c.source.onRequest = _ => ()
       assertReason(
@@ -503,10 +615,7 @@ class TestDeltaRangerAppendV1Input {
         ),
         "expired execution owner"
       )
-      assertReason(
-        appendFailure(c, c.spark.sql("SELECT id, secret, region FROM b.db.t")),
-        DeltaRangerAppendCoordinator.preparedMessage
-      )
+      appendSuccess(c, c.spark.sql("SELECT id, secret, region FROM b.db.t"))
       assertEquals(2, c.spark.sql("SELECT id, secret, region FROM b.db.t").collect().length)
     }
 
@@ -592,14 +701,19 @@ class TestDeltaRangerAppendV1Input {
         ),
         "expired execution owner"
       )
-      assertReason(
-        appendFailure(c, c.spark.sql("SELECT id, secret, region FROM b.db.t")),
-        DeltaRangerAppendCoordinator.preparedMessage
-      )
+      appendSuccess(c, c.spark.sql("SELECT id, secret, region FROM b.db.t"))
   }
 
   @Test
-  def foreignAnalyzerRulesRejectBeforeLaterCallbacks(): Unit = {
+  def foreignAnalyzerRulesRejectBeforeLaterCallbacks(): Unit =
+    foreignAnalyzerProfiles(installedAuthorization = false)
+
+  /** The installed authorization profile still rejects foreign rules before later callbacks. */
+  @Test
+  def installedAuthorizationRejectsForeignRulesBeforeLaterCallbacks(): Unit =
+    foreignAnalyzerProfiles(installedAuthorization = true)
+
+  private def foreignAnalyzerProfiles(installedAuthorization: Boolean): Unit = {
     Seq("resolution", "post-hoc", "check", "normalization", "earlier-resolution").foreach { kind =>
       val callbacks = new AtomicInteger()
       val foreign: SparkSessionExtensions => Unit = extensions => {
@@ -623,8 +737,11 @@ class TestDeltaRangerAppendV1Input {
         }
       }
       withCase(
-        "foreign-" + kind,
-        before = if (kind == "earlier-resolution") Some(foreign) else None,
+        "foreign-" + kind + "-authorization-" + installedAuthorization,
+        before = Some(extensions => {
+          if (installedAuthorization) installAuthorization(extensions)
+          if (kind == "earlier-resolution") foreign(extensions)
+        }),
         after = if (kind == "earlier-resolution") None else Some(foreign)
       ) { c =>
         val data = c.spark.sql("SELECT id, secret, region FROM b.db.t")
@@ -684,7 +801,7 @@ class TestDeltaRangerAppendV1Input {
           "mutationFired=true diagnostic=terminal-writer-already-issued"
         )
       }
-    assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
+    appendSuccess(c, data)
     assertTrue(fired)
   }
 
@@ -737,7 +854,7 @@ class TestDeltaRangerAppendV1Input {
             "planner stage changed"
           )
         }
-      assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
+      appendSuccess(c, data)
       assertTrue(fired)
   }
 
@@ -745,7 +862,7 @@ class TestDeltaRangerAppendV1Input {
   def missingAmbiguousAndExpiredReferencesCannotIssueAuthority(): Unit =
     withCase("reference-negatives") { c =>
       val prior = c.spark.sql("SELECT id, secret, region FROM b.db.t")
-      assertReason(appendFailure(c, prior), DeltaRangerAppendCoordinator.preparedMessage)
+      appendSuccess(c, prior)
       val tag =
         TreeNodeTag[DeltaRangerAppendV1Input.Reference]("gravitino.delta.ranger.append-input")
       val expired = prior.queryExecution.analyzed.getTagValue(tag).get
@@ -789,10 +906,13 @@ class TestDeltaRangerAppendV1Input {
           )
           c.trace.record("phase-reference-negatives", "missing=true ambiguous=true expired=true")
         }
-      assertReason(appendFailure(c, data), DeltaRangerAppendCoordinator.preparedMessage)
+      appendSuccess(c, data)
       assertTrue(fired)
       c.source.onRequest = _ => ()
-      assertReason(appendFailure(c, data), "source already has an append owner")
+      assertReason(
+        appendFailure(c, data, recordSource = false),
+        "configuration changed"
+      )
     }
 
   @Test
@@ -965,6 +1085,162 @@ class TestDeltaRangerAppendV1Input {
     assertEquals(2, c.spark.sql("SELECT id, secret, region FROM b.db.t").collect().length)
   }
 
+  private def installAuthorization(extensions: SparkSessionExtensions): Unit = {
+    new GravitinoAuthorizationSparkSessionExtensions().apply(extensions)
+    ()
+  }
+
+  private def bareFrontend(frontend: String, installedAuthorization: Boolean = false): Unit =
+    withCase(
+      "bare-" + frontend + (if (installedAuthorization) "-authorization" else ""),
+      before = if (installedAuthorization) Some(installAuthorization) else None
+    ) { c =>
+      val rules = c.spark.sessionState.analyzer.postHocResolutionRules
+      assertEquals(if (installedAuthorization) 12 else 11, rules.size)
+      if (installedAuthorization) {
+        assertEquals(classOf[RequiredPrivilegesCheck], rules(7).getClass)
+        assertEquals(1, rules.count(_.getClass == classOf[RequiredPrivilegesCheck]))
+      }
+      DeltaRangerAppendInventory.qualify(c.spark)
+      val registration = NativeSelectFixture.bindingFixture(c.spark, "a")
+      val properties = registration.properties.asScala.toMap
+      assertEquals("17", System.getProperty("java.specification.version"))
+      val sparkOrigin = classOf[SparkSession].getProtectionDomain.getCodeSource.getLocation
+      val deltaOrigin = classOf[DeltaLog].getProtectionDomain.getCodeSource.getLocation
+      val scalaOrigin = classOf[Option[_]].getProtectionDomain.getCodeSource.getLocation
+      assertTrue(sparkOrigin.toString.endsWith(s"spark-sql_2.12-${c.spark.version}.jar"))
+      assertTrue(scalaOrigin.toString.endsWith("scala-library-2.12.21.jar"))
+      Option(System.getProperty("bare.source.spark")).foreach(expected =>
+        assertEquals(expected, c.spark.version)
+      )
+      Option(System.getProperty("bare.source.delta")).foreach(expected =>
+        assertTrue(deltaOrigin.toString.endsWith(s"delta-spark_2.12-$expected.jar"))
+      )
+      c.trace.record(
+        "loaded-runtime",
+        s"spark=${c.spark.version} sparkOrigin=$sparkOrigin deltaOrigin=$deltaOrigin scalaOrigin=$scalaOrigin java=17"
+      )
+      var inputObserved = false
+      c.source.onRequest = _ =>
+        if (atInsert && !inputObserved) {
+          inputObserved = true
+          val executionId = c.spark.sparkContext.getLocalProperty("spark.sql.execution.id").toLong
+          val command =
+            SQLExecution.getQueryExecution(executionId).analyzed.asInstanceOf[AppendData]
+          assertTrue(command.writeOptions.isEmpty)
+          val receipt = DeltaRangerDecisionReceipt.consumeOwned(
+            command.analyzedQuery.get,
+            c.spark,
+            optimized = false
+          )
+          assertEquals(1, receipt.obligations.size)
+          assertEquals("b", receipt.obligations.head.scan.catalog)
+          assertEquals(Set("id", "secret", "region"), receipt.obligations.head.columns)
+          c.trace.source(receipt)
+          assertNull(DeltaRangerNativeOperation.current())
+          assertTrue(OptimisticTransaction.getActive.isEmpty)
+        }
+      c.source.requests.clear(); c.source.events.clear()
+      c.target.requests.clear(); c.target.events.clear()
+      try
+        asApp {
+          if (frontend == "insertInto")
+            c.spark.table("b.db.t").write.mode("append").insertInto("a.db.t")
+          else c.spark.table("b.db.t").write.mode("append").saveAsTable("a.db.t")
+          c.successfulReturns += 1
+          c.committed += 1
+          assertTrue(inputObserved)
+          assertEquals("1", c.spark.conf.get("spark.databricks.delta.lastCommitVersionInSession"))
+          assertEquals(
+            "false",
+            c.spark.conf.get("spark.databricks.delta.write.txnVersion.autoReset.enabled")
+          )
+          val selects = c.source.requests.asScala.filter(_.getAccessType == "select")
+          assertEquals(
+            Set("id", "secret", "region"),
+            selects.flatMap(r => Option(r.getResource.getValue("column")).map(_.toString)).toSet
+          )
+          assertTrue(
+            selects.forall(r => r.getUser == "APP" && r.getResource.getValue("catalog") == "b")
+          )
+          assertTrue(
+            c.target.requests.asScala.exists(r => r.getAccessType == "update" && r.getUser == "APP")
+          )
+          val events = c.source.events.asScala.toVector
+          assertEquals(3, events.takeWhile(_.startsWith("access:")).size)
+          assertEquals(properties, registration.properties.asScala.toMap)
+          val location = Paths.get(NativeSelectFixture.locations("a"))
+          val log = location.resolve("_delta_log")
+          assertFalse(Files.exists(log.resolve("00000000000000000002.json")))
+          val actions = Files
+            .readAllLines(log.resolve("00000000000000000001.json"))
+            .asScala
+            .map(new ObjectMapper().readTree(_))
+            .toVector
+          assertEquals(1, actions.count(_.has("commitInfo")))
+          assertEquals(
+            "WRITE",
+            actions.find(_.has("commitInfo")).get.get("commitInfo").get("operation").asText()
+          )
+          assertEquals(
+            "Append",
+            actions
+              .find(_.has("commitInfo"))
+              .get
+              .get("commitInfo")
+              .get("operationParameters")
+              .get("mode")
+              .asText()
+          )
+          assertTrue(actions.forall(a => a.has("commitInfo") || a.has("add")))
+          val adds = actions.filter(_.has("add")).map(_.get("add"))
+          assertTrue(adds.nonEmpty)
+          assertTrue(adds.forall(_.get("dataChange").asBoolean()))
+          val rows = adds.flatMap { add =>
+            val reader = ParquetReader
+              .builder[Group](
+                new GroupReadSupport(),
+                new HadoopPath(location.resolve(add.get("path").asText()).toUri)
+              )
+              .withConf(c.spark.sparkContext.hadoopConfiguration)
+              .build()
+            try
+              Iterator
+                .continually(reader.read())
+                .takeWhile(_ != null)
+                .map { group =>
+                  Row(
+                    group.getLong("id", 0),
+                    if (group.getFieldRepetitionCount("secret") == 0) null
+                    else group.getString("secret", 0),
+                    group.getString("region", 0)
+                  )
+                }
+                .toVector
+            finally reader.close()
+          }
+          assertEquals(
+            Vector(Row(1L, "b-one-masked", "keep"), Row(3L, null, "keep")).sortBy(_.getLong(0)),
+            rows.sortBy(_.getLong(0))
+          )
+          assertTrue(OptimisticTransaction.getActive.isEmpty)
+          assertNull(DeltaRangerNativeOperation.current())
+          assertTrue(DeltaRangerAppendCommit.current.isEmpty)
+          c.trace.record(
+            "bare-append",
+            s"frontend=$frontend user=APP version=1 appendCount=1 appendedRows=2 nullRows=1 fullSourceColumns=true"
+          )
+        }
+      finally c.source.onRequest = _ => ()
+    }
+
+  private def asApp(body: => Unit): Unit =
+    UserGroupInformation
+      .createUserForTesting("APP", Array.empty[String])
+      .doAs(new PrivilegedExceptionAction[Unit] {
+        override def run(): Unit = body
+      })
+
   private def atInsert: Boolean = Thread
     .currentThread()
     .getStackTrace
@@ -978,7 +1254,12 @@ class TestDeltaRangerAppendV1Input {
       target: TestDeltaRangerNativeSelect.Fixture,
       source: TestDeltaRangerNativeSelect.Fixture,
       trace: InstalledAppendBoundaryProbe.Trace
-  )
+  ) {
+    var committed = 0
+    var successfulReturns = 0
+    var assertionsPassed = false
+    val attempts = scala.collection.mutable.ArrayBuffer.empty[java.util.Map[String, Any]]
+  }
 
   private def withCase(
       name: String,
@@ -1010,26 +1291,62 @@ class TestDeltaRangerAppendV1Input {
           )
           spark.sessionState.analyzer.batches
           val settings = spark.sessionState.conf.getAllConfs.toMap
+          val c = Case(spark, target, source, trace)
           try {
-            body(Case(spark, target, source, trace))
+            body(c)
+            c.assertionsPassed = true
             trace.record("case-complete", "case=" + name)
           } finally {
-            assertEquals(
-              before,
+            val after =
               InstalledAppendBoundaryProbe.manifest(root, trace.directory.resolve("after"))
-            )
+            if (c.successfulReturns == 0) assertEquals(before, after)
+            else assertNotEquals(before, after)
             val afterObjects = inventory(root)
             Files.write(
               trace.directory.resolve("after-objects.txt"),
               afterObjects.mkString("\n").getBytes(StandardCharsets.UTF_8)
             )
-            assertEquals(objects, afterObjects)
+            if (c.successfulReturns == 0) assertEquals(objects, afterObjects)
             assertNull(DeltaRangerNativeOperation.current())
             assertTrue(OptimisticTransaction.getActive.isEmpty)
-            assertEquals(settings, spark.sessionState.conf.getAllConfs.toMap)
+            val expectedSettings =
+              if (c.committed == 0) settings
+              else
+                settings + ("spark.databricks.delta.lastCommitVersionInSession" -> c.committed.toString)
+            assertEquals(expectedSettings, spark.sessionState.conf.getAllConfs.toMap)
+            val method = Thread
+              .currentThread()
+              .getStackTrace
+              .find(frame =>
+                frame.getClassName == classOf[TestDeltaRangerAppendV1Input].getName &&
+                  !frame.getMethodName.contains("$") && frame.getMethodName != "withCase" &&
+                  frame.getMethodName != "bareFrontend"
+              )
+              .get
+              .getMethodName
+            val outcome = Map[String, Any](
+              "schemaVersion" -> 1,
+              "testMethod" -> method,
+              "scenario" -> ("v1-regression-" + name),
+              "assertionsPassed" -> c.assertionsPassed,
+              "apiAttempts" -> c.attempts.asJava,
+              "successfulAppendCount" -> c.successfulReturns,
+              "committedAppendCount" -> c.committed,
+              "confBefore" -> settings.asJava,
+              "confAfter" -> spark.sessionState.conf.getAllConfs.asJava,
+              "cleanup" -> Map(
+                "transactionActive" -> OptimisticTransaction.getActive.nonEmpty,
+                "nativeOperationActive" -> (DeltaRangerNativeOperation.current() != null),
+                "commitOwnerActive" -> DeltaRangerAppendCommit.current.nonEmpty
+              ).asJava
+            )
+            Files.write(
+              trace.directory.resolve("outcome.json"),
+              new ObjectMapper().writeValueAsBytes(outcome.asJava)
+            )
             trace.record(
               "cleanup",
-              "case=" + name + " noTxn=true noNative=true fullSQLConfEqual=true allFilesEqual=true objectsEqual=true"
+              s"case=$name noTxn=true noNative=true commits=${c.committed} allFilesEqual=${before == after} objectsEqual=${objects == afterObjects}"
             )
           }
         },
@@ -1062,25 +1379,88 @@ class TestDeltaRangerAppendV1Input {
     val qe = SQLExecution.getQueryExecution(id)
     qe.executedPlan.collectFirst { case guard: DeltaRangerAppendInputExec => guard }.get
   }
-  private def appendFailure(c: Case, data: Dataset[Row]): Exception = {
+  private def appendSuccess(c: Case, data: Dataset[Row], publishes: Boolean = true): Unit = {
+    val root = Paths.get(NativeSelectFixture.locations("a")).getParent
+    val name = "attempt-" + java.util.UUID.randomUUID().toString
+    val before =
+      InstalledAppendBoundaryProbe.manifest(root, c.trace.directory.resolve(name + "-before"))
+    c.trace.source(
+      DeltaRangerDecisionReceipt.consumeOwned(
+        data.queryExecution.analyzed,
+        c.spark,
+        optimized = false
+      )
+    )
+    try {
+      data.write.mode("append").insertInto("a.db.t")
+      c.successfulReturns += 1
+      if (publishes) c.committed += 1
+      c.attempts += Map[String, Any](
+        "attempt" -> name,
+        "frontend" -> "insertInto",
+        "returned" -> true,
+        "failureCauses" -> java.util.Collections.emptyList[AnyRef]()
+      ).asJava
+      if (publishes)
+        assertEquals(
+          c.committed.toString,
+          c.spark.conf.get("spark.databricks.delta.lastCommitVersionInSession")
+        )
+      c.trace.record("attempt-return", s"attempt=$name success=true version=${c.committed}")
+    } finally {
+      val after =
+        InstalledAppendBoundaryProbe.manifest(root, c.trace.directory.resolve(name + "-after"))
+      assertNotEquals(before, after)
+      if (!publishes) {
+        assertTrue(before.forall { case (path, stamp) => after.get(path).contains(stamp) })
+        assertEquals(
+          before.filter(_._1.contains("/_delta_log/")),
+          after.filter(_._1.contains("/_delta_log/"))
+        )
+      }
+      assertTrue(OptimisticTransaction.getActive.isEmpty)
+      assertNull(DeltaRangerNativeOperation.current())
+    }
+  }
+
+  private def appendFailure(
+      c: Case,
+      data: Dataset[Row],
+      recordSource: Boolean = true
+  ): Exception = {
     val root = Paths.get(NativeSelectFixture.locations("a")).getParent
     val name = "attempt-" + java.util.UUID.randomUUID().toString
     val before =
       InstalledAppendBoundaryProbe.manifest(root, c.trace.directory.resolve(name + "-before"))
     val objects = inventory(root)
-    val receipt = DeltaRangerDecisionReceipt.consumeOwned(
-      data.queryExecution.analyzed,
-      c.spark,
-      optimized = false
-    )
-    c.trace.source(receipt)
-    c.trace.record(
-      "original-source",
-      s"attempt=$name occurrences=${receipt.obligations.size} columns=${receipt.obligations.map(_.columns)}"
-    )
+    if (recordSource) {
+      val receipt = DeltaRangerDecisionReceipt.consumeOwned(
+        data.queryExecution.analyzed,
+        c.spark,
+        optimized = false
+      )
+      c.trace.source(receipt)
+      c.trace.record(
+        "original-source",
+        s"attempt=$name occurrences=${receipt.obligations.size} columns=${receipt.obligations.map(_.columns)}"
+      )
+    }
     try {
       val failure =
         assertThrows(classOf[Exception], () => data.write.mode("append").insertInto("a.db.t"))
+      c.attempts += Map[String, Any](
+        "attempt" -> name,
+        "frontend" -> "insertInto",
+        "returned" -> false,
+        "failureCauses" -> Iterator
+          .iterate[Throwable](failure)(_.getCause)
+          .takeWhile(_ != null)
+          .map(error =>
+            Map("class" -> error.getClass.getName, "message" -> error.getMessage).asJava
+          )
+          .toVector
+          .asJava
+      ).asJava
       c.trace.record(
         "attempt-rejected",
         s"attempt=$name diagnostic=${Iterator.iterate[Throwable](failure)(_.getCause).takeWhile(_ != null).map(_.toString).mkString(" | ")}"

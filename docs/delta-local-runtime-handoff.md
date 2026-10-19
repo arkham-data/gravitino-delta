@@ -28,7 +28,10 @@ candidate plugin, and the S3 contract uses the named-catalog feasibility fixture
 They do not requalify the current production SELECT chain or the new native
 idempotency helper. The subsequent [dedicated live helper qualification](delta-live-idempotency.md)
 uses real downloaded policies and S3-backed registered targets across all four
-supported pairs. Installed governed append remains disabled.
+supported pairs. Installed governed append remained disabled at this October 10
+checkpoint. The [October 18 append result](delta-native-governed-append.md)
+subsequently qualifies bounded named append on separate frozen packaged profiles;
+these historical runtime records do not attest current service liveness.
 
 The restored runtime and private evidence are under
 `.superpowers/runtime-20261010-live/` in this worktree. `compose.json` references

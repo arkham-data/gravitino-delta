@@ -71,6 +71,12 @@ private[ranger] final class DeltaRangerDecisionReceipt private (
     })
   }
 
+  /** Derives a helper recipe while retaining every original policy obligation. */
+  private[ranger] def forHelper(approved: LogicalPlan): DeltaRangerDecisionReceipt = {
+    revalidate()
+    new DeltaRangerDecisionReceipt(spark, subject, obligations, stamps, instant, approved, conf)
+  }
+
   /** Reevaluate the complete original decision batch without rewriting or running a user plan. */
   def validateAction(session: SparkSession): Unit = {
     if (!(session eq spark)) denied("session changed")

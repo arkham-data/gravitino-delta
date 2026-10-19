@@ -669,6 +669,11 @@ final class DeltaRangerRegistrationBindings {
       requireContext();
     }
 
+    BoundAppendCommit beginCommit(AppendPublication publicationOwner) {
+      requireLive();
+      return new BoundAppendCommit(this, publicationOwner);
+    }
+
     /** Irreversibly expires the transaction association, including on exceptional exits. */
     @Override
     public void close() {
@@ -698,6 +703,109 @@ final class DeltaRangerRegistrationBindings {
         values.put(entry._1(), entry._2());
       }
       return Collections.unmodifiableMap(values);
+    }
+  }
+
+  /** Package-private handoff implemented only by the finite Scala append owner. */
+  abstract static class AppendPublication {
+    abstract boolean requirePublication(
+        BoundAppendCommit context, OptimisticTransaction transaction);
+  }
+
+  /** Separate finite owner for the native publication and postcommit state transitions. */
+  @SuppressWarnings("ReferenceEquality")
+  static final class BoundAppendCommit implements AutoCloseable {
+    private final BoundAppendTransaction before;
+    private final Map<String, String> publishedSettings;
+    private final AppendPublication publicationOwner;
+    private boolean closed;
+    private boolean advancedPublication;
+
+    private BoundAppendCommit(BoundAppendTransaction before, AppendPublication publicationOwner) {
+      this.before = before;
+      this.publicationOwner = Objects.requireNonNull(publicationOwner);
+      Map<String, String> expected = new TreeMap<>(before.settings);
+      expected.put(
+          "spark.databricks.delta.lastCommitVersionInSession",
+          Long.toString(before.snapshot.version() + 1));
+      publishedSettings = Collections.unmodifiableMap(expected);
+    }
+
+    void requireContext() {
+      BoundAppendTarget target = before.target;
+      if (closed
+          || before.closed
+          || Thread.currentThread() != before.thread
+          || SparkSession.getActiveSession().isEmpty()
+          || SparkSession.getActiveSession().get() != before.session
+          || before.transaction.snapshot() != before.snapshot
+          || before.transaction.deltaLog() != target.log()
+          || before.transaction.catalogTable().isEmpty()
+          || before.transaction.catalogTable().get() != target.descriptor()
+          || (OptimisticTransaction.getActive().isDefined()
+              && OptimisticTransaction.getActive().get() != before.transaction)) throw denied();
+      DeltaRangerQuerySubject current = DeltaRangerQuerySubject.current(before.session);
+      if (!before.subject.user().equals(current.user())
+          || !before.subject.groups().equals(current.groups())
+          || (!before.settings.equals(BoundAppendTransaction.settings(before.session))
+              && !publishedSettings.equals(BoundAppendTransaction.settings(before.session))))
+        throw denied();
+      target.engine().requireSnapshot(before.stamp);
+      target.requireRetained();
+      target.anchor.owner.reader.requireLive(before.publication);
+    }
+
+    void requireLive() {
+      requireContext();
+      boolean published = publicationOwner.requirePublication(this, before.transaction);
+      requireNativeState(published);
+      BoundAppendTarget target = before.target;
+      PublishedObservation current = target.anchor.readCurrent();
+      requireContext();
+      if (publicationOwner.requirePublication(this, before.transaction) != published)
+        throw denied();
+      target.anchor.owner.reader.requireLive(before.publication);
+      target.anchor.owner.reader.requireLive(current);
+      boolean original = before.publication.samePublication(current);
+      if (original) {
+        if (advancedPublication) throw denied();
+      } else {
+        if (!published || !sameOwnPublication(current)) throw denied();
+      }
+      target.anchor.requireCompatiblePublication(current);
+      requireContext();
+      if (publicationOwner.requirePublication(this, before.transaction) != published)
+        throw denied();
+      requireNativeState(published);
+      target.anchor.owner.reader.requireLive(current);
+      if (!original) advancedPublication = true;
+    }
+
+    private void requireNativeState(boolean published) {
+      requireContext();
+      if (!(published ? publishedSettings : before.settings)
+              .equals(BoundAppendTransaction.settings(before.session))
+          || (!published && OptimisticTransaction.getActive().isEmpty())) throw denied();
+    }
+
+    private boolean sameOwnPublication(PublishedObservation current) {
+      PublishedObservation original = before.publication;
+      if (current.nativeVersion() != before.snapshot.version() + 1
+          || !original.metalake().equals(current.metalake())
+          || !original.catalog().equals(current.catalog())
+          || !original.database().equals(current.database())
+          || !original.table().equals(current.table())
+          || !original.schemaJson().equals(current.schemaJson())) return false;
+      Map<String, String> expected = new TreeMap<>(original.receipt().toProperties());
+      expected.put(
+          "delta.registration.receipt.nativeVersion", Long.toString(current.nativeVersion()));
+      return expected.equals(current.receipt().toProperties());
+    }
+
+    /** Expires postcommit authority without masking an exception from native commit. */
+    @Override
+    public void close() {
+      closed = true;
     }
   }
 

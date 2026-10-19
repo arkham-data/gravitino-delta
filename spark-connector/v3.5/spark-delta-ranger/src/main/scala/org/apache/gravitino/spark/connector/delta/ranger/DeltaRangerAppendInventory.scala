@@ -52,6 +52,11 @@ private[ranger] object DeltaRangerAppendInventory {
     "org.apache.spark.sql.delta.PreprocessTableDelete",
     "org.apache.spark.sql.delta.PostHocResolveUpCast"
   )
+  private val postHocWithAuthorization = postHoc.patch(
+    7,
+    Vector("org.apache.gravitino.spark.connector.authorization.RequiredPrivilegesCheck"),
+    0
+  )
   private val checks = Vector(
     "org.apache.spark.sql.execution.datasources.PreWriteCheck$",
     "org.apache.spark.sql.execution.datasources.PreReadCheck$",
@@ -62,7 +67,10 @@ private[ranger] object DeltaRangerAppendInventory {
     "org.apache.spark.sql.delta.CheckUnresolvedRelationTimeTravel",
     "org.apache.spark.sql.delta.DeltaUnsupportedOperationsCheck"
   )
-  private val normalization = Vector("org.apache.spark.sql.delta.GenerateRowIDs$")
+  private val normalization = Vector(
+    "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRawNormalization",
+    "org.apache.spark.sql.delta.GenerateRowIDs$"
+  )
 
   def qualify(spark: SparkSession): Unit = {
     if (!SparkSession.getActiveSession.exists(_ eq spark))
@@ -75,7 +83,11 @@ private[ranger] object DeltaRangerAppendInventory {
         throw new SecurityException("Delta append inventory rejected: " + stage)
     }
     requireClasses(actual.extendedResolutionRules, resolution, "resolution rules")
-    requireClasses(actual.postHocResolutionRules, postHoc, "post-hoc rules")
+    val expectedPostHoc = Vector(postHoc, postHocWithAuthorization).map(
+      _.map(Class.forName(_, false, getClass.getClassLoader))
+    )
+    if (!expectedPostHoc.contains(actual.postHocResolutionRules.map(_.getClass).toVector))
+      throw new SecurityException("Delta append inventory rejected: post-hoc rules")
     requireClasses(actual.extendedCheckRules, checks, "check rules")
     requireClasses(spark.sessionState.planNormalizationRules, normalization, "normalization rules")
     val expected = new Analyzer(spark.sessionState.catalogManager) {
