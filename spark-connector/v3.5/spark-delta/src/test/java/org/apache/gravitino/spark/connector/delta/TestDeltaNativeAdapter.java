@@ -56,6 +56,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
+import javax.annotation.Nullable;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Schema;
@@ -318,6 +319,103 @@ class TestDeltaNativeAdapter {
     NativeTestCatalog.client = null;
     NativeTestCatalog.journal = null;
     appendProbeFactory = null;
+  }
+
+  @Test
+  void cdfNamedCreateRecordsBoundedChangesAfterReload() throws Exception {
+    String name = cdfFixture("cdf_create");
+    spark
+        .sql(
+            "CREATE TABLE registry.db."
+                + name
+                + " (id INT, value STRING) USING delta "
+                + "TBLPROPERTIES ('delta.enableChangeDataFeed'='true')")
+        .collect();
+    String nativeId = nativeTable(name).update().metadata().id();
+    DeltaRegistrationIdentity identity = receipts.get(name).identity();
+    assertCdfReload(name, nativeId, identity, 0, "true", 7);
+
+    spark
+        .sql("SELECT 1 AS id, 'first' AS value")
+        .write()
+        .mode("append")
+        .insertInto("registry.db." + name);
+    assertCdfReload(name, nativeId, identity, 1, "true", 7);
+    spark
+        .sql("SELECT 2 AS id, 'second' AS value")
+        .write()
+        .mode("append")
+        .insertInto("registry.db." + name);
+    assertCdfReload(name, nativeId, identity, 2, "true", 7);
+
+    assertEquals(Collections.emptyList(), cdfRows(name, 0, 0));
+    assertEquals(List.of(RowFactory.create(1, "first", "insert", 1L)), cdfRows(name, 1, 1));
+    assertEquals(List.of(RowFactory.create(2, "second", "insert", 2L)), cdfRows(name, 2, 2));
+    assertEquals(
+        List.of(
+            RowFactory.create(1, "first", "insert", 1L),
+            RowFactory.create(2, "second", "insert", 2L)),
+        cdfRows(name, 0, 2));
+    assertEquals(
+        List.of(RowFactory.create(1, "first"), RowFactory.create(2, "second")),
+        spark.sql("SELECT id,value FROM registry.db." + name + " ORDER BY id").collectAsList());
+  }
+
+  @Test
+  void cdfNamedAlterPreservesIdentityAndEnablementBoundaries() throws Exception {
+    String name = cdfFixture("cdf_alter");
+    spark.sql("CREATE TABLE registry.db." + name + " (id INT, value STRING) USING delta").collect();
+    String nativeId = nativeTable(name).update().metadata().id();
+    DeltaRegistrationIdentity identity = receipts.get(name).identity();
+    assertCdfReload(name, nativeId, identity, 0, null, 2);
+    spark
+        .sql("SELECT 10 AS id, 'before' AS value")
+        .write()
+        .mode("append")
+        .insertInto("registry.db." + name);
+    assertCdfReload(name, nativeId, identity, 1, null, 2);
+
+    spark
+        .sql(
+            "ALTER TABLE registry.db."
+                + name
+                + " SET TBLPROPERTIES ('delta.enableChangeDataFeed'='true')")
+        .collect();
+    assertCdfReload(name, nativeId, identity, 2, "true", 7);
+    spark
+        .sql("SELECT 20 AS id, 'enabled' AS value")
+        .write()
+        .mode("append")
+        .insertInto("registry.db." + name);
+    assertCdfReload(name, nativeId, identity, 3, "true", 7);
+    List<Row> enabledRows = List.of(RowFactory.create(20, "enabled", "insert", 3L));
+    assertEquals(Collections.emptyList(), cdfRows(name, 2, 2));
+    assertEquals(enabledRows, cdfRows(name, 2, 3));
+    Exception beforeEnablement = assertThrows(Exception.class, () -> cdfRows(name, 1, 3));
+    assertTrue(beforeEnablement.getMessage().contains("DELTA_MISSING_CHANGE_DATA"));
+
+    spark
+        .sql(
+            "ALTER TABLE registry.db."
+                + name
+                + " SET TBLPROPERTIES ('delta.enableChangeDataFeed'='false')")
+        .collect();
+    assertCdfReload(name, nativeId, identity, 4, "false", 7);
+    spark
+        .sql("SELECT 30 AS id, 'disabled' AS value")
+        .write()
+        .mode("append")
+        .insertInto("registry.db." + name);
+    assertCdfReload(name, nativeId, identity, 5, "false", 7);
+    assertEquals(enabledRows, cdfRows(name, 2, 3));
+    Exception afterDisablement = assertThrows(Exception.class, () -> cdfRows(name, 5, 5));
+    assertTrue(afterDisablement.getMessage().contains("DELTA_MISSING_CHANGE_DATA"));
+    assertEquals(
+        List.of(
+            RowFactory.create(10, "before"),
+            RowFactory.create(20, "enabled"),
+            RowFactory.create(30, "disabled")),
+        spark.sql("SELECT id,value FROM registry.db." + name + " ORDER BY id").collectAsList());
   }
 
   @Test
@@ -1340,6 +1438,72 @@ class TestDeltaNativeAdapter {
     assertEquals(1, nativeTable("schema_cor").update().version());
     assertEquals(
         DataTypes.LongType, adapter.loadTable(id("schema_cor")).schema().fields()[0].dataType());
+  }
+
+  private String cdfFixture(String prefix) {
+    String name = prefix + "_" + UUID.randomUUID().toString().replace('-', '_');
+    String setting = System.getenv("GRAVITINO_DELTA_CDF_EVIDENCE_DIR");
+    if (setting != null) {
+      // JUnit 5.8 removes @TempDir unconditionally; keep this probe's native data separately.
+      locations.put(
+          name, Paths.get(setting).resolve("native-data").resolve(name).toUri().toString());
+    }
+    return name;
+  }
+
+  private void assertCdfReload(
+      String name,
+      String nativeId,
+      DeltaRegistrationIdentity identity,
+      long version,
+      @Nullable String cdfProperty,
+      int writerVersion)
+      throws Exception {
+    adapter.invalidateTable(id(name));
+    DeltaTableV2 loaded = (DeltaTableV2) adapter.loadTable(id(name));
+    Snapshot snapshot = loaded.update();
+    assertEquals(version, snapshot.version());
+    assertEquals(nativeId, snapshot.metadata().id());
+    assertEquals(identity, receipts.get(name).identity());
+    assertEquals(1, snapshot.protocol().minReaderVersion());
+    assertEquals(writerVersion, snapshot.protocol().minWriterVersion());
+    if (writerVersion == 7) {
+      assertTrue(snapshot.protocol().writerFeatures().isDefined());
+      assertTrue(snapshot.protocol().writerFeatures().get().contains("changeDataFeed"));
+    }
+    assertEquals(
+        Option.apply(cdfProperty),
+        snapshot.metadata().configuration().get("delta.enableChangeDataFeed"));
+    assertEquals(nativeTable(name).update().metadata(), snapshot.metadata());
+    assertEquals(nativeTable(name).update().protocol(), snapshot.protocol());
+    String setting = System.getenv("GRAVITINO_DELTA_CDF_EVIDENCE_DIR");
+    if (setting != null) {
+      ObjectNode record = JSON.createObjectNode();
+      record.put("table", name);
+      record.put("version", version);
+      record.set("metadata", JSON.readTree(snapshot.metadata().json()));
+      record.set("protocol", JSON.readTree(snapshot.protocol().json()));
+      Files.writeString(
+          Paths.get(setting).resolve(name + "-v" + version + ".json"), record.toString());
+    }
+  }
+
+  private List<Row> cdfRows(String name, long start, long end) {
+    // A native path read is the independent change-production oracle, not catalog authorization.
+    Dataset<Row> changes =
+        spark
+            .read()
+            .format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", start)
+            .option("endingVersion", end)
+            .load(locations.get(name));
+    List<Row> timestamps = changes.select("_commit_timestamp").collectAsList();
+    assertTrue(timestamps.stream().allMatch(row -> !row.isNullAt(0)));
+    return changes
+        .select("id", "value", "_change_type", "_commit_version")
+        .orderBy("_commit_version", "id")
+        .collectAsList();
   }
 
   private DeltaRegistrationCommand reservation(String name) {
