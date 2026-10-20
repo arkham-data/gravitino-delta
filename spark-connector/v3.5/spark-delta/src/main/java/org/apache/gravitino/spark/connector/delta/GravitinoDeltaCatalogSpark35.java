@@ -243,9 +243,20 @@ public class GravitinoDeltaCatalogSpark35
     DeltaRegistrationClient.Observation observation = observation(id);
     String location = observation.receipt.location().get();
     headCheck.accept(location, observation.receipt);
-    nativeCatalog.alterTable(path(location), changes);
+    executeNativeAlter(id, location, changes);
     return loadTable(id);
   }
+  /**
+   * Executes native changes after registration and head validation.
+   *
+   * @param id the validated named identifier
+   * @param location the validated registered location
+   * @param changes the validated native changes
+   */
+  protected void executeNativeAlter(Identifier id, String location, TableChange... changes) {
+    nativeCatalog.alterTable(path(location), changes);
+  }
+
   /** {@inheritDoc} */
   @Override
   public void invalidateTable(Identifier id) {

@@ -46,6 +46,7 @@ import org.apache.spark.scheduler.SparkListenerApplicationEnd;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.catalog.TableChange;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** Optional native catalog with separate application, current actor, and metadata identities. */
@@ -53,6 +54,7 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   static final String PREFIX = "spark.gravitino.deltaRanger.";
   static final String EXTENSION =
       "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerSparkExtension";
+  private static final ThreadLocal<CdfAlterInvocation> CDF_ALTER = new ThreadLocal<>();
   private final State state;
   @Nullable private DeltaRangerPolicyEngine engine;
   @Nullable private DeltaRangerRegistrationBindings bindings;
@@ -149,6 +151,51 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   @Override
   public Table loadTable(Identifier id) {
     return registrationBindings().load(id, () -> super.loadTable(id));
+  }
+
+  interface CdfAlterInvocation {
+    void validate(DeltaRangerCatalogSpark35 catalog, Identifier id, TableChange[] changes);
+
+    void execute(String location);
+
+    boolean committed();
+  }
+
+  static Table withCdfAlter(CdfAlterInvocation invocation, Supplier<Table> body) {
+    if (CDF_ALTER.get() != null) throw new SecurityException("Nested CDF property command");
+    CDF_ALTER.set(invocation);
+    try {
+      return body.get();
+    } finally {
+      CDF_ALTER.remove();
+    }
+  }
+
+  /** Requires an issued exact named CDF property command before native ALTER. */
+  @Override
+  public Table alterTable(Identifier id, TableChange... changes) {
+    CdfAlterInvocation invocation = CDF_ALTER.get();
+    if (invocation == null) throw new SecurityException("Unbound CDF property command");
+    invocation.validate(this, id, changes);
+    try {
+      return super.alterTable(id, changes);
+    } catch (RuntimeException failure) {
+      if (invocation.committed()) {
+        throw new IllegalStateException(
+            "CDF property change committed; named refresh is unconfirmed; do not retry ALTER",
+            failure);
+      }
+      throw failure;
+    }
+  }
+
+  /** Executes only the issued native CDF command at the validated registered location. */
+  @Override
+  protected void executeNativeAlter(Identifier id, String location, TableChange... changes) {
+    CdfAlterInvocation invocation = CDF_ALTER.get();
+    if (invocation == null) throw new SecurityException("Unbound CDF property command");
+    invocation.validate(this, id, changes);
+    invocation.execute(location);
   }
 
   /** {@inheritDoc} */

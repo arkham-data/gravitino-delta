@@ -100,7 +100,10 @@ private[ranger] object DeltaRangerPlanAdmission {
     DeltaRangerRawMetadata.current.foreach(owner => return owner.executable(plan))
     if (
       operation != null && operation.committing() &&
-      DeltaRangerAppendCommit.current.exists(_.checkpointPlan(plan))
+      DeltaRangerAppendCommit.current
+        .map(_.metadata)
+        .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata))
+        .exists(_.checkpointPlan(plan))
     ) return true
     if (snapshotStateAggregate(plan) || snapshotStateBinding(plan)) return true
     plan match {
@@ -165,7 +168,10 @@ private[ranger] object DeltaRangerPlanAdmission {
               case index: DeltaLogFileIndex =>
                 index.getClass == classOf[DeltaLogFileIndex] && fs.fileFormat == index.format &&
                 (if (operation != null && operation.committing())
-                   DeltaRangerAppendCommit.current.exists(_.ownsLog(fs, index))
+                   DeltaRangerAppendCommit.current
+                     .map(_.metadata)
+                     .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata))
+                     .exists(_.ownsLog(fs, index))
                  else
                    index.rootPaths.nonEmpty && index.rootPaths.forall { path =>
                      path.getParent != null && path.getParent.getName == "_delta_log" &&

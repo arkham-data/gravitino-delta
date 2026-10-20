@@ -1,8 +1,9 @@
 # Governed CDF property mutation
 
-Status: command implementation design draft. October 20, 2026.
+Status: local command implemented and reviewed; provider/continued-use and live
+qualification remain. October 20, 2026.
 The user approved the MODIFY_TABLE → UPDATE + ALTER policy mapping on October 20;
-that bounded mapping change is proceeding independently of the command implementation.
+that bounded mapping change is committed with focused tests and review.
 Baseline: `dd6171a0b`. This document does not authorize live policy changes.
 
 ## Contract and decision
@@ -37,13 +38,13 @@ plugin callback convergence is not proof that such a public request migrates
 existing policies. A revoke/grant transition temporarily removes MODIFY access
 and must be an explicit operator action.
 
-## Current path and minimal changes
+## Baseline path and implementation design
 
 Relevant production sources are under
 `spark-connector/v3.5/spark-delta-ranger/src/main/{java,scala}/org/apache/gravitino/spark/connector/delta/ranger/`,
 unless qualified otherwise.
 
-1. `DeltaRangerReadRule` currently sends resolved `SetTableProperties` into finite
+1. At the baseline, `DeltaRangerReadRule` sends resolved `SetTableProperties` into finite
    SELECT admission and rejects it before authorization. Add a dedicated
    `DeltaRangerCdfPropertyCommand` binding/physical command for this exact logical
    shape. Capture the resolved named catalog object, identifier, native table

@@ -360,7 +360,7 @@ class TestDeltaRangerNativeGovernedAppend {
         retained = commit
         val cache =
           field[scala.collection.mutable.ArrayBuffer[(LogicalRDD, Vector[Any], QueryExecution)]](
-            commit,
+            commit.metadata,
             "caches"
           ).head
         val original = cache._1
@@ -868,14 +868,14 @@ class TestDeltaRangerNativeGovernedAppend {
             DeltaRangerAppendCommit.current.foreach { commit =>
               if (
                 checkpointTail && !firstMalformedObserved && !field[Boolean](
-                  commit,
+                  commit.metadata,
                   "checkpointAdmitting"
                 ) &&
-                field[AnyRef](commit, "checkpointFunction") == null
+                field[AnyRef](commit.metadata, "checkpointFunction") == null
               ) {
                 val caches = field[
                   scala.collection.mutable.ArrayBuffer[(LogicalRDD, Vector[Any], QueryExecution)]
-                ](commit, "caches")
+                ](commit.metadata, "caches")
                 if (caches.nonEmpty) {
                   firstMalformedObserved = true
                   val encoder = Encoders.product[SingleAction]
@@ -891,10 +891,10 @@ class TestDeltaRangerNativeGovernedAppend {
                     ),
                     "nonnative cache function"
                   )
-                  assertNull(field[AnyRef](commit, "checkpointSnapshot"))
-                  assertNull(field[AnyRef](commit, "checkpointFunction"))
-                  assertNull(field[AnyRef](commit, "checkpointCounter"))
-                  assertFalse(field[Boolean](commit, "checkpointAdmitting"))
+                  assertNull(field[AnyRef](commit.metadata, "checkpointSnapshot"))
+                  assertNull(field[AnyRef](commit.metadata, "checkpointFunction"))
+                  assertNull(field[AnyRef](commit.metadata, "checkpointCounter"))
+                  assertFalse(field[Boolean](commit.metadata, "checkpointAdmitting"))
                   assertEquals(jobsBefore, checkpointJobIds(spark))
                   firstCheckpointCandidate = malformed
                   trace.record(
@@ -905,8 +905,8 @@ class TestDeltaRangerNativeGovernedAppend {
               }
               if (
                 checkpointTail && firstCheckpointCandidate != null && firstNativeJobs == null &&
-                field[Boolean](commit, "checkpointAdmitting") && field[AnyRef](
-                  commit,
+                field[Boolean](commit.metadata, "checkpointAdmitting") && field[AnyRef](
+                  commit.metadata,
                   "checkpointFunction"
                 ) == null
               ) {
@@ -914,7 +914,7 @@ class TestDeltaRangerNativeGovernedAppend {
               }
               if (
                 checkpointTail && firstNativeJobs != null && !firstNativeJobsChecked &&
-                field[AnyRef](commit, "checkpointFunction") != null
+                field[AnyRef](commit.metadata, "checkpointFunction") != null
               ) {
                 firstNativeJobsChecked = true
                 assertEquals(firstNativeJobs, checkpointJobIds(spark))
@@ -922,7 +922,7 @@ class TestDeltaRangerNativeGovernedAppend {
               }
               if (
                 checkpointTail && firstCheckpointCandidate != null && !checkpointReentryObserved &&
-                field[Boolean](commit, "checkpointAdmitting")
+                field[Boolean](commit.metadata, "checkpointAdmitting")
               ) {
                 checkpointReentryObserved = true
                 val foreignCall = new FutureTask[SecurityException](() =>
@@ -938,10 +938,10 @@ class TestDeltaRangerNativeGovernedAppend {
                 assertFalse(foreignThread.isAlive)
                 trace.record("checkpoint-foreign-owner", foreignFailure.getMessage)
                 assertReason(foreignFailure, "expired commit owner")
-                assertTrue(field[Boolean](commit, "checkpointAdmitting"))
-                assertNull(field[AnyRef](commit, "checkpointSnapshot"))
-                assertNull(field[AnyRef](commit, "checkpointFunction"))
-                assertNull(field[AnyRef](commit, "checkpointCounter"))
+                assertTrue(field[Boolean](commit.metadata, "checkpointAdmitting"))
+                assertNull(field[AnyRef](commit.metadata, "checkpointSnapshot"))
+                assertNull(field[AnyRef](commit.metadata, "checkpointFunction"))
+                assertNull(field[AnyRef](commit.metadata, "checkpointCounter"))
                 assertReason(
                   assertThrows(
                     classOf[SecurityException],
@@ -987,7 +987,7 @@ class TestDeltaRangerNativeGovernedAppend {
               if (
                 !inspected && field[
                   scala.collection.mutable.ArrayBuffer[(LogicalRDD, Vector[Any], QueryExecution)]
-                ](commit, "caches").nonEmpty
+                ](commit.metadata, "caches").nonEmpty
               ) {
                 inspected = true
                 inspect(commit, spark)
@@ -1680,7 +1680,10 @@ class TestDeltaRangerNativeGovernedAppend {
       trace.record("tail-registration-before", registrationBefore)
       registration.onRead = _ =>
         DeltaRangerAppendCommit.current.foreach { commit =>
-          field[scala.collection.mutable.ArrayBuffer[QueryExecution]](commit, "reconstructions")
+          field[scala.collection.mutable.ArrayBuffer[QueryExecution]](
+            commit.metadata,
+            "reconstructions"
+          )
             .foreach(qe =>
               if (!seen.containsKey(qe)) {
                 seen.put(qe, true)

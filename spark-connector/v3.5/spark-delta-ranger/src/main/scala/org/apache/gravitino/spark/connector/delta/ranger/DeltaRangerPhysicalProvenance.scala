@@ -124,6 +124,14 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case _                                 => denied("append physical product changed")
     }
   }
+  final class CdfTicket(private val spark: SparkSession) extends Ticket {
+    override def requireSession(session: SparkSession): Unit =
+      if (session ne spark) denied("CDF planning session changed")
+    override def verify(plan: SparkPlan): Unit = plan match {
+      case command: DeltaRangerCdfPropertyExec => command.verify(spark)
+      case _                                   => denied("CDF physical command changed")
+    }
+  }
   final class NativeTicket(
       private val expected: SparkPlan,
       private val raw: SparkPlan,
@@ -177,6 +185,11 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case _                           =>
     }
     plan match {
+      case command: DeltaRangerCdfPropertyExec =>
+        val ticket = new CdfTicket(spark)
+        ticket.verify(command)
+        command.setTagValue(tag, new Reference(ticket))
+        return command
       case guard: DeltaRangerAppendInputExec =>
         val ticket = new AppendTicket(spark)
         ticket.verify(guard)
@@ -241,7 +254,9 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         DeltaRangerRawMetadata.current.foreach { metadata =>
           return DeltaRangerRawMetadataGuardExec(plan)(new RawMetadataContext(native, metadata))
         }
-        DeltaRangerAppendCommit.current match {
+        DeltaRangerAppendCommit.current
+          .map(_.metadata)
+          .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata)) match {
           case Some(commit) =>
             DeltaRangerCollectGuardExec(plan)(new DeltaRangerCollectValidationContext {
               override def validateCollection(child: SparkPlan): Unit = native.verify(child)
@@ -253,6 +268,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
           case None => plan
         }
       case _: AppendTicket => plan
+      case _: CdfTicket    => plan
     }
   }
 

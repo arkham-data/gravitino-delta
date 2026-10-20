@@ -209,6 +209,33 @@ final class DeltaRangerRegistrationBindings {
     }
   }
 
+  @SuppressWarnings("ReferenceEquality") // Only the exact completed named load is a target.
+  BoundCdfPropertyMutation resolveCdfPropertyMutation(DeltaTableV2 table) {
+    try {
+      CatalogTable descriptor = table.catalogTable().get();
+      RegistrationBinding binding;
+      synchronized (this) {
+        requireLive();
+        drain(collected, entries);
+        binding = entries.get(new IdentityKey<>(descriptor, null));
+      }
+      if (binding == null || binding.table.get() != table) throw denied();
+      BoundRegistrationScan anchor =
+          new BoundRegistrationScan(
+              this,
+              descriptor,
+              binding.relation.get(),
+              binding.index.get(),
+              binding.log.get(),
+              binding);
+      BoundCdfPropertyMutation target = new BoundCdfPropertyMutation(table, anchor);
+      target.requireRetained();
+      return target;
+    } catch (Exception | LinkageError failure) {
+      throw denied();
+    }
+  }
+
   synchronized void requireLive() {
     try {
       if (closed) throw denied();
@@ -481,6 +508,134 @@ final class DeltaRangerRegistrationBindings {
     @Override
     public String toString() {
       return "Current Delta action observation";
+    }
+  }
+
+  /** Exact named target and private metadata anchor, without source or append authorization. */
+  static final class BoundCdfPropertyMutation {
+    private boolean advancedPublication;
+    private final DeltaTableV2 table;
+    private final SparkSession session;
+    private final BoundRegistrationScan anchor;
+
+    private BoundCdfPropertyMutation(DeltaTableV2 table, BoundRegistrationScan anchor) {
+      this.table = table;
+      this.session = table.spark();
+      this.anchor = anchor;
+    }
+
+    DeltaTableV2 table() {
+      return table;
+    }
+
+    CatalogTable descriptor() {
+      return anchor.descriptor();
+    }
+
+    DeltaLog log() {
+      return anchor.log();
+    }
+
+    PublishedObservation observation() {
+      return anchor.observation();
+    }
+
+    DeltaRangerPolicyEngine engine() {
+      return anchor.engine();
+    }
+
+    @SuppressWarnings("ReferenceEquality") // Frozen native identity cannot be replaced by a copy.
+    void requireRetained() {
+      try {
+        anchor.requireRetained();
+        RegistrationBinding binding = anchor.binding;
+        if (binding.table.get() != table
+            || table.spark() != session
+            || table.timeTravelOpt().isDefined()
+            || !table.options().isEmpty()
+            || table.hasPartitionFilters()
+            || table.catalogTable().isEmpty()
+            || table.ttSafeCatalogTable().isEmpty()
+            || table.catalogTable().get() != anchor.descriptor
+            || table.ttSafeCatalogTable().get() != anchor.descriptor
+            || table.deltaLog() != anchor.log
+            || !binding.descriptorOwner.equals(anchor.descriptor.owner())
+            || !locationMatches(binding.observation.location(), table.path().toUri()))
+          throw denied();
+        Snapshot snapshot = table.initialSnapshot();
+        if (snapshot.deltaLog() != anchor.log
+            || snapshot.version() != binding.nativeVersion
+            || !binding.observation.nativeId().equals(snapshot.metadata().id())
+            || !binding.nativeSchemaJson.equals(snapshot.metadata().schemaString())
+            || !binding.protocolJson.equals(snapshot.protocol().json())
+            || !binding.partitions.equals(sequenceStamp(snapshot.metadata().partitionColumns()))
+            || !binding.mapping.equals(mappingStamp(snapshot.metadata()))
+            || !binding.nativeConfiguration.equals(configurationSnapshot(snapshot.metadata()))
+            || !binding.nativeConfiguration.equals(configurationSnapshot(anchor.index.metadata())))
+          throw denied();
+        requireLive();
+      } catch (Exception | LinkageError failure) {
+        throw denied();
+      }
+    }
+
+    void requireLive() {
+      anchor.requireLive();
+    }
+
+    CurrentObservation validateCurrent(SparkSession session) {
+      try {
+        if (this.session != session) throw denied();
+        requireRetained();
+        CurrentObservation current = anchor.validateCurrent(session);
+        if (!anchor.binding.nativeConfiguration.equals(current.nativeConfiguration)) throw denied();
+        requireRetained();
+        requireLive();
+        return current;
+      } catch (Exception | LinkageError failure) {
+        throw denied();
+      }
+    }
+
+    @SuppressWarnings("ReferenceEquality") // The owned native descriptor must be identical.
+    OptimisticTransaction captureTransaction(Supplier<OptimisticTransaction> body) {
+      try (DeltaRangerNativeOperation operation =
+          DeltaRangerNativeOperation.validateRetained(session, anchor)) {
+        OptimisticTransaction transaction = body.get();
+        if (transaction.deltaLog() != log()
+            || transaction.snapshot() != table.initialSnapshot()
+            || transaction.readVersion() != anchor.binding.nativeVersion
+            || transaction.catalogTable().isEmpty()
+            || transaction.catalogTable().get() != descriptor()) throw denied();
+        operation.succeed();
+        return transaction;
+      }
+    }
+
+    void requirePublicationContext(boolean published, long version) {
+      requireRetained();
+      PublishedObservation original = observation();
+      PublishedObservation current = anchor.readCurrent();
+      anchor.requireCompatiblePublication(current);
+      if (original.samePublication(current)) {
+        if (advancedPublication) throw denied();
+      } else {
+        Map<String, String> expected = new TreeMap<>(original.receipt().toProperties());
+        expected.put("delta.registration.receipt.nativeVersion", Long.toString(version));
+        if (!published
+            || version != table.initialSnapshot().version() + 1
+            || current.nativeVersion() != version
+            || !expected.equals(current.receipt().toProperties())) throw denied();
+        advancedPublication = true;
+      }
+      anchor.owner.reader.requireLive(original);
+      anchor.owner.reader.requireLive(current);
+    }
+
+    /** Omits the retained table, registration and metadata. */
+    @Override
+    public String toString() {
+      return "Bound native CDF property target";
     }
   }
 

@@ -10,7 +10,12 @@
 
 **Spec:** [Governed CDF property mutation](../specs/2026-10-20-delta-cdf-enablement-design.md).
 
-Status: command-execution plan for review. The user approved the mapping decision; completed prerequisite evidence below must not be repeated merely to restart this plan.
+Status: Tasks 1 and 2 are implemented and reviewed. The command passes 17 CDF
+cases on Spark 3.5.4 / Delta 3.3.0, including the catalog-identity review fix;
+affected module checks/Javadoc pass. Fifteen focused append/base regressions
+passed before that final CDF-only identity fix. Task 3 is next: continued governed
+use and real provider composition. The user approved the mapping and execution.
+Completed prerequisite evidence must not be repeated merely to restart this plan.
 
 ## Global constraints
 
@@ -58,13 +63,13 @@ Status: command-execution plan for review. The user approved the mapping decisio
 - `BoundCdfPropertyMutation` binds registration, native table/log/snapshot and transaction independently of append authority.
 - The owned native command subclass overrides `startTransaction()` to capture the returned native transaction; it inherits native `run`. Invoke `DeltaConfigs.validateConfigurations` as native catalog delegation does.
 
-- [ ] Write the installed positive test first: table-wide `alter` allows exact named CDF enablement, while update-only, select-only and denied policies leave all target bytes unchanged. Run it and retain the original admission failure.
-- [ ] Add exact command binding and the base native-ALTER seam. Unit-test wrong/mixed properties, path/versioned targets, direct unbound catalog calls, changed session/subject/catalog and copied command state.
-- [ ] Implement the native owner and publication proof in the same task. Bind actual transaction ID/read version and expected native metadata/protocol; admit no data actions or unrelated metadata changes. Reuse shared metadata recipe checks without borrowing append's unchanged-metadata proof.
-- [ ] Exercise authorization/registration revalidation before mutation, policy revocation after analysis, foreign publication and altered bytes. A witness for another transaction must fail.
-- [ ] Close mutation ownership before the ordinary named reload. Verify owner unwinding on failure; distinguish a committed operation with failed refresh from a precommit denial. Never retry automatically.
-- [ ] Make installed enable and disable tests pass, including fresh snapshot reconstruction and a classic checkpoint boundary. Confirm disabling retains the native upgraded protocol.
-- [ ] Run focused changed tests and affected module formatting/Javadoc. Obtain one integrated review of this working operation before continuing.
+- [x] Write the installed positive test first: table-wide `alter` allows exact named CDF enablement, while update-only, select-only and denied policies leave all target bytes unchanged. Run it and retain the original admission failure.
+- [x] Add exact command binding and the base native-ALTER seam. Unit-test wrong/mixed properties, path/versioned targets, direct unbound catalog calls, changed session/subject/catalog and copied command state.
+- [x] Implement the native owner and publication proof in the same task. Bind actual transaction ID/read version and expected native metadata/protocol; admit no data actions or unrelated metadata changes. Reuse shared metadata recipe checks without borrowing append's unchanged-metadata proof.
+- [x] Exercise authorization/registration revalidation before mutation, policy revocation after analysis, foreign publication and altered bytes. A witness for another transaction must fail.
+- [x] Close mutation ownership before the ordinary named reload. Verify owner unwinding on failure; distinguish a committed operation with failed refresh from a precommit denial. Never retry automatically.
+- [x] Make installed enable and disable tests pass, including fresh snapshot reconstruction and a classic checkpoint boundary. Confirm disabling retains the native upgraded protocol.
+- [x] Run focused changed tests and affected module formatting/Javadoc. Obtain one integrated review of this working operation before continuing.
 
 Initial command:
 

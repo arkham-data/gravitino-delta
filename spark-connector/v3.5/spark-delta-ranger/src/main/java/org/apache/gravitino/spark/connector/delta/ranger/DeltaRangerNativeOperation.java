@@ -70,6 +70,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     LOAD,
     TRANSACTION_STATE,
     COMMIT,
+    CDF_PROPERTY_MUTATION,
     PREPARE,
     VALIDATE_RETAINED_BINDING,
     MATCHING_FILES,
@@ -236,6 +237,12 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     return operation;
   }
 
+  static DeltaRangerNativeOperation cdfPropertyMutation(CommitOwner owner) {
+    DeltaRangerNativeOperation operation = commit(owner);
+    operation.callback = Callback.CDF_PROPERTY_MUTATION;
+    return operation;
+  }
+
   static void requireNoRawSelection() {
     if (Boolean.TRUE.equals(RAW_SELECTION.get())) throw denied();
   }
@@ -355,6 +362,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
         || data == null
         || callback == null
         || callback == Callback.COMMIT
+        || callback == Callback.CDF_PROPERTY_MUTATION
         || callback == Callback.TRANSACTION_STATE
         || callback == Callback.LOAD
         || callback == Callback.PREPARE

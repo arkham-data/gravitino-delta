@@ -33,6 +33,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.catalyst.plans.logical.{
   LogicalPlan,
+  SetTableProperties,
   AppendData,
   Project,
   Filter,
@@ -64,6 +65,9 @@ private[ranger] class DeltaRangerReadRule(
   override def apply(plan: LogicalPlan): LogicalPlan = {
     DeltaRangerNativeOperation.requireNoRawSelection()
     plan match {
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return cdf
+      case cdf: SetTableProperties if cdf.resolved =>
+        return DeltaRangerCdfPropertyCommand.resolve(cdf, spark, catalogs)
       case append: AppendData if append.resolved =>
         DeltaRangerAppendV1Input.inspect(append, spark)
         val table = append.table match {
@@ -196,6 +200,10 @@ private[ranger] object DeltaRangerReadRule {
   }
 
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
+    plan match {
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return
+      case _                                          =>
+    }
     if (DeltaRangerAppendHelper.analysis(plan, spark)) return
     if (plan.isInstanceOf[AppendData]) {
       DeltaRangerAppendV1Input.analyzed(plan.asInstanceOf[AppendData], spark)
@@ -207,8 +215,9 @@ private[ranger] object DeltaRangerReadRule {
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
     plan match {
-      case raw: DeltaRangerRawMaintenance.Carrier => return raw.owner.prepare(raw.child)
-      case _                                      =>
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return cdf
+      case raw: DeltaRangerRawMaintenance.Carrier     => return raw.owner.prepare(raw.child)
+      case _                                          =>
     }
     if (plan.isInstanceOf[AppendData])
       return DeltaRangerAppendV1Input.prepare(plan.asInstanceOf[AppendData], spark)
