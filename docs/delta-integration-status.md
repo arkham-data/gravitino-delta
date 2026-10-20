@@ -17,13 +17,13 @@ with the Ranger extension installed.
 | --- | --- | --- |
 | Dedicated Delta catalog and discovery | Production `lakehouse-delta` provider and Spark adapter exist; [startup contract](spark-connector/spark-delta-catalog.md) | Deployment/coexistence acceptance in the actual demo and distributed runtime |
 | Gravitino-owned registration | Publication, native metadata and recovery machinery exist; [provider contract](../catalogs/catalog-lakehouse-delta/README.md) | Complete lifecycle, recovery and migration acceptance; no second authoritative Glue/Hive registry |
-| Public grants/revokes → Ranger | [Qualified SELECT propagation](delta-ranger-production-results.md) and [MODIFY append propagation](delta-native-governed-append.md), Ranger 2.8.0 | Remaining privileges/operations and general partial-failure reconciliation |
+| Public grants/revokes → Ranger | [Qualified SELECT propagation](delta-ranger-production-results.md) and [MODIFY append propagation](delta-native-governed-append.md), Ranger 2.8.0; new UPDATE + ALTER mapping tested locally | Live qualification/migration for expanded MODIFY grants, remaining operations and general partial-failure reconciliation |
 | Named governed SELECT | Qualified projections, filters and the admitted join/expression shapes, column permissions, masks and row filters | General Spark queries: aggregation, ordering, broader joins/expressions, AQE and caching are not covered by this result |
 | Named batch append | Qualified matching-schema `insertInto` and existing-table `saveAsTable`; all four version pairs | SQL INSERT, `writeTo`, wider options/schema handling and transaction-setting modes |
 | Create/replace/ALTER | Base adapter has staged creation/replacement and native ALTER delegation | Governed DDL authorization, native execution and registration continuity; base implementation is not governed acceptance |
 | Drop/purge/rename | Explicitly rejected by the current Spark adapter; provider retains registrations | Implement lifecycle and data-ownership/recovery semantics |
 | Overwrite, UPDATE, DELETE, MERGE | Not qualified by SELECT or append | Native outcomes plus independent source/target authorization and denied-write behavior |
-| Catalog CDF enablement | Focused native CREATE/ALTER tests pass on Spark 3.5.4 / Delta 3.3.0; provider metadata retention exists | Governed SQL rejects `SetTableProperties` before policy evaluation; real provider refresh and remaining pairs unverified |
+| Catalog CDF enablement | Focused native CREATE/ALTER tests pass on Spark 3.5.4 / Delta 3.3.0; separate real-provider refresh test passes | Governed SQL rejects `SetTableProperties` before policy evaluation; combined command/provider flow and remaining pairs unverified |
 | CDF consumption | Existing governed relation checks do not admit native CDF relations | Named batch and streaming CDF, policy application to historical rows/columns and metadata columns |
 | History/time travel/restore | Governed versioned loads explicitly reject time travel | Historical identity/schema semantics and authorization; restore write semantics |
 | Schema evolution and table features | Metadata/schema infrastructure exists; individual paths have narrower admission | Enumerate the native 3.3.0/3.3.2 feature baseline and qualify each supported combination through the catalog |
@@ -116,7 +116,37 @@ governed enablement or evidence that SQL ALTER permissions are enforced.
 These tests use local native Delta with mocked catalog responses and local policy
 fixtures. CDF consumption in the native test uses a path read as an independent
 oracle. They do not prove real provider refresh, deployed Ranger, S3, governed
-CDF reads or the other three version pairs. No production code changed.
+CDF reads or the other three version pairs. These probes changed no production code.
+
+The separate
+[provider refresh test](../catalogs/catalog-lakehouse-delta/src/test/java/org/apache/gravitino/catalog/lakehouse/delta/TestDeltaRegistrationOperations.java)
+also passed one focused case. It uses the real metadata reader, registration
+operations and H2 persistence with manually authored Delta metadata/protocol
+actions. Fresh reader/operations instances observe enable and disable at new
+versions, persist the corresponding safe property and changed configuration
+digest, retain reader 1/writer 7 and the CDF feature declaration, and preserve
+registration identity, native UUID, owner and column entities. The source commit
+bytes remain unchanged. This is an empty local table with an open H2 store;
+it does not establish nonempty data preservation, a server restart, native
+Spark-emitted commits or the combined Spark/provider flow. The first invocation
+failed on a fixture's attempt to read a marker from a published receipt; the
+corrected invocation passed without a production fix.
+
+## Approved authorization change
+
+The user approved expanding TABLE/MODIFY_TABLE from Ranger `update` to
+`update` plus `alter`. Both the advertised mapping and translated resources now
+implement that decision. SELECT remains separate; USE privileges grant no data
+access. Four focused tests first failed for missing ALTER, then all 19 tests in
+`TestRangerDeltaAuthorization` passed after the change, including legacy-policy
+callback convergence/revocation, independent SELECT, catalog isolation and
+preservation of unrelated roles/policies. Module formatting checks passed.
+
+No live policy was changed. Existing policies require an explicit migration;
+reissuing an unchanged public grant may skip callbacks. See the
+[migration contract](../authorizations/authorization-ranger-delta/README.md#existing-modify-policy-migration).
+This supplies authorization plumbing for CDF mutation; the installed SQL command
+still rejects `SetTableProperties` until its execution path is implemented.
 
 ## Next delivery and architectural decision
 

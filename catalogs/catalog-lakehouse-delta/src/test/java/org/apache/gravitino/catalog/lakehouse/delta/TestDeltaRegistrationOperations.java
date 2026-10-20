@@ -35,6 +35,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
@@ -43,6 +44,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -226,10 +228,7 @@ public class TestDeltaRegistrationOperations {
                 "[\"recovery\"]",
                 "delta.adoption-roots",
                 "[\"s3://bucket/fixture\"]"));
-    Configuration hadoop = new Configuration();
-    hadoop.set("fs.s3a.impl", FixtureFileSystem.class.getName());
-    hadoop.set("delta.fixture.root", temp.resolve("native").toString());
-    reader = new DeltaMetadataReader(hadoop);
+    reader = new DeltaMetadataReader(readerConfiguration());
     operations = operations(reader, store);
   }
 
@@ -335,6 +334,85 @@ public class TestDeltaRegistrationOperations {
         () -> create(DeltaRegistrationCommand.reserve("token", "run-a", SCHEMA), 11));
     assertThrows(UnsupportedOperationException.class, () -> operations.dropTable(IDENT));
     assertThrows(UnsupportedOperationException.class, () -> operations.purgeTable(IDENT));
+  }
+
+  @Test
+  void actualReaderRefreshPersistsCdfEnableAndDisableWithoutReplacingRegistration()
+      throws Exception {
+    DeltaRegistrationReceipt published = publishCreate();
+    String location = published.location().orElseThrow();
+    String nativeId = published.nativeId().orElseThrow();
+    TableEntity initial = rawTable(IDENT);
+    String previousDigest =
+        DeltaRegistrationState.from(initial).data().path("observation").path("digest").asText();
+    Path log =
+        temp.resolve("native")
+            .resolve(URI.create(location).getPath().substring("/fixture/".length()))
+            .resolve("_delta_log");
+    byte[] createCommit = Files.readAllBytes(log.resolve("00000000000000000000.json"));
+
+    // These are hand-authored metadata actions matching the observed Delta 3.3 CDF shape,
+    // not Spark-emitted commits. Disabling CDF emits no protocol action and retains writer 7.
+    for (int version = 1; version <= 2; version++) {
+      String enabled = Boolean.toString(version == 1);
+      writeCommit(
+          location,
+          version,
+          nativeId,
+          SCHEMA,
+          Map.of(
+              DeltaOperationMarker.PROPERTY_KEY,
+              DeltaRegistrationState.from(initial).marker().encode(),
+              "delta.enableChangeDataFeed",
+              enabled),
+          version == 1
+              ? "{\"protocol\":{\"minReaderVersion\":1,\"minWriterVersion\":7,"
+                  + "\"writerFeatures\":[\"changeDataFeed\",\"appendOnly\",\"invariants\"]}}\n"
+              : "",
+          "SET TBLPROPERTIES");
+      Path commit = log.resolve(String.format(Locale.ROOT, "%020d.json", version));
+      byte[] nativeCommit = Files.readAllBytes(commit);
+
+      // A new reader and operations instance must refresh the persisted relational registration.
+      try (DeltaMetadataReader freshReader = new DeltaMetadataReader(readerConfiguration())) {
+        operations = operations(freshReader, store);
+        Table loaded = operations.loadTable(IDENT);
+        DeltaRegistrationReceipt refreshed = receipt(loaded);
+        assertEquals("PUBLISHED", refreshed.state().name(), refreshed.reason());
+        assertEquals(published.identity(), refreshed.identity());
+        assertEquals(nativeId, refreshed.nativeId().orElseThrow());
+        assertEquals(version, refreshed.nativeVersion().orElseThrow());
+        assertEquals(enabled, loaded.properties().get("delta.enableChangeDataFeed"));
+        assertEquals("id", loaded.columns()[0].name());
+        assertEquals(1, loaded.columns().length);
+
+        TableEntity persisted = rawTable(IDENT);
+        assertEquals(initial.id(), persisted.id());
+        assertEquals(initial.columns(), persisted.columns());
+        JsonNode observation = DeltaRegistrationState.from(persisted).data().path("observation");
+        assertEquals(version, observation.path("version").asLong());
+        assertEquals(nativeId, observation.path("uuid").asText());
+        assertEquals(SCHEMA, observation.path("schema").asText());
+        assertEquals(enabled, observation.path("safe").path("delta.enableChangeDataFeed").asText());
+        assertNotEquals(previousDigest, observation.path("digest").asText());
+        previousDigest = observation.path("digest").asText();
+        assertEquals(1, observation.path("protocol").path("reader").asInt());
+        assertEquals(7, observation.path("protocol").path("writer").asInt());
+        assertEquals(
+            JSON.readTree("[\"appendOnly\",\"changeDataFeed\",\"invariants\"]"),
+            observation.path("protocol").path("writerFeatures"));
+        assertEquals(0, observation.path("protocol").path("readerFeatures").size());
+        assertEquals("alice", persistedOwner());
+        Table reloaded = operations(freshReader, store).loadTable(IDENT);
+        assertEquals(enabled, reloaded.properties().get("delta.enableChangeDataFeed"));
+        assertEquals(refreshed.identity(), receipt(reloaded).identity());
+        assertEquals(persisted, rawTable(IDENT));
+      }
+      assertTrue(Arrays.equals(nativeCommit, Files.readAllBytes(commit)));
+      assertTrue(
+          Arrays.equals(
+              createCommit, Files.readAllBytes(log.resolve("00000000000000000000.json"))));
+    }
   }
 
   @Test
@@ -1089,6 +1167,13 @@ public class TestDeltaRegistrationOperations {
     }
   }
 
+  Configuration readerConfiguration() {
+    Configuration hadoop = new Configuration();
+    hadoop.set("fs.s3a.impl", FixtureFileSystem.class.getName());
+    hadoop.set("delta.fixture.root", temp.resolve("native").toString());
+    return hadoop;
+  }
+
   DeltaRegistrationOperations operations(
       DeltaMetadataReader nativeReader, EntityStore entityStore) {
     return new DeltaRegistrationOperations(
@@ -1212,6 +1297,25 @@ public class TestDeltaRegistrationOperations {
       String schema,
       Map<String, String> configuration)
       throws Exception {
+    writeCommit(
+        location,
+        version,
+        nativeId,
+        schema,
+        configuration,
+        "{\"protocol\":{\"minReaderVersion\":1,\"minWriterVersion\":2}}\n",
+        version == 0 ? "CREATE TABLE" : "REPLACE TABLE");
+  }
+
+  void writeCommit(
+      String location,
+      long version,
+      String nativeId,
+      String schema,
+      Map<String, String> configuration,
+      String protocolAction,
+      String operation)
+      throws Exception {
     Path log =
         temp.resolve("native")
             .resolve(URI.create(location).getPath().substring("/fixture/".length()))
@@ -1229,14 +1333,14 @@ public class TestDeltaRegistrationOperations {
         JSON.createObjectNode().put("provider", "parquet").set("options", JSON.createObjectNode()));
     Files.writeString(
         log.resolve(String.format(Locale.ROOT, "%020d.json", version)),
-        "{\"protocol\":{\"minReaderVersion\":1,\"minWriterVersion\":2}}\n"
+        protocolAction
             + JSON.createObjectNode().set("metaData", metadata)
             + "\n"
             + JSON.createObjectNode()
                 .set(
                     "commitInfo",
                     JSON.createObjectNode()
-                        .put("operation", version == 0 ? "CREATE TABLE" : "REPLACE TABLE")
+                        .put("operation", operation)
                         .put("readVersion", version - 1))
             + "\n");
   }

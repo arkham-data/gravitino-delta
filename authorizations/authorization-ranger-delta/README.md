@@ -53,9 +53,10 @@ Ranger dependencies.
 
 * TABLE / SELECT_TABLE / ALLOW becomes `select` on exactly
   `catalog / database / table / column=*`.
-* TABLE / MODIFY_TABLE / ALLOW becomes `update` on exactly
+* TABLE / MODIFY_TABLE / ALLOW becomes `update` and `alter` on exactly
   `catalog / database / table / column=*`. Mixed SELECT/MODIFY objects retain
-  distinct `select` and `update` accesses.
+  distinct `select`, `update` and `alter` accesses. No CREATE, DROP, DELETE,
+  unrestricted access or implicit SELECT is added.
 * Canonical CATALOG / USE_CATALOG / ALLOW and SCHEMA / USE_SCHEMA / ALLOW
   supply local Gravitino visibility and contribute **zero** Ranger resources or
   access items. Visibility-only and admitted visibility/SELECT/MODIFY combinations
@@ -98,6 +99,30 @@ Policy mutations require ACCESS type, exact service, all managed/metalake-ID/
 catalog-ID labels, exact four-level resources and nonrecursive/nonexcluded
 selectors. Duplicate owned candidates fail. Ranger-owned column policies, masks
 and row filters are preserved.
+
+## Existing MODIFY policy migration
+
+The MODIFY_TABLE mapping now includes `alter` as well as `update`. This is a
+visible privilege expansion for table modification. It supplies the required
+permission for future governed CDF property changes; the current installed CDF
+command remains rejected pending its implementation. Append continues to check
+`update`; reads check `select`.
+
+Installing this version leaves existing Ranger policies unchanged. An existing
+update-only grant cannot authorize an operation that checks `alter` until an
+operator explicitly migrates it. There is no automatic startup migration.
+Migration must preserve policy IDs, exact catalog/table scope, ownership and
+unrelated accesses, roles and foreign policy items. Revoking MODIFY_TABLE removes
+both `update` and `alter` while retaining an independently granted SELECT_TABLE.
+
+A delivered grant callback can reconcile the old access set to `update` plus
+`alter`, but reissuing an unchanged public Gravitino grant can skip callbacks and
+is not a migration guarantee. Plan an explicitly serialized operator migration
+using a real revoke/regrant transition, or a separately qualified desired-state
+reconciler. Account for the temporary permission gap and the persistence/retry
+limits below; verify Ranger readback and actual downloaded policy versions before
+claiming convergence. This connector does not provide a general reconciler or
+perform live migrations on upgrade.
 
 ## Persistence and retry limits
 

@@ -92,7 +92,9 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
         Privilege.Name.SELECT_TABLE,
         Set.of(RangerPrivileges.RangerHadoopSQLPrivilege.SELECT),
         Privilege.Name.MODIFY_TABLE,
-        Set.of(RangerPrivileges.RangerHadoopSQLPrivilege.UPDATE),
+        Set.of(
+            RangerPrivileges.RangerHadoopSQLPrivilege.UPDATE,
+            RangerPrivileges.RangerHadoopSQLPrivilege.ALTER),
         Privilege.Name.USE_CATALOG,
         Set.of(),
         Privilege.Name.USE_SCHEMA,
@@ -133,6 +135,7 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
           accesses.add(RangerPrivileges.RangerHadoopSQLPrivilege.SELECT);
         } else if (privilege.name() == Privilege.Name.MODIFY_TABLE) {
           accesses.add(RangerPrivileges.RangerHadoopSQLPrivilege.UPDATE);
+          accesses.add(RangerPrivileges.RangerHadoopSQLPrivilege.ALTER);
         } else {
           throw new IllegalArgumentException("Unsupported Delta privilege or condition");
         }
