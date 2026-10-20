@@ -13,8 +13,11 @@
 Status: Tasks 1 and 2 are implemented and reviewed. The command passes 17 CDF
 cases on Spark 3.5.4 / Delta 3.3.0, including the catalog-identity review fix;
 affected module checks/Javadoc pass. Fifteen focused append/base regressions
-passed before that final CDF-only identity fix. Task 3 is next: continued governed
-use and real provider composition. The user approved the mapping and execution.
+passed before that final CDF-only identity fix. Task 3 now has fourteen selected
+passing cases, real-provider persistence/recovery and same-store restart evidence;
+its integrated review passed (spec and quality READY). Task 4 owns remaining
+runtime/live qualification.
+The user approved the mapping and execution.
 Completed prerequisite evidence must not be repeated merely to restart this plan.
 
 ## Global constraints
@@ -44,7 +47,7 @@ Completed prerequisite evidence must not be repeated merely to restart this plan
 
 - [x] Change both mapping/translation paths to UPDATE + ALTER after a failing regression.
 - [x] Verify exact accesses, mixed SELECT, catalog isolation, legacy policy callback convergence/revocation, and no startup migration. Original RED: 4 failures; GREEN: 19 passing tests.
-- [x] Verify real reader/operations/H2 refresh across manually authored CDF enable/disable metadata actions. One focused provider test passes; native Spark-to-provider composition is still unverified.
+- [x] Verify real reader/operations/H2 refresh across manually authored CDF enable/disable metadata actions. One focused provider test passes; native Spark-to-provider composition is covered separately in Task 3.
 - [x] Complete the scoped review: READY, no concrete defects. Commit these prerequisites with their documentation.
 
 ## Task 2: Working authorized property mutation
@@ -88,11 +91,11 @@ The existing characterization passes by asserting rejection. Replace it with pos
 
 **Interfaces:** Consumes the working Task 2 command and refreshed registration, then uses ordinary named SELECT and the accepted append frontends.
 
-- [ ] Enable CDF, execute masked/filtered SELECT and matching-schema `insertInto`/existing-table `saveAsTable`, and verify duplicate suppression. Disable CDF and repeat ordinary use.
-- [ ] Verify actual target-first and project-first native cache maintenance where retained caches are present, plus checkpoint reopening. Add an exact operation-owned CDF maintenance witness if required; do not globally permit raw CDF reads.
-- [ ] Compare change production with independent native bounded CDF reads: no pre-enable changes, literal enabled-period rows, retained historical interval after disable, and rejected disabled intervals. The oracle is not a user-facing path bypass.
-- [ ] Execute the same command with real Gravitino provider refresh and verify persisted registration/native identity, schema, owner, protocol, property and version. This must compose the Spark command and provider, not join two mock-based test claims.
-- [ ] Exercise failure after native publication but before successful provider reload, then recovery by observation without repeating the mutation.
+- [x] Enable CDF, execute masked/filtered SELECT and matching-schema `insertInto`/existing-table `saveAsTable`, and verify duplicate suppression. Disable CDF and repeat ordinary use.
+- [x] Verify actual target-first and project-first native cache maintenance where retained caches are present, plus checkpoint reopening. Add an exact operation-owned CDF maintenance witness if required; do not globally permit raw CDF reads.
+- [x] Compare change production with independent native bounded CDF reads: no pre-enable changes, literal enabled-period rows, retained historical interval after disable, and rejected disabled intervals. The oracle is not a user-facing path bypass.
+- [x] Execute the same command with real Gravitino provider refresh and verify persisted registration/native identity, schema, owner, protocol, property and version. This must compose the Spark command and provider, not join two mock-based test claims.
+- [x] Exercise failure after native publication but before successful provider reload, then recovery by observation without repeating the mutation.
 
 ## Task 4: Qualify and document the usable feature
 

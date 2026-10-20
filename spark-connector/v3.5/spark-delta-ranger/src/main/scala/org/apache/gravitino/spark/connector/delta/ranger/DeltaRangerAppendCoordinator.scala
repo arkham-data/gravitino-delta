@@ -39,7 +39,8 @@ private[ranger] object DeltaRangerAppendCoordinator {
       input: DeltaRangerAppendV1Input.RetainedV1Input,
       owner: DeltaRangerRegistrationBindings.BoundAppendTransaction,
       transaction: OptimisticTransaction,
-      options: Map[String, String]
+      options: Map[String, String],
+      maintenance: Option[DeltaRangerCdfCacheMaintenance.Scope] = None
   ): Unit = {
     def validate(): Unit = input.association.validateRetainedOwned(input, owner, transaction)
     validate()
@@ -47,6 +48,7 @@ private[ranger] object DeltaRangerAppendCoordinator {
     validate()
     if (duplicate) {
       validate()
+      maintenance.foreach(_.complete(transaction, None))
       return
     }
     val source = new Source(input, owner, transaction)
@@ -81,13 +83,14 @@ private[ranger] object DeltaRangerAppendCoordinator {
         val tagged = helper.write()
         validate()
         helper.close()
-        new DeltaRangerAppendCommit(
+        val committed = new DeltaRangerAppendCommit(
           owner,
           transaction,
           tagged.actions,
           operation,
           tagged.stringTags
         ).run()
+        maintenance.foreach(_.complete(transaction, committed))
       } finally helper.close()
     } finally source.close()
   }

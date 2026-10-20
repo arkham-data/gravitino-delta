@@ -304,6 +304,13 @@ private[ranger] object DeltaRangerAppendV1Input {
     private var closed = false
 
     def requireLive(): Unit = {
+      requireMaintenanceLease()
+      receipt.revalidate()
+      issuer.requireInputLive()
+    }
+
+    /** Actual lease identity only; the separate maintenance owner checks postcommit context. */
+    private[ranger] def requireMaintenanceLease(): Unit = {
       if (closed) denied("expired actual input lease")
       issuer.requireInputLive()
       if (
@@ -311,8 +318,6 @@ private[ranger] object DeltaRangerAppendV1Input {
         !(queryExecution.sparkSession eq session) || !(queryExecution.analyzed eq analyzed)
       )
         denied("retained actual input changed")
-      receipt.revalidate()
-      issuer.requireInputLive()
     }
     private[ranger] def retainedData: Dataset[Row] = { requireLive(); data }
     def close(): Unit = { closed = true }

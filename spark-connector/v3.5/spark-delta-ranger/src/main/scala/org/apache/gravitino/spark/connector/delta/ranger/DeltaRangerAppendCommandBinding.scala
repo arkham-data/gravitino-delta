@@ -69,14 +69,20 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
     validate(command, input.session)
     val options = command.writeOptions.iterator.toMap
     DeltaRangerNativeIdempotency.validateOptions(input.session, options)
+    val maintenance = DeltaRangerCdfCacheMaintenance.prepare(input, this, target)
     target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
       val owner = target.bindTransaction(input.session, transaction)
-      try DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, options)
+      try
+        DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, options, maintenance)
       finally owner.close()
     }
     // DeltaTableV2's V1 writer refreshes this relation after both writes and duplicate returns.
-    input.session.sharedState.cacheManager
-      .recacheByPlan(input.session, target.table().toLogicalRelation)
+    maintenance match {
+      case Some(owner) => owner.recache()
+      case None =>
+        input.session.sharedState.cacheManager
+          .recacheByPlan(input.session, target.table().toLogicalRelation)
+    }
   }
 
   private[ranger] def validateRetainedOwned(

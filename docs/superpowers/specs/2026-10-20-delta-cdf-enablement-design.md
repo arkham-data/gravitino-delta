@@ -1,7 +1,7 @@
 # Governed CDF property mutation
 
-Status: local command implemented and reviewed; provider/continued-use and live
-qualification remain. October 20, 2026.
+Status: local command implemented and reviewed; first-pair provider/continued-use
+tests and integrated review pass; live runtime qualification remains. October 20, 2026.
 The user approved the MODIFY_TABLE → UPDATE + ALTER policy mapping on October 20;
 that bounded mapping change is committed with focused tests and review.
 Baseline: `dd6171a0b`. This document does not authorize live policy changes.

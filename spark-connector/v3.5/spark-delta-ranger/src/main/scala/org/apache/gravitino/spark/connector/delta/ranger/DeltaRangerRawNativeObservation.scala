@@ -62,7 +62,17 @@ private[ranger] object DeltaRangerRawNativeObservation {
     val segment = head.logSegment
     exact(segment, classOf[LogSegment])
     val evidence =
-      new Observation(session, index, descriptor, log, head, segment, registration, candidates)
+      new Observation(
+        session,
+        index,
+        descriptor,
+        log,
+        head,
+        segment,
+        registration,
+        candidates,
+        DeltaRangerCdfCacheMaintenance.observation(session, index)
+      )
     evidence.requireCurrent(session)
     evidence
   }
@@ -75,7 +85,8 @@ private[ranger] object DeltaRangerRawNativeObservation {
       private val head: Snapshot,
       private val segment: LogSegment,
       private val registration: RegistrationObservation,
-      private val candidates: Vector[(RegistrationObservation, CacheObservation)]
+      private val candidates: Vector[(RegistrationObservation, CacheObservation)],
+      private val cdf: Option[DeltaRangerCdfCacheMaintenance.Compatibility]
   ) {
     private val peerProfile = DeltaRangerRawDeltaLogCache.Profile.capture(index.spark)
     private val metadataJson = checkedMetadata(head.metadata)
@@ -90,6 +101,7 @@ private[ranger] object DeltaRangerRawNativeObservation {
     private val selectionCheckpoints = selectionFiles(segment.checkpointProvider.topLevelFiles)
     private val selectionCheckpointVersion = segment.checkpointProvider.version
     private val selectionCheckpointClass = segment.checkpointProvider.getClass
+    private[ranger] def cdfMaintenance: Boolean = cdf.nonEmpty
     val analysisVersion: Long = descriptor.version
     val installedVersion: Long = head.version
 
@@ -115,6 +127,7 @@ private[ranger] object DeltaRangerRawNativeObservation {
         registration.requireCurrent(actual)
         cache.requireCurrent(actual, owner)
       }
+      cdf.foreach(_.requireCurrent(index, head))
       val current = candidate(index, owner)
       if (
         (current ne descriptor) || (index.deltaLog ne log) || (descriptor.deltaLog ne log) ||
@@ -128,9 +141,9 @@ private[ranger] object DeltaRangerRawNativeObservation {
       cache.requirePeer(index.spark, owner)
       if (!index.path.equals(cache.dataPath())) reject()
       if (
-        checkedMetadata(descriptor.metadata) != metadataJson || checkedProtocol(
+        (cdf.isEmpty && (checkedMetadata(descriptor.metadata) != metadataJson || checkedProtocol(
           descriptor.protocol
-        ) != protocolJson ||
+        ) != protocolJson)) ||
         checkedMetadata(head.metadata) != metadataJson || checkedProtocol(
           head.protocol
         ) != protocolJson ||

@@ -48,6 +48,8 @@ private[ranger] object DeltaRangerPlanAdmission {
   private lazy val snapshotStateEncoder =
     Encoders.product[SnapshotState].asInstanceOf[ExpressionEncoder[SnapshotState]]
   private lazy val snapshotStateSchema = snapshotStateEncoder.schema
+  private lazy val protocolMetadataEncoder =
+    org.apache.spark.sql.delta.implicits.pmtvEncoder.asInstanceOf[ExpressionEncoder[_]]
 
   def registerSnapshot(index: TahoeLogFileIndex, snapshot: Snapshot): Unit = {
     if (operation == null) throw new SecurityException("Native snapshot lacks an owner")
@@ -228,10 +230,45 @@ private[ranger] object DeltaRangerPlanAdmission {
   private[ranger] def encoderBinding(plan: LogicalPlan): Boolean = plan match {
     case binding: DeserializeToObject =>
       binding.child match {
-        case local: LocalRelation if local.data.isEmpty => nativeShape(plan)
-        case _                                          => false
+        case local: LocalRelation if local.data.isEmpty =>
+          protocolMetadataBinding(binding, local) || nativeShape(plan)
+        case _ => false
       }
     case _ => false
+  }
+
+  // Snapshot.protocolMetadataAndICTReconstruction binds its pinned tuple encoder against an
+  // empty local relation during Dataset.as. This is analysis only, never a reconstruction ticket.
+  private def protocolMetadataBinding(
+      binding: DeserializeToObject,
+      local: LocalRelation
+  ): Boolean = {
+    val owner = operation
+    if (
+      owner == null || !owner.active() ||
+      owner.callback() != DeltaRangerNativeOperation.Callback.LOAD || local.isStreaming ||
+      !local.data.isEmpty || binding.deserializer.dataType != ObjectType(
+        classOf[Tuple4[_, _, _, _]]
+      ) ||
+      local.output.map(_.name) != Seq("protocol", "metaData", "inCommitTimestamp", "version") ||
+      local.output.map(_.dataType) != protocolMetadataEncoder.schema.fields.map(_.dataType).toSeq
+    ) return false
+    try {
+      owner.requireEvidence(org.apache.spark.sql.SparkSession.active)
+      val expected =
+        protocolMetadataEncoder.resolveAndBind(local.output, SimpleAnalyzer).deserializer
+      val actual = BindReferences.bindReference(
+        SimplifyCasts(binding).asInstanceOf[DeserializeToObject].deserializer,
+        AttributeSeq(local.output)
+      )
+      def normalized(expression: Expression): Expression =
+        ReassignLambdaVariableID(binding.copy(deserializer = expression))
+          .asInstanceOf[DeserializeToObject]
+          .deserializer
+      normalized(actual) == normalized(expected)
+    } catch {
+      case scala.util.control.NonFatal(_) => false
+    }
   }
 
   private def snapshotStateAggregate(plan: LogicalPlan): Boolean = plan match {

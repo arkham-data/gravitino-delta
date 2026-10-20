@@ -45,16 +45,17 @@ private[ranger] object DeltaRangerRawMaintenance {
     val relation = leaf(plan)
     val fs = relation.relation.asInstanceOf[HadoopFsRelation]
     val index = fs.location.asInstanceOf[TahoeLogFileIndex]
+    DeltaRangerCdfCacheMaintenance.authorize(plan, spark, index)
     val observation = DeltaRangerRawNativeObservation.observe(spark, index)
     val protocol = observation.selectedHead.protocol
     val metadata = observation.selectedHead.metadata
     if (
-      protocol.minReaderVersion != 1 || protocol.minWriterVersion > 2 ||
-      protocol.readerFeatures.nonEmpty || protocol.writerFeatures.nonEmpty ||
+      (!observation.cdfMaintenance && (protocol.minReaderVersion != 1 || protocol.minWriterVersion > 2 ||
+        protocol.readerFeatures.nonEmpty || protocol.writerFeatures.nonEmpty ||
+        metadata.configuration.getOrElse("delta.enableChangeDataFeed", "false") != "false")) ||
       metadata.format.provider != "parquet" || metadata.format.options.nonEmpty ||
       metadata.configuration.getOrElse("delta.columnMapping.mode", "none") != "none" ||
       Seq(
-        "delta.enableChangeDataFeed",
         "delta.enableDeletionVectors",
         "delta.enableRowTracking",
         "delta.enableTypeWidening"

@@ -37,6 +37,12 @@ import org.apache.gravitino.rel.{Column, Table => MetadataTable, TableCatalog}
 import org.apache.gravitino.spark.connector.SparkTypeConverter
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.analysis.SimpleAnalyzer
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.{DeserializeToObject, LocalRelation}
+import org.apache.spark.sql.types.ObjectType
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog => NativeTableCatalog}
 import org.apache.spark.sql.delta.{DeltaLog, DeltaRelation}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -280,6 +286,83 @@ class TestDeltaRangerRegistrationBindingsNative {
             assertTrue(policy.requests.isEmpty)
             assertTrue(policy.events.isEmpty)
             assertNull(DeltaRangerNativeOperation.current())
+          } finally f.close()
+        },
+        Some(extensions => NativeSelectFixture.extension(policy)(extensions))
+      )
+    finally policy.engine.close()
+  }
+
+  @Test
+  def protocolMetadataEncoderIsAnalysisOnlyUnderLiveLoad(): Unit = {
+    val policy = new TestDeltaRangerNativeSelect.Fixture
+    try
+      withWrapperSpark(
+        spark => {
+          val f = new WrapperFixture(spark, policy)
+          val encoder = org.apache.spark.sql.delta.implicits.pmtvEncoder
+            .asInstanceOf[ExpressionEncoder[_]]
+          val names = Seq("protocol", "metaData", "inCommitTimestamp", "version")
+          val attributes = encoder.schema.fields
+            .zip(names)
+            .map { case (field, name) =>
+              AttributeReference(name, field.dataType, field.nullable)()
+            }
+            .toSeq
+          val local = LocalRelation(attributes)
+          val binding = DeserializeToObject(
+            encoder.resolveAndBind(attributes, SimpleAnalyzer).deserializer,
+            AttributeReference("obj", ObjectType(classOf[Tuple4[_, _, _, _]]))(),
+            local
+          )
+          var checked = false
+          try {
+            f.onRead = number =>
+              if (number == 3) {
+                assertEquals(
+                  DeltaRangerNativeOperation.Callback.LOAD,
+                  DeltaRangerNativeOperation.current().callback()
+                )
+                assertEquals(
+                  DeltaRangerNativeProvenance.AnalysisOnlyNative,
+                  DeltaRangerNativeProvenance.classify(binding)
+                )
+                assertThrows(
+                  classOf[SecurityException],
+                  () => DeltaRangerNativeProvenance.requireExecutable(binding, spark)
+                )
+                assertThrows(
+                  classOf[SecurityException],
+                  () => DeltaRangerReadRule.prepare(binding, spark)
+                )
+                val altered = binding.copy(
+                  deserializer = Literal.create(null, binding.deserializer.dataType)
+                )
+                assertFalse(DeltaRangerPlanAdmission.encoderBinding(altered))
+                assertFalse(
+                  DeltaRangerPlanAdmission.encoderBinding(
+                    binding.copy(child = local.copy(data = Seq(InternalRow.empty)))
+                  )
+                )
+                assertFalse(
+                  DeltaRangerPlanAdmission.encoderBinding(
+                    binding.copy(child = local.copy(isStreaming = true))
+                  )
+                )
+                assertFalse(
+                  DeltaRangerPlanAdmission.encoderBinding(
+                    binding.copy(child = local.copy(output = attributes.reverse))
+                  )
+                )
+                checked = true
+              }
+            val loaded = f.wrapper.loadTable(name).asInstanceOf[DeltaTableV2]
+            assertTrue(checked)
+            assertFalse(DeltaRangerPlanAdmission.encoderBinding(binding))
+            val retained = f.wrapper.registrationBindings().resolve(fallback(loaded))
+            val wrongOwner = DeltaRangerNativeOperation.validateRetained(spark, retained)
+            try assertFalse(DeltaRangerPlanAdmission.encoderBinding(binding))
+            finally wrongOwner.close()
           } finally f.close()
         },
         Some(extensions => NativeSelectFixture.extension(policy)(extensions))

@@ -24,7 +24,7 @@ with the Ranger extension installed.
 | Create/replace/ALTER | Base adapter has staged creation/replacement and native ALTER delegation | Governed DDL authorization, native execution and registration continuity; base implementation is not governed acceptance |
 | Drop/purge/rename | Explicitly rejected by the current Spark adapter; provider retains registrations | Implement lifecycle and data-ownership/recovery semantics |
 | Overwrite, UPDATE, DELETE, MERGE | Not qualified by SELECT or append | Native outcomes plus independent source/target authorization and denied-write behavior |
-| Catalog CDF enablement | Local installed-extension named enable/disable tests now pass on Spark 3.5.4 / Delta 3.3.0; separate real-provider refresh test passes | Combined command/provider flow, continued governed use, remaining pairs and live Ranger/MinIO acceptance |
+| Catalog CDF enablement | [First-pair command, continued use and real-provider recovery](delta-cdf-enablement.md) pass, including S3/MinIO persistence and restart | Remaining pairs, production discovery and live Ranger authorization |
 | CDF consumption | Existing governed relation checks do not admit native CDF relations | Named batch and streaming CDF, policy application to historical rows/columns and metadata columns |
 | History/time travel/restore | Governed versioned loads explicitly reject time travel | Historical identity/schema semantics and authorization; restore write semantics |
 | Schema evolution and table features | Metadata/schema infrastructure exists; individual paths have narrower admission | Enumerate the native 3.3.0/3.3.2 feature baseline and qualify each supported combination through the catalog |
@@ -59,9 +59,9 @@ end-to-end governed feature is missing, but useful foundations are present:
   `TahoeLogFileIndex`. Native CDF uses a different relation; removing the options
   check alone cannot make it work.
 - [DeltaRangerRawMaintenance](../spark-connector/v3.5/spark-delta-ranger/src/main/scala/org/apache/gravitino/spark/connector/delta/ranger/DeltaRangerRawMaintenance.scala)
-  explicitly rejects CDF and writer protocols above 2. This is a raw cache
-  maintenance restriction, not evidence that every ordinary named read of a
-  CDF-enabled table is rejected.
+  keeps general raw CDF admission restricted. A separate issued-append witness
+  now supports the qualified CDF protocol during retained native cache maintenance;
+  it does not authorize raw user reads or broader governed caching.
 - [DeltaRangerPlanAdmission](../spark-connector/v3.5/spark-delta-ranger/src/main/scala/org/apache/gravitino/spark/connector/delta/ranger/DeltaRangerPlanAdmission.scala)
   admits a finite query shape and rejects streaming. Broader SELECT support is
   a real full-integration requirement, independently of CDF.
@@ -135,8 +135,8 @@ three passed in the focused rerun, and affected module checks and Javadoc passed
 The integrated review identified the missing native catalog-identity check; its
 targeted regression reproduced the defect, and the fix passed scoped re-review.
 All 15 prior CDF cases and the two catalog-replacement cases passed with the fix.
-These are local tests with mocked registration transport and policy fixtures,
-not combined provider or live Ranger/MinIO acceptance. Retained compiler/worktree
+Those command tests use mocked registration transport and local policy fixtures;
+the subsequent composed provider evidence is described below. Retained compiler/worktree
 metadata and native fixture warnings do not represent pristine test output.
 
 The separate
@@ -152,6 +152,17 @@ it does not establish nonempty data preservation, a server restart, native
 Spark-emitted commits or the combined Spark/provider flow. The first invocation
 failed on a fixture's attempt to read a marker from a published receipt; the
 corrected invocation passed without a production fix.
+
+The subsequent [continued-use and real-composition result](delta-cdf-enablement.md)
+adds fourteen selected passing cases. Both accepted append frontends, duplicate
+suppression, masked/filtered reads, native CDF intervals, both retained cache
+orders and actual checkpoint reopening pass. Actual Spark CDF commits compose
+with the packaged provider over S3/MinIO; an injected postpublication metadata
+failure recovers through ordinary observation without another native commit.
+Stopped-H2 history/identity/schema/owner checks and same-store server restart
+pass. This uses local policy transport/custom wrapper State, so deployed Ranger
+and production discovery remain unqualified. The bounded cache profile and
+separate governed-query cache restriction are explicit in that result.
 
 ## Approved authorization change
 
@@ -198,9 +209,11 @@ The enablement design and subsequent CDF-read work must preserve:
 
 The first runtime checks established native property delegation and identified
 the installed `SetTableProperties` admission blocker. The new command has passed
-its focused local command/publication tests and implementation review. Next,
-complete real provider composition and continued named reads/appends before
-rebuilding packages or launching a matrix.
+its focused local command/publication tests and implementation review. The
+real-provider composition and continued-use work has also passed integrated review.
+Next, qualify changed paths across the remaining runtime pairs and deployed
+Ranger 2.8.0.
+Reuse valid first-pair packages and evidence where their exact source binding holds.
 For the enablement step, an independent native CDF read can validate change
 production; it is a test oracle, not an authorized user-facing bypass.
 
