@@ -1,6 +1,6 @@
 # Governed named batch Delta CDF reads
 
-Status: proposed design for user review; implementation has not started.
+Status: approved by the user on 2026-10-20; implementation has not started.
 Baseline: `0f94d951122dc58ff15ce46bda5d736f82b5cfb8`, the closed and pushed
 [catalog CDF enablement milestone](../../delta-cdf-enablement.md).
 
@@ -245,7 +245,9 @@ cache purge. Copied, serialized, reused or foreign carriers cannot mint authorit
    close this milestone. Governed destination MERGE/writebacks are the next
    functional ELT step; streaming CDF requires a separate lifetime/checkpoint design.
 
-No implementation plan or runtime support is claimed by this proposed spec.
+The implementation sequence is recorded in the
+[implementation plan](../plans/2026-10-20-delta-cdf-consumption.md).
+Design approval does not claim runtime support.
 
 ## Source anchors
 
