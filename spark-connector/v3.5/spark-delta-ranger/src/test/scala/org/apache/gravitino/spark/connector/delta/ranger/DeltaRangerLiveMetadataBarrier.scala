@@ -114,6 +114,8 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
     private var releasedStatus = 0
     private var metadataPrincipal: String = _
     private var metadataObserved = false
+    private var metadataPrefix: String = _
+    private var metadataPaths = Set.empty[String]
     private var witness: Vector[String] = Vector.empty
     server.createContext("/", (exchange: HttpExchange) => forward(exchange))
     server.setExecutor(executor)
@@ -129,11 +131,25 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
       target = path; metadataPrincipal = principal
     }
 
-    def requireMetadataObserved(): Unit = synchronized {
+    def observeTables(prefix: String, principal: String): Unit = synchronized {
+      require(
+        state == "idle" && prefix.startsWith("/api/metalakes/") && prefix.endsWith(
+          "/tables/"
+        ) && principal.nonEmpty,
+        "Invalid named metadata observation"
+      )
+      metadataPrefix = prefix; metadataPrincipal = principal
+    }
+
+    def requireMetadataObserved(fileName: String = "metadata-identity.json"): Unit = synchronized {
       require(metadataObserved, "Separately authenticated metadata lookup was not observed")
       json.writeValue(
-        evidence.resolve("metadata-identity.json").toFile,
-        Map("principal" -> metadataPrincipal, "successfulTargetGet" -> Boolean.box(true)).asJava
+        evidence.resolve(fileName).toFile,
+        Map(
+          "principal" -> metadataPrincipal,
+          "successfulTargetGet" -> Boolean.box(true),
+          "successfulNamedGets" -> metadataPaths.toVector.sorted.asJava
+        ).asJava
       )
     }
 
@@ -224,7 +240,8 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
       var releasing = false
       try {
         val metadata = synchronized {
-          metadataPrincipal != null && exchange.getRequestMethod == "GET" && exchange.getRequestURI.getRawPath == target
+          metadataPrincipal != null && exchange.getRequestMethod == "GET" && (exchange.getRequestURI.getRawPath == target || (metadataPrefix != null && exchange.getRequestURI.getRawPath
+            .startsWith(metadataPrefix)))
         }
         if (metadata) {
           val header = Option(exchange.getRequestHeaders.getFirst("Authorization")).getOrElse("")
@@ -263,7 +280,9 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
         )
         if (response.body().nonEmpty) exchange.getResponseBody.write(response.body())
         exchange.getResponseBody.close()
-        if (metadata && response.statusCode() == 200) synchronized { metadataObserved = true }
+        if (metadata && response.statusCode() == 200) synchronized {
+          metadataObserved = true; metadataPaths += exchange.getRequestURI.getRawPath
+        }
         if (releasing) synchronized {
           require(state == "released", "Barrier aborted during forwarding")
           releasedStatus = response.statusCode(); state = "forwarded"

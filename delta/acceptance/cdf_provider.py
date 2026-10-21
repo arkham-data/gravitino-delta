@@ -57,14 +57,15 @@ def store_rows(server, output, name, query):
         return list(csv.DictReader(stream))
 
 
-def verify_store(server, output, records_output=None):
+def verify_store(server, output, records_output=None, table_name="t", column_label="cdf", record_names=("baseline", "enabled", "disabled", "recovered")):
+    assert table_name in ("t", "cdf_target")
     output.mkdir(exist_ok=True)
     records_output = records_output or output
-    rows = store_rows(server, output, "table-history", "SELECT t.table_id,t.schema_id,t.catalog_id,t.current_version,t.audit_info,v.version,v.properties FROM table_meta t JOIN table_version_info v ON t.table_id=v.table_id WHERE t.table_name='t' AND t.deleted_at=0 ORDER BY v.version")
+    rows = store_rows(server, output, "table-history", "SELECT t.table_id,t.schema_id,t.catalog_id,t.current_version,t.audit_info,v.version,v.properties FROM table_meta t JOIN table_version_info v ON t.table_id=v.table_id WHERE t.table_name='" + table_name + "' AND t.deleted_at=0 ORDER BY v.version")
     states = [json.loads(json.loads(row["PROPERTIES"])["delta.registration.internal.state"]) for row in rows]
     published = [state for state in states if state.get("state") == "PUBLISHED"]
     assert published
-    records = [json.loads((records_output / (name + ".json")).read_text()) for name in ("baseline", "enabled", "disabled", "recovered")]
+    records = [json.loads((records_output / (name + ".json")).read_text()) for name in record_names]
     for record in records:
         matching = [state for state in published if state["observation"]["version"] == record["nativeVersion"]]
         assert matching, "Missing persisted native observation"
@@ -82,12 +83,13 @@ def verify_store(server, output, records_output=None):
             "readerFeatures": sorted(protocol.get("readerFeatures", [])), "writerFeatures": sorted(protocol.get("writerFeatures", []))}
     assert len({(row["TABLE_ID"], row["SCHEMA_ID"], row["CATALOG_ID"], row["AUDIT_INFO"]) for row in rows}) == 1
     assert len({(state["id"], state["generation"], state["token"], state["location"]) for state in states}) == 1
-    owners = store_rows(server, output, "owner", "SELECT o.owner_id,o.owner_type,o.current_version,u.user_name FROM owner_meta o JOIN table_meta t ON t.table_id=o.metadata_object_id JOIN user_meta u ON u.user_id=o.owner_id WHERE t.table_name='t' AND o.metadata_object_type='TABLE' AND o.deleted_at=0 AND t.deleted_at=0")
+    owners = store_rows(server, output, "owner", "SELECT o.owner_id,o.owner_type,o.current_version,u.user_name FROM owner_meta o JOIN table_meta t ON t.table_id=o.metadata_object_id JOIN user_meta u ON u.user_id=o.owner_id WHERE t.table_name='" + table_name + "' AND o.metadata_object_type='TABLE' AND o.deleted_at=0 AND t.deleted_at=0")
     assert len(owners) == 1 and owners[0]["USER_NAME"] == records[0]["owner"]
     assert owners[0]["OWNER_TYPE"] == records[0]["ownerType"]
-    columns = server.column_snapshot("cdf")
+    columns = server.column_snapshot(column_label)
+    columns = {key: value for key, value in columns.items() if "." + table_name + "." in key}
     assert len(columns) == 3 and len({value["id"] for value in columns.values()}) == 3
-    history = store_rows(server, output, "column-history", "SELECT c.column_id,c.column_name,c.column_type,c.column_nullable,c.column_position,c.table_version,c.column_op_type FROM table_column_version_info c JOIN table_meta t ON t.table_id=c.table_id WHERE t.table_name='t' AND t.deleted_at=0 AND c.deleted_at=0 ORDER BY c.table_version,c.column_position")
+    history = store_rows(server, output, "column-history", "SELECT c.column_id,c.column_name,c.column_type,c.column_nullable,c.column_position,c.table_version,c.column_op_type FROM table_column_version_info c JOIN table_meta t ON t.table_id=c.table_id WHERE t.table_name='" + table_name + "' AND t.deleted_at=0 AND c.deleted_at=0 ORDER BY c.table_version,c.column_position")
     schema = {(row["COLUMN_ID"], row["COLUMN_NAME"], row["COLUMN_TYPE"], row["COLUMN_NULLABLE"], row["COLUMN_POSITION"]) for row in history}
     assert len(schema) == 3 and all(row["COLUMN_OP_TYPE"] != "3" for row in history)
     write_json(output / "persisted-verified.json", {"nativeVersions": [r["nativeVersion"] for r in records], "tableId": rows[0]["TABLE_ID"], "columns": columns, "owner": owners[0]})

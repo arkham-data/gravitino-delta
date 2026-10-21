@@ -161,6 +161,15 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
     boolean committed();
   }
 
+  /** Reports an unprovable current outcome without discarding any earlier publication evidence. */
+  static final class CdfAlterOutcomeUncertain extends IllegalStateException {
+    CdfAlterOutcomeUncertain(Throwable cause) {
+      super(
+          "CDF property change outcome uncertain; do not retry ALTER; recover with a fresh named observation",
+          cause);
+    }
+  }
+
   static Table withCdfAlter(CdfAlterInvocation invocation, Supplier<Table> body) {
     if (CDF_ALTER.get() != null) throw new SecurityException("Nested CDF property command");
     CDF_ALTER.set(invocation);
@@ -180,6 +189,7 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
     try {
       return super.alterTable(id, changes);
     } catch (RuntimeException failure) {
+      if (failure instanceof CdfAlterOutcomeUncertain) throw failure;
       if (invocation.committed()) {
         throw new IllegalStateException(
             "CDF property change committed; named refresh is unconfirmed; do not retry ALTER",

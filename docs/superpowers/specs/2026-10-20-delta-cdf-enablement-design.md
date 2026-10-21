@@ -1,7 +1,7 @@
 # Governed CDF property mutation
 
-Status: local command implemented and reviewed; first-pair provider/continued-use
-tests and integrated review pass; live runtime qualification remains. October 20, 2026.
+Status: all four pinned runtime/live cells pass with Ranger 2.8.0 and MinIO. Bounded qualification is recorded in the
+[CDF result](../../delta-cdf-enablement.md). October 20, 2026.
 The user approved the MODIFY_TABLE → UPDATE + ALTER policy mapping on October 20;
 that bounded mapping change is committed with focused tests and review.
 Baseline: `dd6171a0b`. This document does not authorize live policy changes.
@@ -147,6 +147,24 @@ Recovery is a fresh named load/observation and comparison with the retained comm
 identity. A policy change after publication cannot undo the commit; it must block
 subsequent governed use and must not be misreported as “no mutation occurred.”
 
+If execution fails after native invocation but before the first publication
+observation, classify the outcome with the captured transaction/log/snapshot,
+read version, identity and CommitInfo settings. The terminal classifier makes
+at most two bounded reads of the exact expected log object, checks stable file
+status and identical complete publication proofs, and preserves any prior digest
+binding. It does not require new policy/metadata execution authority. A proven
+own publication reports committed/refresh-unconfirmed; an unprovable publication
+reports uncertain, preserving the original cause and proof failure. Current
+uncertainty takes precedence over a historical proof whose bytes no longer match.
+Pre-native denials preserve their original failure.
+
+This classifier may only record the outward outcome. It cannot install snapshots,
+seal plans/caches, refresh registration, mark execution successful or replay SQL.
+Execution guards remain unchanged and authority closes before the error escapes.
+The actual native-write regression changes policy before the first owner
+observation and verifies later denial and observation-only recovery with no N+2.
+
+
 ## Required tests and implementation sequence
 
 1. Policy unit tests in
@@ -184,18 +202,17 @@ subsequent governed use and must not be misreported as “no mutation occurred.�
    run affected module tests before broad build. Do not rerun unrelated append
    qualification solely to reproduce its already accepted milestone.
 
-## Concrete implementation blockers
+## Original implementation risks and resolution
 
-The stock adapter does not expose native transaction capture, but both pinned
-native command sources provide the protected hook needed for the narrow seam
-above. Implement and test that seam and native configuration validation.
-The existing native owner is append-specific during publication/checkpoint:
-implement separate CDF publication evidence before admitting the command.
-Real provider refresh, CDF protocol append-maintenance compatibility and the
-other three version pairs have not been demonstrated. These are acceptance work,
-not grounds to bypass checks or to expand this task into general DML/CDF reading.
+The original stock-adapter transaction-capture gap is resolved by the protected
+native command hook and a narrow base-adapter seam, with native configuration
+validation retained. A separate CDF owner proves publication and checkpoint
+transitions independently of append authority. Real-provider refresh, ordinary
+use, bounded retained-cache maintenance and observation-only recovery have
+passing focused evidence. All four pinned runtime/live cells pass with Ranger 2.8.0 and MinIO.
 
-The next implementation begins with mapping/command tests and the native
-transaction-capture seam, then the publication witness, then real-provider
-enable/disable and continued-use acceptance. Governed CDF reads remain rejected
+The final outcome fix covers policy change between publication and its first
+observation, preserving execution denial while distinguishing committed and
+uncertain results without replay. The [CDF result](../../delta-cdf-enablement.md)
+records the runtime and evidence boundaries. Governed CDF reads remain rejected
 and require their own relation, historical-schema and masking/filtering design.

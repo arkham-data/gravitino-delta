@@ -10,13 +10,11 @@
 
 **Spec:** [Governed CDF property mutation](../specs/2026-10-20-delta-cdf-enablement-design.md).
 
-Status: Tasks 1 and 2 are implemented and reviewed. The command passes 17 CDF
-cases on Spark 3.5.4 / Delta 3.3.0, including the catalog-identity review fix;
-affected module checks/Javadoc pass. Fifteen focused append/base regressions
-passed before that final CDF-only identity fix. Task 3 now has fourteen selected
-passing cases, real-provider persistence/recovery and same-store restart evidence;
-its integrated review passed (spec and quality READY). Task 4 owns remaining
-runtime/live qualification.
+Status: all four pinned runtime/live cells pass with Ranger 2.8.0 and MinIO. Tasks 1–3 and the final postpublication outcome fix
+have passed their scoped reviews. The result page records final runtime/live
+qualification separately from retained local tests. The outcome regression
+covers policy change after publication and before first observation, explicit
+committed/uncertain results, authority cleanup and recovery without replay.
 The user approved the mapping and execution.
 Completed prerequisite evidence must not be repeated merely to restart this plan.
 
@@ -101,9 +99,16 @@ The existing characterization passes by asserting rejection. Replace it with pos
 
 **Files:** Focused runtime/live harness tests, companion/provider documentation, `docs/delta-integration-status.md`, and a CDF result page.
 
-- [ ] Run changed-path tests across all four Spark/Delta combinations.
-- [ ] Package and exercise authorized/denied/revoked CDF mutation, continued use and independent change readback against Ranger 2.8.0 and MinIO with distinct application/metadata identities.
-- [ ] Qualify new public MODIFY grants delivering both UPDATE and ALTER. Preserve legacy policies until an explicit operator migration; duplicate public grants are not a migration guarantee.
-- [ ] Record exact supported behavior and remaining CDF consumption/lifecycle/DML requirements. Review the integrated change once, commit, and preserve the local worktree/evidence.
+- [x] Run changed-path tests across all four Spark/Delta combinations.
+- [x] Package and exercise authorized/denied/revoked CDF mutation, continued use and independent change readback against Ranger 2.8.0 and MinIO with distinct application/metadata identities.
+- [x] Qualify new public MODIFY grants delivering both UPDATE and ALTER. Preserve legacy policies until an explicit operator migration; duplicate public grants are not a migration guarantee.
+- [x] Record exact supported behavior and remaining CDF consumption/lifecycle/DML requirements. Complete the integrated review and focused addenda, commit, push the milestone branch as authorized, and preserve the local worktree/evidence.
+
+Final evidence is summarized in [the CDF result](../../delta-cdf-enablement.md).
+The first-pair outcome fix has 38 covering cases, including eight new outcome
+cases. Valid earlier command, continued-use/cache and provider results remain
+accepted; per-pin compiled-source checks and shared-artifact live results are
+recorded separately. The final local harness relies on retained worktree helpers
+and evidence, rather than providing a standalone clean-checkout reproduction kit.
 
 This completes catalog CDF enablement only. Named governed CDF consumption, broader DML/DDL, streaming, table features and production/demo integration remain in the full-support scope register.

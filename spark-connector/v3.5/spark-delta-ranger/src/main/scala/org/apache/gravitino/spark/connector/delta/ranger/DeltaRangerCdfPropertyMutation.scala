@@ -49,12 +49,19 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
   private val settings = spark.sessionState.conf.getAllConfs.toMap
   private val engine = target.engine()
   private val stamp = engine.snapshotStamp()
+  private val log = target.log()
+  private val descriptor = target.descriptor()
   private val snapshot = target.table().initialSnapshot
+  private val readVersion = snapshot.version
+  private val originalMetadata = snapshot.metadata
+  private val originalProtocol = snapshot.protocol
+  private val userMetadata = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_USER_METADATA)
+  private val metrics = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)
   private val oldDeltas = snapshot.logSegment.deltas.map(fileStamp).toVector
   private val checkpoints =
     snapshot.logSegment.checkpointProvider.topLevelFiles.map(fileStamp).toVector
-  private val version = snapshot.version + 1
-  private val path = new Path(target.log().logPath, f"$version%020d.json")
+  private val version = readVersion + 1
+  private val path = new Path(log.logPath, f"$version%020d.json")
   private val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
   private val mapper = new ObjectMapper()
     .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -153,7 +160,9 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
       if (publication.isEmpty) denied("missing native publication")
       operation.succeed()
     } catch {
-      case failure: Throwable => primary = failure; throw failure
+      case failure: Throwable =>
+        primary = classifyFailure(failure)
+        throw primary
     } finally {
       try { if (operation != null) operation.close() }
       catch {
@@ -181,6 +190,48 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
       if (publication.nonEmpty) denied("publication disappeared")
       return
     }
+    val (observed, metadata, protocol) = readPublication()
+    expectedMetadata = metadata
+    expectedProtocol = protocol
+    publication = Some(observed)
+    committed()
+  }
+
+  // Classify only the outcome of the captured invocation. This grants no execution authority.
+  private def classifyFailure(failure: Throwable): Throwable = {
+    if (!invoked) return failure
+    try {
+      requireOutcomeIdentity()
+      val observed = readPublication()
+      requireOutcomeIdentity()
+      if (readPublication() != observed) denied("native outcome publication changed")
+      requireOutcomeIdentity()
+      committed()
+      failure
+    } catch {
+      case proof: Throwable =>
+        val uncertain = new DeltaRangerCatalogSpark35.CdfAlterOutcomeUncertain(failure)
+        if (proof ne failure) uncertain.addSuppressed(proof)
+        uncertain
+    }
+  }
+
+  private def requireOutcomeIdentity(): Unit = {
+    if (
+      transaction == null || nativeId == null || transaction.txnId != nativeId ||
+      (transaction.deltaLog ne log) || (transaction.snapshot ne snapshot) ||
+      transaction.readVersion != readVersion || !transaction.catalogTable.exists(_ eq descriptor) ||
+      (target.log() ne log) || (target.descriptor() ne descriptor) ||
+      (target.table().initialSnapshot ne snapshot) || (snapshot.deltaLog ne log) ||
+      snapshot.path != log.logPath || snapshot.version != readVersion ||
+      snapshot.metadata != originalMetadata || snapshot.protocol != originalProtocol ||
+      snapshot.logSegment.deltas.map(fileStamp).toVector != oldDeltas ||
+      snapshot.logSegment.checkpointProvider.topLevelFiles.map(fileStamp).toVector != checkpoints ||
+      OptimisticTransaction.getActive.exists(_ ne transaction)
+    ) denied("captured native outcome identity changed")
+  }
+
+  private def readPublication(): ((Vector[Any], Vector[Byte]), Metadata, Protocol) = {
     if (!invoked || transaction == null) denied("publication precedes native transaction")
     val before = fs.getFileStatus(path)
     if (!before.isFile) denied("publication is not a file")
@@ -194,8 +245,8 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
     val metadata = transaction.metadata
     val protocol = transaction.protocol
     if (
-      metadata != snapshot.metadata
-        .copy(configuration = snapshot.metadata.configuration ++ properties)
+      metadata != originalMetadata
+        .copy(configuration = originalMetadata.configuration ++ properties)
     )
       denied("unrelated native metadata change")
     if (expectedMetadata != null && (metadata != expectedMetadata || protocol != expectedProtocol))
@@ -203,10 +254,7 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
     verifyPublication(bytes, metadata, protocol)
     val observed = fileStamp(after) -> MessageDigest.getInstance("SHA-256").digest(bytes).toVector
     if (publication.exists(_ != observed)) denied("publication bytes or status changed")
-    expectedMetadata = metadata
-    expectedProtocol = protocol
-    publication = Some(observed)
-    committed()
+    (observed, metadata, protocol)
   }
 
   private def verifyPublication(
@@ -224,12 +272,10 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
       actions.tail.exists(_.has("commitInfo"))
     ) denied("publication envelopes changed")
     val expected = Vector(parse(metadata.json)) ++
-      (if (protocol != snapshot.protocol) Vector(parse(protocol.json)) else Vector.empty)
+      (if (protocol != originalProtocol) Vector(parse(protocol.json)) else Vector.empty)
     if (actions.tail.size != expected.size || actions.tail.toSet != expected.toSet)
       denied("foreign or unexpected native actions")
     val info = actions.head.get("commitInfo")
-    val userMetadata = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_USER_METADATA)
-    val metrics = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)
     val required = Set(
       "timestamp",
       "operation",
@@ -265,7 +311,7 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
       !info
         .path("readVersion")
         .isIntegralNumber || !info.path("readVersion").canConvertToLong ||
-      info.path("readVersion").longValue() != transaction.readVersion ||
+      info.path("readVersion").longValue() != readVersion ||
       info.path("operation").textValue() != operation.name || !info
         .path("operationParameters")
         .isObject ||

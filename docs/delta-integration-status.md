@@ -1,7 +1,7 @@
 # Delta integration: capability status and next delivery
 
-Source audit, focused local probes and CDF implementation: October 20, 2026.
-This is the current scope register, not full runtime qualification. CDF work
+Source audit and bounded catalog CDF qualification: October 20, 2026.
+This is the current scope register, not a claim of full Delta support. CDF work
 follows the [implementation plan](superpowers/plans/2026-10-20-delta-cdf-enablement.md).
 The original objective remains full Delta integration through Spark,
 Gravitino-owned registration, and Ranger enforcement without changes to Gravitino
@@ -18,13 +18,13 @@ with the Ranger extension installed.
 | --- | --- | --- |
 | Dedicated Delta catalog and discovery | Production `lakehouse-delta` provider and Spark adapter exist; [startup contract](spark-connector/spark-delta-catalog.md) | Deployment/coexistence acceptance in the actual demo and distributed runtime |
 | Gravitino-owned registration | Publication, native metadata and recovery machinery exist; [provider contract](../catalogs/catalog-lakehouse-delta/README.md) | Complete lifecycle, recovery and migration acceptance; no second authoritative Glue/Hive registry |
-| Public grants/revokes → Ranger | [Qualified SELECT propagation](delta-ranger-production-results.md) and [MODIFY append propagation](delta-native-governed-append.md), Ranger 2.8.0; new UPDATE + ALTER mapping tested locally | Live qualification/migration for expanded MODIFY grants, remaining operations and general partial-failure reconciliation |
+| Public grants/revokes → Ranger | [Qualified SELECT propagation](delta-ranger-production-results.md) and [MODIFY append propagation](delta-native-governed-append.md), Ranger 2.8.0; UPDATE + ALTER propagation qualified by the [CDF result](delta-cdf-enablement.md) | Explicit migration of existing policies, remaining operations and general partial-failure reconciliation |
 | Named governed SELECT | Qualified projections, filters and the admitted join/expression shapes, column permissions, masks and row filters | General Spark queries: aggregation, ordering, broader joins/expressions, AQE and caching are not covered by this result |
 | Named batch append | Qualified matching-schema `insertInto` and existing-table `saveAsTable`; all four version pairs | SQL INSERT, `writeTo`, wider options/schema handling and transaction-setting modes |
-| Create/replace/ALTER | Base adapter has staged creation/replacement and native ALTER delegation | Governed DDL authorization, native execution and registration continuity; base implementation is not governed acceptance |
+| Create/replace/ALTER | Named single-property CDF ALTER qualified; base adapter has staged creation/replacement and native ALTER delegation | Governed create/replace and other ALTER operations, native execution and registration continuity |
 | Drop/purge/rename | Explicitly rejected by the current Spark adapter; provider retains registrations | Implement lifecycle and data-ownership/recovery semantics |
 | Overwrite, UPDATE, DELETE, MERGE | Not qualified by SELECT or append | Native outcomes plus independent source/target authorization and denied-write behavior |
-| Catalog CDF enablement | [First-pair command, continued use and real-provider recovery](delta-cdf-enablement.md) pass, including S3/MinIO persistence and restart | Remaining pairs, production discovery and live Ranger authorization |
+| Catalog CDF enablement | [Qualified named enable/disable](delta-cdf-enablement.md), ordinary use, public authorization and persistence/restart on all four pairs with Ranger 2.8.0 and MinIO | Production/demo deployment; this does not qualify governed CDF consumption |
 | CDF consumption | Existing governed relation checks do not admit native CDF relations | Named batch and streaming CDF, policy application to historical rows/columns and metadata columns |
 | History/time travel/restore | Governed versioned loads explicitly reject time travel | Historical identity/schema semantics and authorization; restore write semantics |
 | Schema evolution and table features | Metadata/schema infrastructure exists; individual paths have narrower admission | Enumerate the native 3.3.0/3.3.2 feature baseline and qualify each supported combination through the catalog |
@@ -39,8 +39,9 @@ more tests of the already accepted append path.
 
 ## Concrete CDF findings
 
-The earlier shorthand “CDF is not implemented” needs qualification. The
-end-to-end governed feature is missing, but useful foundations are present:
+Catalog CDF enablement is implemented and qualified within the linked result.
+Governed named change consumption still needs a separate admission and policy
+binding. The relevant architecture is:
 
 - [GravitinoDeltaCatalogSpark35](../spark-connector/v3.5/spark-delta/src/main/java/org/apache/gravitino/spark/connector/delta/GravitinoDeltaCatalogSpark35.java)
   accepts supported property changes in `alterTable`, resolves the registered
@@ -71,8 +72,8 @@ This explains a material difference from the existing Iceberg/Hive practice:
 sends converted property changes through Gravitino. The Delta adapter instead
 owns the native Spark transaction and reloads Gravitino's observation. Reusing
 the generic property path unchanged would hit the command-only REST contract.
-The existing CDF safe-projection unit test uses a mocked protocol, so it does not
-prove a real CDF table can complete this flow.
+The early CDF safe-projection unit test used a mocked protocol; subsequent real
+provider and deployed tests qualify the composed enablement flow.
 
 Native Delta enables CDF through a table property and records subsequent
 changes. Insert-only changes can be reconstructed from the transaction log;
@@ -83,7 +84,7 @@ and [3.3.2 reader](https://github.com/delta-io/delta/blob/v3.3.2/spark/src/main/
 define `DeltaCDFRelation` as a `BaseRelation`/`CatalystScan`, with
 `_change_type`, `_commit_version` and `_commit_timestamp`.
 
-## Focused runtime results
+## Earlier focused results and their boundaries
 
 On Spark 3.5.4 / Delta 3.3.0 / JDK 17, two new
 [native adapter tests](../spark-connector/v3.5/spark-delta/src/test/java/org/apache/gravitino/spark/connector/delta/TestDeltaNativeAdapter.java)
@@ -160,8 +161,8 @@ orders and actual checkpoint reopening pass. Actual Spark CDF commits compose
 with the packaged provider over S3/MinIO; an injected postpublication metadata
 failure recovers through ordinary observation without another native commit.
 Stopped-H2 history/identity/schema/owner checks and same-store server restart
-pass. This uses local policy transport/custom wrapper State, so deployed Ranger
-and production discovery remain unqualified. The bounded cache profile and
+pass. That scenario uses local policy transport/custom wrapper State; deployed
+Ranger and production discovery are established separately by the final live cells. The bounded cache profile and
 separate governed-query cache restriction are explicit in that result.
 
 ## Approved authorization change
@@ -174,56 +175,37 @@ access. Four focused tests first failed for missing ALTER, then all 19 tests in
 callback convergence/revocation, independent SELECT, catalog isolation and
 preservation of unrelated roles/policies. Module formatting checks passed.
 
-No live policy was changed. Existing policies require an explicit migration;
+That unit-test step changed no live policy. Final qualification uses fresh owned
+fixtures for real public grant/revoke/regrant transitions. Existing deployment
+policies remain unchanged and require an explicit migration;
 reissuing an unchanged public grant may skip callbacks. See the
 [migration contract](../authorizations/authorization-ranger-delta/README.md#existing-modify-policy-migration).
-This supplies authorization plumbing for CDF mutation. The installed SQL command
-now passes focused local enable/disable tests and review; live qualification remains.
+The final [CDF result](delta-cdf-enablement.md) verifies this mapping through
+actual Ranger 2.8.0 policy downloads and named Spark execution across all four
+version pairs. It does not establish automatic or general migration.
 
-## Next delivery and architectural decision
+## Next delivery
 
-Recommended next user-visible result: enable CDF on a registered table through
-the named catalog, append through the governed writer, and read the resulting
-changes by name with Ranger permissions, masks and row filters enforced.
-Accept this in two explicit steps: first catalog enablement with ordinary SELECT
-and append preserved, then governed CDF consumption. The first step addresses
-the user's enablement priority and can ship independently; it must not be
-reported as governed CDF-read support.
+Catalog CDF enablement and disablement are the completed bounded step:
+all four pinned runtime/live cells pass with Ranger 2.8.0 and MinIO. The next CDF step is governed named consumption, first
+batch and then streaming, preserving Gravitino registration ownership and Ranger
+permissions, masks and row filters.
 
-The enablement design and subsequent CDF-read work must preserve:
+The consumption design must bind the registered table and native CDF relation to
+an explicit version interval, define policy behavior for historical rows/schema
+and the three CDF metadata columns, and compare exact results with native Delta.
+Denied and revoked access must remain enforced. The independent native path
+oracle used for enablement does not provide this user-facing feature.
 
-1. **Property mutation:** authorize the application actor before native ALTER;
-   preserve registration identity and observe the resulting native property and
-   protocol. Do not silently extend MODIFY grants to unrelated operations.
-2. **CDF reads:** bind the named registration, selected version interval and
-   native CDF relation; apply current Ranger decisions to returned historical
-   data. Define historical schema changes and treatment of the three CDF
-   metadata columns explicitly.
-3. **Continued use:** prove ordinary named reads, append, duplicate behavior and
-   native maintenance still work after enabling CDF. Do not disable caches or
-   weaken admission just to make a positive test pass.
-4. **Acceptance:** compare literal change rows and version boundaries with native
-   Delta, exercise denied/revoked access and masked/filtered results, then qualify
-   the changed paths across the four version pairs with Ranger 2.8.0 and MinIO.
-   A subsequent demo step must use catalog names, not substituted S3 paths.
+The [enablement result](delta-cdf-enablement.md) records final packaged execution,
+committed/uncertain outcomes and observation-only recovery. Retained raw-cache
+maintenance has a bounded profile; broader governed query caching remains open.
+The local fixture depends on retained worktree helpers and evidence, so a
+standalone clean-checkout reproduction kit and `catalog-demo`/distributed/cloud
+qualification remain separate work.
 
-The first runtime checks established native property delegation and identified
-the installed `SetTableProperties` admission blocker. The new command has passed
-its focused local command/publication tests and implementation review. The
-real-provider composition and continued-use work has also passed integrated review.
-Next, qualify changed paths across the remaining runtime pairs and deployed
-Ranger 2.8.0.
-Reuse valid first-pair packages and evidence where their exact source binding holds.
-For the enablement step, an independent native CDF read can validate change
-production; it is a test oracle, not an authorized user-facing bypass.
-
-The selected [enablement design](superpowers/specs/2026-10-20-delta-cdf-enablement-design.md)
-extends the existing adapter with a CDF-specific command binding and independently
-verified native transaction. It preserves existing source masking/filtering and
-revocation boundaries. General operation authorization and governed CDF reading
-remain separate work.
-
-Keep the accepted append milestone closed unless a concrete regression or CDF
-dependency requires a change. Do not repeat its complete matrix without such a
-change. Full Delta lifecycle, DML, streaming and table-feature work remains in the
-scope register; it is not an undefined prerequisite called “Delta maturity.”
+Keep accepted SELECT, append and enablement milestones closed unless a concrete
+regression or changed dependency requires new verification. Full Delta still
+requires the lifecycle, DML, query, schema/feature and streaming work in the scope
+register above. These requirements are not prerequisites for beginning governed
+CDF consumption.

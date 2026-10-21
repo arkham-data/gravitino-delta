@@ -1,0 +1,47 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+// Owned CDF changed-path lane and thin application; no production assembly task.
+gradle.projectsEvaluated {
+  def owner = rootProject.project(':spark-connector:spark-delta-ranger-3.5')
+  owner.configurations.matching { it.name in ['testCompileClasspath', 'testRuntimeClasspath'] }.configureEach {
+    resolutionStrategy.eachDependency { if (requested.group == 'org.apache.hadoop') useVersion('3.3.6') }
+  }
+  owner.dependencies.add('testRuntimeOnly', 'org.apache.hadoop:hadoop-aws:3.3.6')
+  owner.dependencies.add('testRuntimeOnly', 'com.amazonaws:aws-java-sdk-bundle:1.12.367')
+  owner.tasks.named('test').configure {
+    jvmArgs = jvmArgs.findAll { !it.toString().startsWith('-Xmx') }
+    maxHeapSize = '4g'
+    maxParallelForks = 1
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+    if (rootProject.findProperty('cdfLiveXml')) reports.junitXml.outputLocation.set(new File(rootProject.findProperty('cdfLiveXml').toString()))
+  }
+  owner.tasks.register('cdfLiveThinJar', org.gradle.api.tasks.bundling.Jar) { jarTask ->
+    jarTask.dependsOn(owner.tasks.named('testClasses'))
+    jarTask.archiveFileName.set('public-grants-live-append.jar')
+    jarTask.destinationDirectory.set(new File((rootProject.findProperty('cdfLiveAppOut') ?: 'build/cdf-live-app').toString()))
+    jarTask.from(owner.sourceSets.test.output) {
+      ['DeltaRangerLiveAppend', 'DeltaRangerLivePhasePin', 'DeltaRangerLiveMetadataBarrier', 'DeltaRangerDownloadedSecurity', 'DeltaRangerCallbackGateway', 'DeltaRangerStartupCache'].each { name ->
+        include("org/apache/gravitino/spark/connector/delta/ranger/${name}.class")
+        include("org/apache/gravitino/spark/connector/delta/ranger/${name}\$*.class")
+      }
+    }
+  }
+}

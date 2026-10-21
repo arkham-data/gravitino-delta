@@ -104,9 +104,9 @@ and row filters are preserved.
 
 The MODIFY_TABLE mapping now includes `alter` as well as `update`. This is a
 visible privilege expansion for table modification. It supplies the required
-permission for future governed CDF property changes; the current installed CDF
-command remains rejected pending its implementation. Append continues to check
-`update`; reads check `select`.
+permission for [named CDF enablement and disablement](../../docs/delta-cdf-enablement.md).
+The installed command admits only the canonical CDF property and literal boolean;
+other DDL remains outside this delivery. Append checks `update`; reads check `select`.
 
 Installing this version leaves existing Ranger policies unchanged. An existing
 update-only grant cannot authorize an operation that checks `alter` until an
@@ -158,7 +158,11 @@ role versions must be checked independently before claiming enforcement converge
 
 The [October 18 named append result](../../docs/delta-native-governed-append.md)
 qualifies public MODIFY propagation through deployed Ranger 2.8.0 on four pinned
-local Spark/Delta profiles. This mapping does not qualify all DML.
+local Spark/Delta profiles. The subsequent [CDF result](../../docs/delta-cdf-enablement.md)
+qualifies the expanded UPDATE plus ALTER mapping through fresh public grant,
+revoke and regrant, actual same-JVM policy downloads and named CDF execution on
+all four profiles. Existing deployment policies are not migrated by those tests.
+This mapping does not qualify all DML or governed CDF consumption.
 
 ```bash
 ./gradlew :authorizations:authorization-ranger-delta:copyLibAndConfig
