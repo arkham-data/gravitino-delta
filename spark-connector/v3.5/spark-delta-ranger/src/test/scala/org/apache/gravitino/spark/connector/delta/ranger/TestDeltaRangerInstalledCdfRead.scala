@@ -26,6 +26,36 @@ import org.junit.jupiter.api.Test
 /** Installed named CDF reads must preserve native events under current Ranger policy. */
 class TestDeltaRangerInstalledCdfRead {
   @Test
+  def preparedCopyCannotInstallOrRetireOriginal(): Unit = {
+    val policy = new TestDeltaRangerNativeSelect.Fixture
+    policy.filter = null
+    policy.maskColumn = "unused"
+    val fixture = new DeltaRangerCdfReadFixture
+    try
+      NativeSelectFixture.withSpark(
+        spark => {
+          val frame = fixture.read(spark)
+          val original = frame.queryExecution.sparkPlan.asInstanceOf[DeltaRangerCdfProducer]
+          assertSame(original, DeltaRangerPhysicalProvenance.capture(original, spark))
+          val copied = original.copy()(original.receipt)
+          assertThrows(
+            classOf[SecurityException],
+            () => DeltaRangerPhysicalProvenance.finish(copied, spark)
+          )
+          assertThrows(classOf[SecurityException], () => copied.executeCollect())
+          assertSame(original, frame.queryExecution.sparkPlan)
+          assertEquals(
+            fixture.multiset(fixture.expected),
+            fixture.multiset(frame.collect().toVector)
+          )
+        },
+        Some(NativeSelectFixture.extension(policy)),
+        beforeExtension = fixture.prepare
+      )
+    finally policy.engine.close()
+  }
+
+  @Test
   def namedBoundedReadUsesOwnedNativeBranches(): Unit = {
     val policy = new TestDeltaRangerNativeSelect.Fixture
     policy.filter = null

@@ -128,8 +128,9 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
   }
   def afterTransitions(candidate: DeltaRangerCdfProducer): Unit = {
     if (!prepared || installed) denied("repeated CDF physical installation")
+    if (candidate ne physical) denied("foreign CDF physical installation")
+    requireContext()
     scans.verify(candidate.child)
-    physical = candidate
     installed = true
   }
   def replaceProducer(
