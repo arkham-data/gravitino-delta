@@ -359,6 +359,7 @@ private[ranger] object NativeSelectFixture {
   var installer: Option[SparkSessionExtensions => Unit] = None
   var locations: Map[String, String] = Map.empty
   var policy: Option[TestDeltaRangerNativeSelect.Fixture] = None
+  var catalogEngines: Map[String, DeltaRangerPolicyEngine] = Map.empty
   var catalogPolicies: Map[String, TestDeltaRangerNativeSelect.Fixture] = Map.empty
   private val bound = new java.util.IdentityHashMap[
     SparkSession,
@@ -394,7 +395,8 @@ private[ranger] object NativeSelectFixture {
         new NativeBoundCatalogFixture(
           spark,
           catalogPolicies.getOrElse(catalog, policy.get),
-          catalog
+          catalog,
+          catalogEngines.get(catalog)
         )
       )
       .wrapper
@@ -469,7 +471,8 @@ private[ranger] object NativeSelectFixture {
       test: SparkSession => Unit,
       extension: Option[SparkSessionExtensions => Unit] = None,
       startupOptions: Map[String, String] = Map.empty,
-      beforeExtension: SparkSession => Unit = _ => ()
+      beforeExtension: SparkSession => Unit = _ => (),
+      clearNativeCacheBeforeExtension: Boolean = true
   ): Unit = {
     val directory = Files.createTempDirectory("delta-ranger-native")
     locations = Seq("a", "b", "q").map(c => c -> directory.resolve(c).toString).toMap
@@ -532,7 +535,7 @@ private[ranger] object NativeSelectFixture {
       }
       beforeExtension(spark)
       extension.foreach { install =>
-        org.apache.spark.sql.delta.DeltaLog.clearCache()
+        if (clearNativeCacheBeforeExtension) org.apache.spark.sql.delta.DeltaLog.clearCache()
         val conf = spark.sparkContext.getConf
         spark.stop()
         SparkSession.clearActiveSession()
@@ -557,6 +560,7 @@ private[ranger] object NativeSelectFixture {
       bound.clear()
       policy = None
       catalogPolicies = Map.empty
+      catalogEngines = Map.empty
       spark.stop()
       installer = None
       SparkSession.clearActiveSession()

@@ -36,6 +36,8 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     spark: SparkSession
 ) extends DeltaRangerCollectValidationContext {
   import DeltaRangerCdfRead.denied
+  private val analyzed = source.observation(original)
+  analyzed.validate()
   private val settings = spark.sessionState.conf.getAllConfs
   private val originalBinding = DeltaRangerNativeProvenance.binding(original)
   private val subject = DeltaRangerQuerySubject.current(spark)
@@ -64,6 +66,7 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
   private val instant = Instant.now()
   keys.foreach(engine.authorize(subject, _, instant))
   private val decisions = DeltaRangerMaskRules.capture(scan, columns, engine, subject, instant)
+  analyzed.requireDecisions(decisions)
   private val interval = DeltaRangerCdfHistory.capture(source.binding, source.request, spark)
   private val scans = new DeltaRangerCdfReadScans(interval, spark)
   private val masked = DeltaRangerMaskRules.rewrite(scan, columns, decisions, spark)
@@ -177,6 +180,51 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
 }
 
 private[ranger] object DeltaRangerCdfReadReceipt {
+
+  /** Analysis evidence is not execution authority and never authorizes eager unused output. */
+  final class Observation(
+      source: DeltaRangerCdfRead.Source,
+      original: LogicalPlan,
+      spark: SparkSession
+  ) {
+    import DeltaRangerCdfRead.denied
+    private val settings = spark.sessionState.conf.getAllConfs
+    private val subject = DeltaRangerQuerySubject.current(spark)
+    private val engine = source.binding.anchor().engine()
+    private val stamp = engine.snapshotStamp()
+    private val descriptor = source.binding.anchor().descriptor()
+    private val id = descriptor.identifier
+    private val scan = DeltaRangerReadRule.Scan(
+      source.logical,
+      id.catalog.get,
+      id.database.get,
+      id.table,
+      Option(descriptor.owner).filter(_.nonEmpty)
+    )
+    private val used = original.output.map(_.exprId).toSet ++ original.collect {
+      case node if !node.isInstanceOf[LogicalRelation] =>
+        node.expressions.flatMap(_.references.map(_.exprId))
+    }.flatten
+    private val columns = source.logical.output.filter(a => used(a.exprId)).map(_.name).toSet
+    private val decisions =
+      DeltaRangerMaskRules.capture(scan, columns, engine, subject, Instant.now())
+    validate()
+    def validate(): Unit = {
+      if ((SparkSession.active ne spark) || settings != spark.sessionState.conf.getAllConfs)
+        denied("analyzed CDF context changed")
+      val current = DeltaRangerQuerySubject.current(spark)
+      if (current.user() != subject.user() || current.groups() != subject.groups())
+        denied("analyzed CDF subject changed")
+      engine.requireSnapshot(stamp)
+      source.check(source.logical, spark)
+    }
+    def requireDecisions(current: DeltaRangerMaskRules.Decisions): Unit = {
+      validate()
+      if (current.filter != decisions.filter || current.masks != decisions.masks)
+        denied("analyzed CDF policy changed")
+    }
+  }
+
   def issue(
       source: DeltaRangerCdfRead.Source,
       original: LogicalPlan,

@@ -47,13 +47,36 @@ private[ranger] object DeltaRangerCdfRead {
   final class Source private[DeltaRangerCdfRead] (
       val binding: DeltaRangerRegistrationBindings.BoundCdfRead,
       val request: Request,
-      val spark: org.apache.spark.sql.SparkSession
+      val spark: org.apache.spark.sql.SparkSession,
+      originalOutput: Seq[org.apache.spark.sql.catalyst.expressions.AttributeReference]
   ) extends org.apache.spark.sql.sources.BaseRelation {
     override def sqlContext: org.apache.spark.sql.SQLContext = spark.sqlContext
     override val schema: org.apache.spark.sql.types.StructType =
       org.apache.spark.sql.delta.commands.cdc.CDCReader
         .cdcReadSchema(binding.anchor().index().schema)
-    val logical = org.apache.spark.sql.execution.datasources.LogicalRelation(this)
+    private val relation = org.apache.spark.sql.execution.datasources.LogicalRelation(this)
+    val logical = relation.copy(output = relation.output.map { attribute =>
+      originalOutput.find(_.name == attribute.name).getOrElse(attribute)
+    })
+    private val observations = new java.util.IdentityHashMap[
+      org.apache.spark.sql.catalyst.plans.logical.LogicalPlan,
+      DeltaRangerCdfReadReceipt.Observation
+    ]()
+    private var consumed = false
+    def observe(plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan): Unit = {
+      if (consumed) denied("derived or reused CDF source")
+      if (!observations.containsKey(plan))
+        observations.put(plan, new DeltaRangerCdfReadReceipt.Observation(this, plan, spark))
+    }
+    def observation(
+        plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+    ): DeltaRangerCdfReadReceipt.Observation = {
+      if (consumed) denied("reused CDF source")
+      val observation =
+        Option(observations.get(plan)).getOrElse(denied("missing exact analyzed CDF observation"))
+      consumed = true
+      observation
+    }
     def check(
         relation: org.apache.spark.sql.execution.datasources.LogicalRelation,
         session: org.apache.spark.sql.SparkSession
@@ -83,7 +106,50 @@ private[ranger] object DeltaRangerCdfRead {
       catalogs: DeltaRangerReadRule.Scan => DeltaRangerCatalogSpark35
   ): Option[org.apache.spark.sql.catalyst.plans.logical.LogicalPlan] = {
     import scala.collection.JavaConverters._
+    import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
+    import org.apache.spark.sql.catalyst.expressions.Literal
+    import org.apache.spark.sql.delta.{CDCNameBased, CDCPathBased}
+    import org.apache.spark.sql.types.{ByteType, ShortType, IntegerType, LongType, StringType}
+    import org.apache.spark.sql.util.CaseInsensitiveStringMap
     import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+    // Capture the named function before Delta lowers it to its stock CDF relation. The
+    // unresolved named load then follows exactly the DataFrame binding and receipt route.
+    val functions = plan.collect {
+      case named: CDCNameBased => named
+      case _: CDCPathBased     => denied("path CDF function")
+    }
+    if (functions.nonEmpty) {
+      if (functions.size != 1 || plan.isStreaming) denied("unsupported CDF source shape")
+      val function = functions.head
+      if (function.functionArgs.size != 3) denied("explicit CDF bounds required")
+      val name = function.functionArgs.head match {
+        case Literal(value, StringType) if value != null => value.toString
+        case _ => denied("literal named CDF source required")
+      }
+      val parts = spark.sessionState.sqlParser.parseMultipartIdentifier(name)
+      if (parts.size != 3 || parts.exists(p => p.exists(c => c == '/' || c == '\\' || c == ':')))
+        denied("fully qualified named CDF source required")
+      parts.foreach(DeltaRangerResourceKey.literal)
+      val bounds = function.functionArgs.tail.map {
+        case Literal(value, ByteType | ShortType | IntegerType | LongType) if value != null =>
+          value.toString
+        case _ => denied("integer literal CDF bounds required")
+      }
+      val options = Map(
+        "readChangeFeed" -> "true",
+        "startingVersion" -> bounds.head,
+        "endingVersion" -> bounds.last
+      )
+      parse(options, Long.MaxValue)
+      return Some(plan.transformDown {
+        case named: CDCNameBased if named eq function =>
+          UnresolvedRelation(
+            parts,
+            new CaseInsensitiveStringMap(options.asJava),
+            isStreaming = false
+          )
+      })
+    }
     import org.apache.spark.sql.delta.catalog.DeltaTableV2
     val sources = plan.collect {
       case relation: DataSourceV2Relation
@@ -114,7 +180,7 @@ private[ranger] object DeltaRangerCdfRead {
     val bound = catalog.registrationBindings().bindCdfRead(native)
     val request =
       parse(source.options.asCaseSensitiveMap().asScala.toMap, native.initialSnapshot.version)
-    val pending = new Source(bound, request, spark)
+    val pending = new Source(bound, request, spark, source.output)
     Some(plan.transformDown {
       case relation: DataSourceV2Relation if relation eq source => pending.logical
     })

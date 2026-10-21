@@ -206,7 +206,10 @@ private[ranger] object DeltaRangerReadRule {
 
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
     if (DeltaRangerCdfReadScans.analysis(plan, spark)) return
-    if (DeltaRangerCdfRead.pending(plan, spark).nonEmpty) return
+    DeltaRangerCdfRead.pending(plan, spark).foreach { source =>
+      source.observe(plan)
+      return
+    }
     plan match {
       case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return
       case cdf: DeltaRangerCdfRead.Carrier               => cdf.receipt; return

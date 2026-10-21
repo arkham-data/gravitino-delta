@@ -52,7 +52,8 @@ import org.mockito.Mockito._
 private[ranger] class NativeBoundCatalogFixture(
     spark: SparkSession,
     policy: TestDeltaRangerNativeSelect.Fixture,
-    catalogName: String = "a"
+    catalogName: String = "a",
+    engineOverride: Option[DeltaRangerPolicyEngine] = None
 ) extends AutoCloseable {
   private val name = Identifier.of(Array("db"), "t")
   private val nativeCatalog = new NativeSelectTestCatalog
@@ -118,7 +119,7 @@ private[ranger] class NativeBoundCatalogFixture(
       metadata,
       () => throw new AssertionError("Read must not use actor supplier"),
       () => catalog,
-      _ => policy.engine
+      _ => engineOverride.getOrElse(policy.engine)
     )
   )
   wrapper.initialize(
