@@ -294,7 +294,7 @@ class TestDeltaRangerRegistrationBindingsNative {
   }
 
   @Test
-  def protocolMetadataEncoderIsAnalysisOnlyUnderLiveLoad(): Unit = {
+  def protocolMetadataEncoderIsAnalysisOnlyUnderLiveLoadAndRetainedValidation(): Unit = {
     val policy = new TestDeltaRangerNativeSelect.Fixture
     try
       withWrapperSpark(
@@ -360,7 +360,50 @@ class TestDeltaRangerRegistrationBindingsNative {
             assertTrue(checked)
             assertFalse(DeltaRangerPlanAdmission.encoderBinding(binding))
             val retained = f.wrapper.registrationBindings().resolve(fallback(loaded))
-            val wrongOwner = DeltaRangerNativeOperation.validateRetained(spark, retained)
+            val validation = DeltaRangerNativeOperation.validateRetained(spark, retained)
+            try {
+              assertEquals(
+                DeltaRangerNativeProvenance.AnalysisOnlyNative,
+                DeltaRangerNativeProvenance.classify(binding)
+              )
+              assertThrows(
+                classOf[SecurityException],
+                () => DeltaRangerNativeProvenance.requireExecutable(binding, spark)
+              )
+              assertThrows(
+                classOf[SecurityException],
+                () => DeltaRangerReadRule.prepare(binding, spark)
+              )
+              assertFalse(
+                DeltaRangerPlanAdmission.encoderBinding(
+                  binding.copy(deserializer = Literal.create(null, binding.deserializer.dataType))
+                )
+              )
+              assertFalse(
+                DeltaRangerPlanAdmission.encoderBinding(
+                  binding.copy(child = local.copy(data = Seq(InternalRow.empty)))
+                )
+              )
+              assertFalse(
+                DeltaRangerPlanAdmission.encoderBinding(
+                  binding.copy(child = local.copy(isStreaming = true))
+                )
+              )
+              assertFalse(
+                DeltaRangerPlanAdmission.encoderBinding(
+                  binding.copy(child = local.copy(output = attributes.reverse))
+                )
+              )
+            } finally validation.close()
+            assertFalse(DeltaRangerPlanAdmission.encoderBinding(binding))
+            val wrongOwner =
+              DeltaRangerNativeOperation.prepare(new DeltaRangerNativeOperation.ScanOwner {
+                override def session(): SparkSession = spark
+                override def bindings()
+                    : java.util.List[DeltaRangerRegistrationBindings.BoundRegistrationScan] =
+                  Collections.singletonList(retained)
+                override def requireLive(): Unit = retained.requireRetained()
+              })
             try assertFalse(DeltaRangerPlanAdmission.encoderBinding(binding))
             finally wrongOwner.close()
           } finally f.close()

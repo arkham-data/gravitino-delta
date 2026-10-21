@@ -251,7 +251,8 @@ private[ranger] object DeltaRangerPlanAdmission {
     if (
       owner == null || !owner.active() ||
       (owner.callback() != DeltaRangerNativeOperation.Callback.LOAD &&
-        owner.callback() != DeltaRangerNativeOperation.Callback.CDF_READ) || local.isStreaming ||
+        owner.callback() != DeltaRangerNativeOperation.Callback.CDF_READ &&
+        owner.callback() != DeltaRangerNativeOperation.Callback.VALIDATE_RETAINED_BINDING) || local.isStreaming ||
       !local.data.isEmpty || binding.deserializer.dataType != ObjectType(
         classOf[Tuple4[_, _, _, _]]
       ) ||
