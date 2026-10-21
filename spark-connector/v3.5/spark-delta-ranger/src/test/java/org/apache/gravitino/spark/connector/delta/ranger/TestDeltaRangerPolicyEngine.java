@@ -128,6 +128,30 @@ class TestDeltaRangerPolicyEngine {
   @TempDir Path directory;
 
   @Test
+  void accessObservationRecordsDenialAndPropagatesEvaluationFailures() throws Exception {
+    Fixture f = new Fixture(directory);
+    Instant instant = Instant.parse("2026-10-20T12:00:00Z");
+    try (DeltaRangerPolicyEngine lease = f.owner.acquire(f.config)) {
+      assertTrue(lease.accessDecision(f.subject, f.key, instant));
+      f.allowed = false;
+      assertFalse(lease.accessDecision(f.subject, f.key, instant));
+      assertThrows(SecurityException.class, () -> lease.authorize(f.subject, f.key, instant));
+      f.allowed = null;
+      assertThrows(SecurityException.class, () -> lease.accessDecision(f.subject, f.key, instant));
+      f.allowed = true;
+      f.failure = new IllegalStateException("injected access evaluator failure");
+      SecurityException error =
+          assertThrows(
+              SecurityException.class, () -> lease.accessDecision(f.subject, f.key, instant));
+      assertSame(f.failure, error.getCause());
+      f.failure = null;
+      assertThrows(SecurityException.class, () -> lease.accessDecision(null, f.key, instant));
+      assertThrows(SecurityException.class, () -> lease.accessDecision(f.subject, null, instant));
+      assertThrows(SecurityException.class, () -> lease.accessDecision(f.subject, f.key, null));
+    }
+  }
+
+  @Test
   void nullDenyAndEvaluationErrorsRejectWithoutEmptyEngineSuccess() throws Exception {
     Fixture f = new Fixture(directory);
     try (DeltaRangerPolicyEngine lease = f.owner.acquire(f.config)) {

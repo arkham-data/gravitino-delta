@@ -114,11 +114,17 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
   }
 
   void authorize(DeltaRangerQuerySubject subject, DeltaRangerResourceKey key, Instant accessTime) {
+    if (!accessDecision(subject, key, accessTime)) {
+      throw new SecurityException("Delta Ranger access denied");
+    }
+  }
+
+  // Analysis may record denial without enforcing eager output that a later projection omits.
+  // Evaluation failures still reject; only a valid Ranger allow/deny result is evidence.
+  boolean accessDecision(
+      DeltaRangerQuerySubject subject, DeltaRangerResourceKey key, Instant accessTime) {
     synchronized (owner) {
-      RangerAccessResult result = evaluate(subject, key, 0, accessTime);
-      if (!result.getIsAllowed()) {
-        throw new SecurityException("Delta Ranger access denied");
-      }
+      return evaluate(subject, key, 0, accessTime).getIsAllowed();
     }
   }
 

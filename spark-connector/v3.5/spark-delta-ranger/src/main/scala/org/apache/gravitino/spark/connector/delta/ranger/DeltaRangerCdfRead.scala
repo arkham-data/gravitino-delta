@@ -63,14 +63,15 @@ private[ranger] object DeltaRangerCdfRead {
       DeltaRangerCdfReadReceipt.Observation
     ]()
     private var consumed = false
-    def observe(plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan): Unit = {
-      if (consumed) denied("derived or reused CDF source")
-      if (!observations.containsKey(plan))
-        observations.put(plan, new DeltaRangerCdfReadReceipt.Observation(this, plan, spark))
-    }
+    def observe(plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan): Unit =
+      synchronized {
+        if (consumed) denied("derived or reused CDF source")
+        if (!observations.containsKey(plan))
+          observations.put(plan, new DeltaRangerCdfReadReceipt.Observation(this, plan, spark))
+      }
     def observation(
         plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-    ): DeltaRangerCdfReadReceipt.Observation = {
+    ): DeltaRangerCdfReadReceipt.Observation = synchronized {
       if (consumed) denied("reused CDF source")
       val observation =
         Option(observations.get(plan)).getOrElse(denied("missing exact analyzed CDF observation"))

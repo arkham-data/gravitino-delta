@@ -36,6 +36,92 @@ import org.junit.jupiter.api.Test
 /** Foreign plans and native reconstruction state cannot inherit another action's authority. */
 class TestDeltaRangerCdfReadOwnership {
   @Test
+  def concurrentAnalyzedSiblingsIssueExactlyOneReceipt(): Unit = {
+    import java.util.IdentityHashMap
+    import java.util.concurrent.{Callable, CountDownLatch, Executors, TimeUnit}
+    import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+    import org.apache.spark.sql.SparkSession
+    import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+    val fixture = new DeltaRangerCdfReadFixture
+    DeltaRangerCdfReadFixture.withGoverned(fixture.prepare) { spark =>
+      val base = fixture.read(spark)
+      val first = base.select("id")
+      val second = base.select("_change_type")
+      first.queryExecution.analyzed
+      second.queryExecution.analyzed
+      val source = first.queryExecution.analyzed.collectFirst { case relation: LogicalRelation =>
+        relation.relation.asInstanceOf[DeltaRangerCdfRead.Source]
+      }.get
+      val lookup = new CountDownLatch(1)
+      val release = new CountDownLatch(1)
+      val secondLookup = new CountDownLatch(1)
+      val calls = new AtomicInteger
+      val field = source.getClass.getDeclaredFields.find(_.getName == "observations").get
+      field.setAccessible(true)
+      val original = field
+        .get(source)
+        .asInstanceOf[IdentityHashMap[LogicalPlan, DeltaRangerCdfReadReceipt.Observation]]
+      val coordinated = new IdentityHashMap[LogicalPlan, DeltaRangerCdfReadReceipt.Observation] {
+        override def get(key: AnyRef): DeltaRangerCdfReadReceipt.Observation = {
+          if (calls.incrementAndGet() == 1) {
+            lookup.countDown()
+            assertTrue(release.await(20, TimeUnit.SECONDS), "release first lookup")
+          } else secondLookup.countDown()
+          super.get(key)
+        }
+      }
+      coordinated.putAll(original)
+      field.set(source, coordinated)
+      val pool = Executors.newFixedThreadPool(2)
+      val secondThread = new AtomicReference[Thread]
+      def normalize(frame: org.apache.spark.sql.DataFrame, record: Boolean) =
+        new Callable[Either[Throwable, LogicalPlan]] {
+          override def call(): Either[Throwable, LogicalPlan] = {
+            if (record) secondThread.set(Thread.currentThread())
+            SparkSession.setActiveSession(spark)
+            try {
+              val normalized = frame.queryExecution.normalized
+              assertTrue(normalized.isInstanceOf[DeltaRangerCdfRead.Carrier])
+              assertSame(normalized, frame.queryExecution.normalized)
+              Right(normalized)
+            } catch { case failure: Exception => Left(failure) }
+            finally SparkSession.clearActiveSession()
+          }
+        }
+      try {
+        val one = pool.submit(normalize(first, false))
+        assertTrue(lookup.await(20, TimeUnit.SECONDS), "first query reaches observation lookup")
+        val two = pool.submit(normalize(second, true))
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+        def blockedOnSource: Boolean = Option(secondThread.get()).exists { thread =>
+          val info =
+            java.lang.management.ManagementFactory.getThreadMXBean.getThreadInfo(thread.getId)
+          info != null && info.getThreadState == Thread.State.BLOCKED && info.getLockInfo != null &&
+          info.getLockInfo.getIdentityHashCode == System.identityHashCode(source)
+        }
+        while (secondLookup.getCount != 0 && !blockedOnSource && System.nanoTime() < deadline)
+          Thread.sleep(1)
+        assertTrue(
+          secondLookup.getCount == 0 || blockedOnSource,
+          "second reader reaches the coordinated boundary"
+        )
+        release.countDown()
+        val results = Seq(one.get(30, TimeUnit.SECONDS), two.get(30, TimeUnit.SECONDS))
+        assertEquals(1, results.count(_.isRight), results.toString)
+        assertEquals(1, calls.get(), "only one observation can be consumed")
+        assertTrue(
+          results
+            .collect { case Left(error) => error.getMessage }
+            .exists(_.contains("reused CDF source"))
+        )
+      } finally {
+        release.countDown(); pool.shutdownNow();
+        assertTrue(pool.awaitTermination(30, TimeUnit.SECONDS))
+      }
+    }
+  }
+
+  @Test
   def foreignHistoryAndCachesCannotBorrowAuthority(): Unit = {
     val fixture = new DeltaRangerCdfReadFixture
     DeltaRangerCdfReadFixture.withGoverned(fixture.prepare) { spark =>

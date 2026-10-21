@@ -32,6 +32,39 @@ import org.junit.jupiter.api.Test
 /** Current real Ranger decisions apply to every native image and original action obligation. */
 class TestDeltaRangerCdfReadPolicies {
   @Test
+  def scheduledSelectGrantCannotRefreshAnalyzedQuery(): Unit = {
+    val policy = new DeltaRangerCdfPolicyFixture
+    val fixture = new DeltaRangerCdfReadFixture
+    policy.withSpark(fixture.prepare) { spark =>
+      val format = DateTimeFormatter
+        .ofPattern(RangerValiditySchedule.VALIDITY_SCHEDULE_DATE_STRING_SPECIFICATION)
+        .withZone(ZoneOffset.UTC)
+      val activation = Instant.now().plusSeconds(8)
+      val schedule = new RangerValiditySchedule(
+        format.format(activation),
+        format.format(activation.plusSeconds(120)),
+        "UTC",
+        null
+      )
+      policy.publish(grantSchedule = Some(schedule))
+      val subject = DeltaRangerQuerySubject.current(spark)
+      val key = new DeltaRangerResourceKey("a", "db", "t", "id", "select", null)
+      assertThrows(classOf[SecurityException], () => policy.engine.authorize(subject, key))
+      val held = fixture.read(spark).select("id")
+      held.queryExecution.analyzed
+      val stamp = policy.engine.snapshotStamp()
+      while (!Instant.now().isAfter(activation.plusSeconds(1))) Thread.sleep(100)
+      policy.engine.requireSnapshot(stamp)
+      policy.engine.authorize(subject, key)
+      assertThrows(classOf[Exception], () => { held.collect(); () })
+      assertEquals(
+        fixture.multiset(fixture.expected.map(row => Row(row.getLong(0)))),
+        fixture.multiset(fixture.read(spark).select("id").collect().toVector)
+      )
+    }
+  }
+
+  @Test
   def policiesApplyToEveryNativeImage(): Unit = {
     val policy = new DeltaRangerCdfPolicyFixture
     var start = 0L; var end = 0L; var expected = Vector.empty[Row]

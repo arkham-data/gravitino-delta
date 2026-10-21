@@ -58,7 +58,8 @@ private[ranger] final class DeltaRangerCdfPolicyFixture extends DeltaRangerPolic
       denied: Set[String] = Set.empty,
       filter: Option[String] = None,
       masks: Map[String, String] = Map.empty,
-      schedule: Option[RangerValiditySchedule] = None
+      schedule: Option[RangerValiditySchedule] = None,
+      grantSchedule: Option[RangerValiditySchedule] = None
   ): Unit = {
     def resource(id: Long, kind: Int, columns: Seq[String]): RangerPolicy = {
       val policy = new RangerPolicy
@@ -82,6 +83,7 @@ private[ranger] final class DeltaRangerCdfPolicyFixture extends DeltaRangerPolic
     val grant = resource(1L, 0, Seq("*"))
     val allowed = new RangerPolicyItem; access(allowed)
     grant.setPolicyItems(Collections.singletonList(allowed))
+    grantSchedule.foreach(s => grant.setValiditySchedules(Collections.singletonList(s)))
     val policies = scala.collection.mutable.ArrayBuffer(grant)
     if (denied.nonEmpty) {
       val deny = resource(2L, 0, denied.toSeq)

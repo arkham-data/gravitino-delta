@@ -66,7 +66,7 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
   private val instant = Instant.now()
   keys.foreach(engine.authorize(subject, _, instant))
   private val decisions = DeltaRangerMaskRules.capture(scan, columns, engine, subject, instant)
-  analyzed.requireDecisions(decisions)
+  analyzed.requireDecisions(decisions, keys)
   private val interval = DeltaRangerCdfHistory.capture(source.binding, source.request, spark)
   private val scans = new DeltaRangerCdfReadScans(interval, spark)
   private val masked = DeltaRangerMaskRules.rewrite(scan, columns, decisions, spark)
@@ -206,8 +206,14 @@ private[ranger] object DeltaRangerCdfReadReceipt {
         node.expressions.flatMap(_.references.map(_.exprId))
     }.flatten
     private val columns = source.logical.output.filter(a => used(a.exprId)).map(_.name).toSet
+    private val instant = Instant.now()
+    private val access = DeltaRangerResourceKey
+      .select(scan.catalog, scan.database, scan.table, columns.asJava, scan.owner.orNull)
+      .asScala
+      .map(key => key -> engine.accessDecision(subject, key, instant))
+      .toMap
     private val decisions =
-      DeltaRangerMaskRules.capture(scan, columns, engine, subject, Instant.now())
+      DeltaRangerMaskRules.capture(scan, columns, engine, subject, instant)
     validate()
     def validate(): Unit = {
       if ((SparkSession.active ne spark) || settings != spark.sessionState.conf.getAllConfs)
@@ -218,8 +224,15 @@ private[ranger] object DeltaRangerCdfReadReceipt {
       engine.requireSnapshot(stamp)
       source.check(source.logical, spark)
     }
-    def requireDecisions(current: DeltaRangerMaskRules.Decisions): Unit = {
+    def requireDecisions(
+        current: DeltaRangerMaskRules.Decisions,
+        authorizedKeys: Vector[DeltaRangerResourceKey]
+    ): Unit = {
       validate()
+      // Receipt issuance has authorized each current demand at the same evaluation instant.
+      // Compare that complete allow inventory with analysis, including earlier denials.
+      if (access != authorizedKeys.map(_ -> true).toMap)
+        denied("analyzed CDF SELECT decision changed")
       if (current.filter != decisions.filter || current.masks != decisions.masks)
         denied("analyzed CDF policy changed")
     }
