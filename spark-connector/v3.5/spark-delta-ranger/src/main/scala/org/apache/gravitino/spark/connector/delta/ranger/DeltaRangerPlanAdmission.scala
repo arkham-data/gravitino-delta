@@ -174,6 +174,10 @@ private[ranger] object DeltaRangerPlanAdmission {
                      .map(_.metadata)
                      .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata))
                      .exists(_.ownsLog(fs, index))
+                 else if (operation != null && operation.cdfReadOwner() != null)
+                   index.rootPaths.nonEmpty && index.rootPaths.forall(
+                     operation.cdfReadOwner().ownsHistoryFile
+                   )
                  else
                    index.rootPaths.nonEmpty && index.rootPaths.forall { path =>
                      path.getParent != null && path.getParent.getName == "_delta_log" &&
@@ -246,7 +250,8 @@ private[ranger] object DeltaRangerPlanAdmission {
     val owner = operation
     if (
       owner == null || !owner.active() ||
-      owner.callback() != DeltaRangerNativeOperation.Callback.LOAD || local.isStreaming ||
+      (owner.callback() != DeltaRangerNativeOperation.Callback.LOAD &&
+        owner.callback() != DeltaRangerNativeOperation.Callback.CDF_READ) || local.isStreaming ||
       !local.data.isEmpty || binding.deserializer.dataType != ObjectType(
         classOf[Tuple4[_, _, _, _]]
       ) ||

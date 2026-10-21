@@ -64,8 +64,13 @@ private[ranger] class DeltaRangerReadRule(
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
     DeltaRangerNativeOperation.requireNoRawSelection()
+    if (DeltaRangerCdfReadScans.analysis(plan, spark)) return plan
+    DeltaRangerCdfRead.resolve(plan, spark, catalogs).foreach(result => return result)
+    if (DeltaRangerCdfRead.pending(plan, spark).nonEmpty) return plan
     plan match {
-      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return cdf
+      case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return helper
+      case cdf: DeltaRangerCdfRead.Carrier               => cdf.receipt; return cdf
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier    => cdf.owner.check(cdf, spark); return cdf
       case cdf: SetTableProperties if cdf.resolved =>
         return DeltaRangerCdfPropertyCommand.resolve(cdf, spark, catalogs)
       case append: AppendData if append.resolved =>
@@ -200,9 +205,13 @@ private[ranger] object DeltaRangerReadRule {
   }
 
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
+    if (DeltaRangerCdfReadScans.analysis(plan, spark)) return
+    if (DeltaRangerCdfRead.pending(plan, spark).nonEmpty) return
     plan match {
-      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return
-      case _                                          =>
+      case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return
+      case cdf: DeltaRangerCdfRead.Carrier               => cdf.receipt; return
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier    => cdf.owner.check(cdf, spark); return
+      case _                                             =>
     }
     if (DeltaRangerAppendHelper.analysis(plan, spark)) return
     if (plan.isInstanceOf[AppendData]) {
@@ -215,9 +224,11 @@ private[ranger] object DeltaRangerReadRule {
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
     plan match {
-      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return cdf
-      case raw: DeltaRangerRawMaintenance.Carrier     => return raw.owner.prepare(raw.child)
-      case _                                          =>
+      case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return helper
+      case cdf: DeltaRangerCdfRead.Carrier               => cdf.receipt; return cdf
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier    => cdf.owner.check(cdf, spark); return cdf
+      case raw: DeltaRangerRawMaintenance.Carrier        => return raw.owner.prepare(raw.child)
+      case _                                             =>
     }
     if (plan.isInstanceOf[AppendData])
       return DeltaRangerAppendV1Input.prepare(plan.asInstanceOf[AppendData], spark)

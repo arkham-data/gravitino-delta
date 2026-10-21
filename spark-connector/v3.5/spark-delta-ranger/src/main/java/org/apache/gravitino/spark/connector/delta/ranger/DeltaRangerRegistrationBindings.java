@@ -236,6 +236,69 @@ final class DeltaRangerRegistrationBindings {
     }
   }
 
+  /** Issues a separate read binding only for the exact completed ordinary named load. */
+  @SuppressWarnings("ReferenceEquality")
+  BoundCdfRead bindCdfRead(DeltaTableV2 original) {
+    requireLive();
+    if (original == null || original.catalogTable().isEmpty()) throw denied();
+    CatalogTable descriptor = original.catalogTable().get();
+    RegistrationBinding binding;
+    synchronized (this) {
+      drain(collected, entries);
+      binding = entries.get(new IdentityKey<>(descriptor, null));
+    }
+    if (binding == null || binding.table.get() != original) throw denied();
+    BoundRegistrationScan anchor =
+        new BoundRegistrationScan(
+            this,
+            descriptor,
+            binding.relation.get(),
+            binding.index.get(),
+            binding.log.get(),
+            binding);
+    BoundCdfRead result = new BoundCdfRead(original, anchor);
+    result.requireRetained();
+    return result;
+  }
+
+  /** Driver-local named anchor for one bounded source read, never mutation authority. */
+  static final class BoundCdfRead {
+    private final DeltaTableV2 original;
+    private final BoundRegistrationScan anchor;
+
+    private BoundCdfRead(DeltaTableV2 original, BoundRegistrationScan anchor) {
+      this.original = original;
+      this.anchor = anchor;
+    }
+
+    BoundRegistrationScan anchor() {
+      requireRetained();
+      return anchor;
+    }
+
+    CurrentObservation validateCurrent(SparkSession session) {
+      requireRetained();
+      if (original.spark() != session) throw denied();
+      CurrentObservation observation = anchor.validateCurrent(session);
+      if (!anchor.binding.nativeConfiguration.equals(observation.nativeConfiguration))
+        throw denied();
+      requireRetained();
+      return observation;
+    }
+
+    @SuppressWarnings("ReferenceEquality")
+    void requireRetained() {
+      anchor.requireRetained();
+      if (anchor.binding.table.get() != original
+          || original.timeTravelOpt().isDefined()
+          || !original.options().isEmpty()
+          || original.hasPartitionFilters()
+          || original.catalogTable().isEmpty()
+          || original.catalogTable().get() != anchor.descriptor
+          || original.deltaLog() != anchor.log) throw denied();
+    }
+  }
+
   synchronized void requireLive() {
     try {
       if (closed) throw denied();

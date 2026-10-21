@@ -181,6 +181,8 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   def capture(plan: SparkPlan, spark: SparkSession): SparkPlan = {
     DeltaRangerNativeOperation.requireNoRawSelection()
     plan match {
+      case helper: DeltaRangerCdfReadScans.HelperExec => helper.verify(); return helper
+      case cdf: DeltaRangerCdfProducer => cdf.receipt.beforeTransitions(cdf); return cdf
       case raw: DeltaRangerRawProducer => raw.owner.beforeTransitions(raw.child); return raw
       case _                           =>
     }
@@ -238,6 +240,8 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   def finish(plan: SparkPlan, spark: SparkSession = SparkSession.active): SparkPlan = {
     DeltaRangerNativeOperation.requireNoRawSelection()
     plan match {
+      case helper: DeltaRangerCdfReadScans.HelperExec => helper.verify(); return helper
+      case cdf: DeltaRangerCdfProducer => cdf.receipt.afterTransitions(cdf); return cdf
       case raw: DeltaRangerRawProducer => raw.owner.afterTransitions(raw.child); return raw
       case _                           =>
     }
@@ -296,7 +300,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     result.result()
   }
 
-  private def binding(plan: SparkPlan): Vector[Any] = {
+  private[ranger] def binding(plan: SparkPlan): Vector[Any] = {
     nodes(plan).foreach {
       case _: InMemoryTableScanExec => denied("physical cache substitution")
       case _: AdaptiveSparkPlanExec => denied("nested adaptive subtree")

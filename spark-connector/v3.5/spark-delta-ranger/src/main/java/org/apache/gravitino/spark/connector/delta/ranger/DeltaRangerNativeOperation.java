@@ -71,6 +71,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     TRANSACTION_STATE,
     COMMIT,
     CDF_PROPERTY_MUTATION,
+    CDF_READ,
     PREPARE,
     VALIDATE_RETAINED_BINDING,
     MATCHING_FILES,
@@ -96,6 +97,12 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
         DeltaRangerNativeOperation operation, LogicalPlan actual, boolean stats) {
       throw denied();
     }
+  }
+
+  /** Dedicated bounded CDF source owner, with no transaction or commit authority. */
+  interface CdfReadOwner extends ScanOwner {
+    /** Restricts history reconstruction to the explicitly entered capture phase. */
+    boolean ownsHistoryFile(Path path);
   }
 
   interface CommitOwner {
@@ -217,6 +224,17 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   static DeltaRangerNativeOperation prepare(ScanOwner owner) {
     if (owner.bindings().isEmpty()) throw denied();
     return new DeltaRangerNativeOperation(owner.session(), null, null, null, owner, null, null);
+  }
+
+  static DeltaRangerNativeOperation cdfRead(CdfReadOwner owner) {
+    DeltaRangerNativeOperation operation = prepare(owner);
+    operation.callback = Callback.CDF_READ;
+    return operation;
+  }
+
+  @Nullable
+  CdfReadOwner cdfReadOwner() {
+    return scanOwner instanceof CdfReadOwner ? (CdfReadOwner) scanOwner : null;
   }
 
   static DeltaRangerNativeOperation validateRetained(
@@ -363,6 +381,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
         || callback == null
         || callback == Callback.COMMIT
         || callback == Callback.CDF_PROPERTY_MUTATION
+        || callback == Callback.CDF_READ
         || callback == Callback.TRANSACTION_STATE
         || callback == Callback.LOAD
         || callback == Callback.PREPARE
@@ -431,6 +450,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   boolean ownsLogRoot(Path root) {
     requireEvidence(session);
     if (transactionOwner != null || commitOwner != null || rawOwner != null) return false;
+    if (cdfReadOwner() != null) return false;
     if (retainedOwner != null) return retainedOwner.log().logPath().equals(root);
     if (scanOwner != null) {
       return scanOwner.bindings().stream().anyMatch(b -> b.log().logPath().equals(root));
