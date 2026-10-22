@@ -19,11 +19,72 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.types.{LongType, StringType, TimestampType}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 
 /** Named SQL uses the same bounded native operation as named DataFrame reads. */
 class TestDeltaRangerCdfSql {
+
+  /** Star exposes every CDF column and preserves the native rows through installed resolution. */
+  @Test
+  def namedSqlStarMatchesCompleteDataFrameAndNativeOutput(): Unit = {
+    val fixture = new DeltaRangerCdfReadFixture
+    DeltaRangerCdfReadFixture.withGoverned(fixture.prepare) { spark =>
+      Seq("a.db.t", "`a`.`db`.`t`").foreach { name =>
+        Seq("*" -> "", "changes.*" -> " WHERE region = 'US' AND id >= 7").foreach {
+          case (projection, predicate) =>
+            val sql = spark.sql(
+              s"SELECT $projection FROM table_changes('$name', ${fixture.start}, ${fixture.end}) changes$predicate"
+            )
+            val frame =
+              if (predicate.isEmpty) fixture.read(spark)
+              else fixture.read(spark).filter("region = 'US' AND id >= 7")
+            assertEquals(
+              Seq("id", "secret", "region", "_change_type", "_commit_version", "_commit_timestamp"),
+              sql.schema.fieldNames.toSeq
+            )
+            assertEquals(
+              Seq(LongType, StringType, StringType, StringType, LongType, TimestampType),
+              sql.schema.fields.map(_.dataType).toSeq
+            )
+            assertEquals(frame.schema, sql.schema)
+            val expected = fixture.multiset(
+              if (predicate.isEmpty) fixture.expected
+              else fixture.expected.filter(row => row.getString(2) == "US" && row.getLong(0) >= 7)
+            )
+            assertFalse(expected.isEmpty)
+            assertEquals(expected, fixture.multiset(frame.collect().toVector))
+            assertEquals(expected, fixture.multiset(sql.collect().toVector))
+        }
+      }
+    }
+  }
+
+  /** Star demands metadata SELECT while an explicit payload projection need not demand it. */
+  @Test
+  def namedSqlStarRejectsDeniedMetadataWithoutDenyingPayloadProjection(): Unit = {
+    val policy = new DeltaRangerCdfPolicyFixture
+    val fixture = new DeltaRangerCdfReadFixture
+    policy.withSpark(fixture.prepare) { spark =>
+      val source = s"table_changes('a.db.t', ${fixture.start}, ${fixture.end})"
+      Seq("_change_type", "_commit_version", "_commit_timestamp").foreach { column =>
+        policy.publish(denied = Set(column))
+        assertThrows(
+          classOf[SecurityException],
+          () => { spark.sql(s"SELECT * FROM $source").collect(); () },
+          column
+        )
+        assertEquals(
+          fixture.multiset(fixture.expected.map(row => Row.fromSeq(row.toSeq.take(3)))),
+          fixture.multiset(spark.sql(s"SELECT id, secret, region FROM $source").collect().toVector),
+          column
+        )
+      }
+    }
+  }
+
   @Test
   def namedSqlMatchesDataFrame(): Unit = {
     val fixture = new DeltaRangerCdfReadFixture

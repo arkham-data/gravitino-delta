@@ -113,8 +113,9 @@ private[ranger] object DeltaRangerCdfRead {
     import org.apache.spark.sql.types.{ByteType, ShortType, IntegerType, LongType, StringType}
     import org.apache.spark.sql.util.CaseInsensitiveStringMap
     import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
-    // Capture the named function before Delta lowers it to its stock CDF relation. The
-    // unresolved named load then follows exactly the DataFrame binding and receipt route.
+    // Capture the named function before Delta lowers it to its stock CDF relation.
+    // Resolve only the validated named load and bind its full CDF output before Spark
+    // can expand star against the ordinary table schema.
     val functions = plan.collect {
       case named: CDCNameBased => named
       case _: CDCPathBased     => denied("path CDF function")
@@ -142,13 +143,17 @@ private[ranger] object DeltaRangerCdfRead {
         "endingVersion" -> bounds.last
       )
       parse(options, Long.MaxValue)
+      val namedSource = spark.sessionState.analyzer.ResolveRelations(
+        UnresolvedRelation(
+          parts,
+          new CaseInsensitiveStringMap(options.asJava),
+          isStreaming = false
+        )
+      )
+      val pending = resolve(namedSource, spark, catalogs)
+        .getOrElse(denied("unresolved named CDF source"))
       return Some(plan.transformDown {
-        case named: CDCNameBased if named eq function =>
-          UnresolvedRelation(
-            parts,
-            new CaseInsensitiveStringMap(options.asJava),
-            isStreaming = false
-          )
+        case named: CDCNameBased if named eq function => pending
       })
     }
     import org.apache.spark.sql.delta.catalog.DeltaTableV2
