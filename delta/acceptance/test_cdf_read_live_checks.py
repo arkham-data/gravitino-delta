@@ -38,6 +38,7 @@ def valid():
       'freshGranted':{'outcome':'success','rows':copy.deepcopy(rows)},
       'grant':{'publicPrivilege':'SELECT_TABLE','downloadedSelect':True,'policy':10,'downloadSha256':'a'*64},
       'revoke':{'publicPrivilege':'SELECT_TABLE','downloadedSelect':False,'policy':11,'downloadSha256':'b'*64},
+      'regrant':{'publicPrivilege':'SELECT_TABLE','downloadedSelect':True,'policy':12,'downloadSha256':'e'*64},
       'identities':{'setup':'setup','metadata':'meta','application':'app'},
       'sourceBefore':'c'*64,'sourceAfter':'c'*64,'registrationBefore':'d'*64,'registrationAfter':'d'*64,
       'faultBefore':{'outcome':'success','rows':copy.deepcopy(native)},'faultNativeRows':native,
@@ -87,6 +88,28 @@ class TestCdfReadLiveChecks(unittest.TestCase):
         for field,value in [('authorized',False),('failure',['java.lang.SecurityException'])]:
             result=valid();result['incomplete'][field]=value
             with self.assertRaises(AssertionError):verify_result(result)
+
+    def test_regrant_requires_current_select_and_download(self):
+        result=valid();del result['regrant']
+        with self.assertRaises(AssertionError):verify_result(result)
+        for field,value in [('publicPrivilege','MODIFY_TABLE'),('downloadedSelect',False),
+                            ('policy',11),('policy',10),('policy',True),
+                            ('downloadSha256',''),('downloadSha256','z'*64)]:
+            with self.subTest(field=field,value=value):
+                result=valid();result['regrant'][field]=value
+                with self.assertRaises(AssertionError):verify_result(result)
+
+    def test_companion_reuse_requires_equal_runtime_pins_and_sources(self):
+        import cdf_read_live_package as package
+        reuse=getattr(package,'can_reuse_companion',None)
+        self.assertTrue(callable(reuse),'Explicit companion runtime-pair reuse gate missing')
+        sources={'spark-connector/v3.5/spark-delta-ranger/src/main/scala/C.scala':'a'}
+        base={'changedRuntime':'old.jar','spark':'3.5.4','delta':'3.3.0','sourceInputs':sources}
+        self.assertTrue(reuse(base,sources,'3.5.4','3.3.0'))
+        for spark,delta in [('3.5.6','3.3.0'),('3.5.4','3.3.2'),('3.5.6','3.3.2')]:
+            self.assertFalse(reuse(base,sources,spark,delta))
+        self.assertFalse(reuse(base,dict(sources,**{'spark-connector/v3.5/spark-delta-ranger/src/main/scala/New.scala':'b'}),'3.5.4','3.3.0'))
+        self.assertFalse(reuse(dict(base,changedRuntime=None),sources,'3.5.4','3.3.0'))
 
     def test_shared_source_inventory_includes_additions_and_deletions(self):
         from cdf_read_live_package import shared_sources, companion_sources

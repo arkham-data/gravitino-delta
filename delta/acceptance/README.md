@@ -151,3 +151,88 @@ package/driver hashes, native state, process exits and server class origins rema
 in the private output. Spark's sanitized status-needed diagnostic is preserved;
 the server log and direct REST response carry the shared admission reason. The
 harness does not retry the rejected operation or run operator recovery.
+
+## Governed batch CDF read qualification
+
+The [governed CDF consumption result](../../docs/delta-cdf-consumption.md) covers
+named DataFrame and SQL reads with explicit inclusive integer bounds. It qualifies
+Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 with JDK 17, Scala 2.12.21, actual Ranger
+2.8.0 and MinIO. This is source-event consumption; destination MERGE/writebacks,
+streaming and broader historical schemas/features remain subsequent work.
+
+The lane reuses the retained shared production package and transport helpers from
+the earlier acceptance milestones. The immutable base manifest, private current
+service inputs, pinned stock Spark distributions, Gradle dependency cache, actual
+Ranger installation proof and owned MinIO/Ranger services must already exist.
+This is not a clean-checkout bootstrap or a cloud/distributed qualification.
+Never print or commit private inputs, logs, H2 state or credentials. Preserve every
+original failed fixture and diagnose it before creating another attempt.
+
+Run the focused checker tests:
+
+```bash
+python3 -m unittest discover -s delta/acceptance -p 'test_cdf_read_live_checks.py'
+```
+
+Use JDK 17 and run the new/affected focused suites for each pair, substituting both
+version properties. `cdf_read_live.gradle` pins Hadoop test dependencies, one fork
+and a 4 GiB test JVM; the 1536 MiB value below belongs to Gradle. The retained Task 5
+commands include the affected registration/read/mask/physical/policy tests and
+representative append/ALTER regressions; the minimal CDF selectors are:
+
+```bash
+JAVA_HOME=/path/to/jdk17 ./gradlew -I delta/acceptance/cdf_read_live.gradle \
+  :spark-connector:spark-delta-ranger-3.5:test \
+  --tests '*TestDeltaRangerInstalledCdfRead' \
+  --tests '*TestDeltaRangerCdfHistory' \
+  --tests '*TestDeltaRangerCdfNativeParity' \
+  --tests '*TestDeltaRangerCdfSql' \
+  --tests '*TestDeltaRangerCdfReadPolicies' \
+  --tests '*TestDeltaRangerCdfReadOwnership' \
+  --tests '*TestDeltaRangerLiveCdfRead' \
+  -PdeltaSparkVersion=3.5.4 -PdeltaVersion=3.3.0 \
+  -PskipITs -PskipDockerTests=false --offline --max-workers=2 --no-daemon \
+  -Dorg.gradle.jvmargs=-Xmx1536m --console=plain
+```
+
+Package and execute each new pair sequentially, using fresh output directories:
+
+```bash
+python3 delta/acceptance/cdf_read_live_package.py \
+  --base /private/path/verified-base/manifest.json \
+  --out /private/path/new-runtime --spark 3.5.4 --delta 3.3.0
+python3 delta/acceptance/cdf_read_live.py \
+  --runtime /private/path/new-runtime/manifest.json \
+  --inputs /private/path/current-inputs.private.json \
+  --out /private/path/new-live-cell
+```
+
+Capture the original outer subprocess exit separately from the Spark child
+`exit.json`. Acceptance requires outer 0, child 0, a checked `result.json`, no
+`failure.json`, exact manifest/source/class/JAR binding and actual per-cell Ranger
+association. The checker validates exact governed event multisets, runtime pins,
+terminal coverage, distinct empty/denied/failed outcomes, and SELECT/download
+witnesses for grant, revoke and newer regrant. A cell cannot borrow another pair's
+fixture result.
+
+The packager captures complete sources before/after Gradle, compiled class hashes,
+all runtime artifact bytes and unique observed providers. Shared components need
+complete unchanged production source and immutable artifact equality. A companion
+may be reused only when both requested runtime pins and production inputs match;
+otherwise Gradle resolves/builds its full shadow under the requested pins. Retain
+the actual task outcome: cached/up-to-date output is not a newly executed assembly
+and requires complete input/archive-entry equivalence proof for qualification. Application reuse requires equality
+of every archive entry, including resources, against a fresh thin build. Manifests
+and receipts distinguish fresh and reused provenance. Do not rewrite old captures
+when only checker/documentation sources change: retain the historical receipt and
+an explicit non-runtime delta plus full unchanged-component proof.
+
+Full per-pair invocations, original outer/child receipts, XML, artifact hashes,
+source differences and service proof are indexed in the retained
+`.superpowers/sdd/2026-10-20-delta-cdf-consumption/task-5-report.md`. The original
+accepted first cell is reused under that explicit proof; the other three have
+requested-pin packages and original fresh live fixtures. Gradle UP-TO-DATE shadow
+outputs are disclosed separately from explicit base-artifact reuse. Each changed
+pair also has a forced shadow-only assembly with complete archive-entry equality
+to its immutable live artifact; dependencies keep their normal Gradle checks. No closed append or
+CDF enablement matrix is repeated.

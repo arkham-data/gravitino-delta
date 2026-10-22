@@ -184,28 +184,42 @@ The final [CDF result](delta-cdf-enablement.md) verifies this mapping through
 actual Ranger 2.8.0 policy downloads and named Spark execution across all four
 version pairs. It does not establish automatic or general migration.
 
-## Next delivery
+## Governed batch CDF consumption and next delivery
 
-Catalog CDF enablement and disablement are the completed bounded step:
-all four pinned runtime/live cells pass with Ranger 2.8.0 and MinIO. The next CDF step is governed named consumption, first
-batch and then streaming, preserving Gravitino registration ownership and Ranger
-permissions, masks and row filters.
+[Governed named batch CDF consumption](delta-cdf-consumption.md) now qualifies both
+bounded named DataFrame reads and SQL `table_changes` on Spark 3.5.4/3.5.6 × Delta
+3.3.0/3.3.2, JDK 17 and Scala 2.12.21. All four pairs have original actual Ranger
+2.8.0 / MinIO results with production discovery, public SELECT grant/revoke/regrant
+downloads, exact native-derived governed event multisets, empty success and
+missing-file failure, unchanged source/registration bytes and persisted restart
+readback. Final new/affected focused suites pass on each pair. The first accepted
+live cell is retained under explicit unchanged-runtime/source proof; each other
+pair has a requested-pin package and original fixture result. Up-to-date shadow
+outputs have separate forced shadow-only all-entry equality proof under that pair.
 
-The consumption design must bind the registered table and native CDF relation to
-an explicit version interval, define policy behavior for historical rows/schema
-and the three CDF metadata columns, and compare exact results with native Delta.
-Denied and revoked access must remain enforced. The independent native path
-oracle used for enablement does not provide this user-facing feature.
+Current Ranger filters and masks apply independently to each native row image,
+including payload keys and virtual CDF metadata. Duplicates and masked collisions
+remain intact; consumers receive no image-pair or deterministic row-order promise.
+The source feed requires explicit inclusive integer bounds, one source, finite
+projection/filter expressions, complete history/data and the documented compatible
+historical profile. Paths, timestamp bounds, streaming, governed SQL caches and
+broader schema/features remain unqualified.
 
-The [enablement result](delta-cdf-enablement.md) records final packaged execution,
-committed/uncertain outcomes and observation-only recovery. Retained raw-cache
-maintenance has a bounded profile; broader governed query caching remains open.
-The local fixture depends on retained worktree helpers and evidence, so a
-standalone clean-checkout reproduction kit and `catalog-demo`/distributed/cloud
-qualification remain separate work.
+Consumers advance from the successfully processed requested end only after sink
+success, including successful empty batches. Visible maximum commit metadata is
+not a checkpoint, denied/failed/incomplete batches cannot advance, and driver
+receipts provide no durable checkpoint authority. Policy-only changes require
+consumer reconciliation and can change replay results without new source events.
+
+Governed destination MERGE/UPDATE/DELETE and writebacks are the next functional
+ELT milestone. They require independent target authorization and defined key
+mapping; this source feed does not establish complete Delta or end-to-end ELT.
+Streaming, broader lifecycle/query/schema/feature support, a standalone clean
+checkout reproduction kit, `catalog-demo`, distributed/cloud qualification and
+authentication hardening remain separate work. The retained harness depends on
+private inputs and immutable prior packages/helpers.
 
 Keep accepted SELECT, append and enablement milestones closed unless a concrete
-regression or changed dependency requires new verification. Full Delta still
-requires the lifecycle, DML, query, schema/feature and streaming work in the scope
-register above. These requirements are not prerequisites for beginning governed
-CDF consumption.
+regression or changed dependency requires new verification. Their independent
+limits, including bounded retained native cache maintenance and observation-only
+recovery, remain in the [enablement result](delta-cdf-enablement.md).

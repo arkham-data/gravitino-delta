@@ -309,3 +309,43 @@ Gravitino visibility grant, never table SELECT inferred from visibility.
 The qualified write surface is the [bounded named append milestone](../../../docs/delta-native-governed-append.md),
 including its packaged public-grant matrix. Broader DML/DDL, governed cached queries,
 streaming, arbitrary-job security and full Delta support remain subsequent work.
+
+## Governed named batch CDF reads
+
+The [CDF consumption result](../../../docs/delta-cdf-consumption.md) qualifies both
+named entry points on all four pinned Spark/Delta pairs with actual Ranger 2.8.0
+and MinIO:
+
+```python
+changes = (spark.read.option("readChangeFeed", "true")
+    .option("startingVersion", "12").option("endingVersion", "15")
+    .table("catalog_name.database_name.table_name"))
+rows = changes.collect()
+```
+
+```sql
+SELECT * FROM table_changes('catalog_name.database_name.table_name', 12, 15);
+```
+
+Require explicit inclusive integer bounds `0 <= start <= end <= observed native
+head`, one CDF source, and the existing finite projection/filter expressions.
+Paths, timestamps, omitted/latest bounds, unknown options, joins, aggregation,
+ordering, streaming and governed SQL caching reject. Payload schema/column identity,
+partitioning and supported protocol must remain compatible throughout the requested
+interval; schema transitions, column mapping, deletion vectors and row tracking
+remain outside the initial profile. Complete log/data availability is required.
+
+Current Ranger SELECT, row filters and masks apply to every native image, payload
+keys and the virtual `_change_type`, `_commit_version`, `_commit_timestamp` columns.
+No unique/unmasked key is required; duplicates and masked collisions survive. Update
+images can become independently visible as rows enter or leave a row filter. There
+is no image-pair or deterministic row-order guarantee. Policy-only changes require
+consumer reconciliation; the reader adds no raw metadata bypass or reverse-mask
+lookup.
+
+Consumers checkpoint the successfully processed requested end after sink success,
+including successful empty intervals. Visible maximum commit metadata is not a
+cursor, and driver receipts are not durable checkpoints. Denied/incomplete/failed
+reads cannot advance. See the result for action revalidation and exact historical
+profile limits. Governed destination MERGE/UPDATE/DELETE and writebacks are the
+next functional ELT milestone; this source feed does not establish complete ELT.

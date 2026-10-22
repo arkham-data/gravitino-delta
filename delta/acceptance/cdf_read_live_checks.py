@@ -27,7 +27,7 @@ def projected(native):
 
 def verify_result(result: dict) -> None:
     """Reject missing evidence, partial intervals and changed row multiplicity."""
-    required=set(('spark delta java scala ranger requested nativeHead coveredVersions nativeRows sql dataframe empty incomplete retained freshDenied freshGranted grant revoke identities sourceBefore sourceAfter registrationBefore registrationAfter persistedRegistration productionDiscovery runtimeBound exitCode faultBefore faultNativeRows').split())
+    required=set(('spark delta java scala ranger requested nativeHead coveredVersions nativeRows sql dataframe empty incomplete retained freshDenied freshGranted grant revoke regrant identities sourceBefore sourceAfter registrationBefore registrationAfter persistedRegistration productionDiscovery runtimeBound exitCode faultBefore faultNativeRows').split())
     assert required <= set(result), 'Missing consumption evidence'
     assert result['spark'] in ['3.5.4','3.5.6'] and result['delta'] in ['3.3.0','3.3.2']
     assert (result['java'],result['scala'],result['ranger'])==('17','2.12.21','2.8.0')
@@ -56,11 +56,11 @@ def verify_result(result: dict) -> None:
             assert value.get('authorized') is True and any('FileNotFoundException' in kind for kind in value['failure'])
         else:assert 'java.lang.SecurityException' in value['failure']
     assert result['incomplete']['bounds']==[start,end] and result['incomplete']['table']=='incomplete'
-    for name,select in [('grant',True),('revoke',False)]:
+    for name,select in [('grant',True),('revoke',False),('regrant',True)]:
         value=result[name]
         assert value['publicPrivilege']=='SELECT_TABLE' and value['downloadedSelect'] is select
-        assert type(value['policy']) is int and value['policy']>=0 and len(value['downloadSha256'])==64
-    assert result['revoke']['policy']>result['grant']['policy']
+        assert type(value['policy']) is int and value['policy']>=0 and isinstance(value['downloadSha256'],str) and len(value['downloadSha256'])==64 and all(c in '0123456789abcdef' for c in value['downloadSha256'])
+    assert result['regrant']['policy']>result['revoke']['policy']>result['grant']['policy']
     assert set(result['identities'])=={'setup','metadata','application'} and len(set(result['identities'].values()))==3
     for before,after in [('sourceBefore','sourceAfter'),('registrationBefore','registrationAfter')]:
         assert isinstance(result[before],str) and len(result[before])==64 and result[before]==result[after]

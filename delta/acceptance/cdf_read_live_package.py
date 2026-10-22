@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 
-"""Fresh changed-companion build with exact shared-component and runtime provenance."""
+"""Requested-pin companion packaging with exact shared-component and runtime provenance."""
 import argparse
 import hashlib
 import os
@@ -50,6 +50,11 @@ def companion_sources(source):
         ('/src/main/' in p or p.endswith(('.gradle','.gradle.kts')))}
 
 
+def can_reuse_companion(base, source, spark, delta):
+    """Reuse a verified companion only for identical runtime pins and production inputs."""
+    return bool(base.get('changedRuntime')) and (base['spark'],base['delta'])==(spark,delta) and companion_sources(base['sourceInputs'])==companion_sources(source)
+
+
 def shared_sources(source):
     """Exact complete production inventory outside the independently rebuilt companion."""
     return {p:d for p,d in source.items() if ('/src/main/' in p or p.endswith(('.gradle','.gradle.kts'))) and
@@ -75,7 +80,7 @@ def verify_runtime(runtime):
     assert all(runtime['thinClasses'][name]==digest for name,digest in receipt['thinCompiledClasses'].items())
     assert set(runtime['thinClasses'])==set(receipt['thinCompiledClasses'])
     if receipt.get('reusedCompanion'):
-        assert companion_sources(base['sourceInputs'])==companion_sources(runtime['sourceInputs'])
+        assert can_reuse_companion(base,runtime['sourceInputs'],runtime['spark'],runtime['delta'])
         assert runtime['changedRuntime']==base['changedRuntime']
     assert classes(runtime['changedRuntime'])==runtime['changedRuntimeClasses']
     inventories={path:classes(path) for path in set(runtime['providers'].values())}
@@ -95,7 +100,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
     shared={p:d for p,d in assembly['artifactFiles'].items() if '/server/' in p}
     assert shared and all(sha(p)==d for p,d in shared.items()),'Shared server artifact drift'
     save(output/'source-before.json',{'files':before,'digest':canonical_digest(before),'gitHead':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()})
-    reuse_companion=bool(base.get('changedRuntime')) and companion_sources(base['sourceInputs'])==companion_sources(before)
+    reuse_companion=can_reuse_companion(base,before,spark,delta)
     tasks=[':spark-connector:spark-delta-ranger-3.5:cdfReadLiveThinJar']
     if not reuse_companion:tasks=[':spark-connector:spark-delta-ranger-3.5:clean']+tasks+[':spark-connector:spark-delta-ranger-runtime-3.5:shadowJar']
     argv=['./gradlew','-I','delta/acceptance/cdf_read_live.gradle']+tasks+[
@@ -122,7 +127,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
     save(output/'compiled-classes.json',compiled)
     artifacts={str(p):sha(p) for p in [changed,built_app,output/'compiled-classes.json']}
     receipt={'before':str(output/'source-before.json'),'after':str(output/'source-after.json'),'exit':str(output/'build/exit.json'),
-        'command':str(output/'build/command.json'),'artifacts':artifacts,'appBuildArtifact':str(built_app),'thinCompiledClasses':thin_compiled,'reusedCompanion':reuse_companion,'moduleSources':{p:d for p,d in before.items() if p.startswith((MODULE,RUNTIME))},
+        'command':str(output/'build/command.json'),'artifacts':artifacts,'appBuildArtifact':str(built_app),'thinCompiledClasses':thin_compiled,'reusedCompanion':reuse_companion,'reusedApp':app!=built_app,'moduleSources':{p:d for p,d in before.items() if p.startswith((MODULE,RUNTIME))},
         'compiledClasses':compiled,'gitHead':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()}
     save(output/'build-receipt.json',receipt)
     home=output/'spark-home';home.mkdir();(home/'jars').mkdir()
@@ -151,16 +156,16 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
     for name,path in selected.items():
         if path not in [changed,app] and name.startswith('gravitino-'):shared[str(path)]=sha(path)
     inventories={path:classes(path) for path in set(providers.values())}
-    manifest=dict(schemaVersion=1,javaHome=JAVA,manifestRole='CDF consumption first-pair runtime',
+    manifest=dict(schemaVersion=1,javaHome=JAVA,manifestRole='CDF consumption pinned-pair runtime',
         assemblyManifest=base['assemblyManifest'],assemblySha256=sha(base['assemblyManifest']),
-        assemblyProvenanceScope='Shared server only; current companion and application use freshBuildReceipt',spark=spark,delta=delta,sparkHome=str(home),app=str(app),changedRuntime=str(changed.resolve()),
+        assemblyProvenanceScope='Shared server only; current companion/application provenance and reuse flags use freshBuildReceipt',spark=spark,delta=delta,sparkHome=str(home),app=str(app),changedRuntime=str(changed.resolve()),
         jarHashes={str(p.resolve()):sha(p) for p in jars},runtimeJarLinks={str(p):str(p.resolve()) for p in jars},addedJarNames=sorted(selected),
         providers=providers,providerClasses={n:inventories[p][n.replace('.','/')+'.class'] for n,p in providers.items()},
         thinClasses=classes(app),changedRuntimeClasses=ranger_classes,sourceInputs=before,sourceInputDigest=canonical_digest(before),
         sharedComponentSources=shared_sources(before),sharedArtifacts=shared,sharedProductionManifest=str(base_path),sharedProductionManifestSha256=sha(base_path),
         freshBuildReceipt=str(output/'build-receipt.json'),freshBuildReceiptSha256=sha(output/'build-receipt.json'),
         stockSparkHome=str(stock),stockJarHashes={p.name:sha(p) for p in (stock/'jars').glob('*.jar')},
-        provenanceScope='Fresh CDF companion and app; exact unchanged shared component source inventory and server/base artifact bytes')
+        provenanceScope=('Reused identical-pin companion' if reuse_companion else 'Requested-pin Gradle companion output (task outcome retained in build log)')+'; '+('reused byte-identical application' if app!=built_app else 'fresh application')+'; exact unchanged shared component source inventory and server/base artifact bytes')
     verify_runtime(manifest);save(output/'manifest.json',manifest)
     return output/'manifest.json'
 
