@@ -10,7 +10,7 @@
 
 **Spec:** [Approved CDF consumption design](../specs/2026-10-20-delta-cdf-consumption-design.md).
 
-**Status:** Approved by the user on 2026-10-20. Tasks 1–4 accepted after independent review; Task 5 four-pair focused and deployed Ranger 2.8.0 / MinIO qualification and documentation complete. Independent Task 5/integrated review and final closure/push remain controller-owned and pending.
+**Status:** Closed on 2026-10-22. All five tasks passed independent scoped review; the final integrated review is PASS / APPROVE with no blocking findings. All four focused and deployed Ranger 2.8.0 / MinIO qualification cells passed. The authorized branch push and remote commit equality are recorded in the retained closure receipt; the worktree and original evidence are preserved.
 
 ## Global Constraints
 
@@ -144,7 +144,7 @@ Each implementation task ends with focused validation, a scoped review using the
 - [x] Run new/affected focused suites for (3.5.4,3.3.0), (3.5.4,3.3.2), (3.5.6,3.3.0), (3.5.6,3.3.2), substituting both properties in the documented command. Reuse the first cell if its source/artifact inputs are still final. Run scoped formatting with `:spark-connector:spark-delta-ranger-3.5:spotlessApply`, then `spotlessCheck`, relevant Java checkstyle/Javadoc tasks and Python checker tests. Resolve actual failures; report checks not runnable rather than implying they passed.
 - [x] Package each changed final pair and run Task 4's deployed command sequentially against actual Ranger 2.8.0/MinIO. Require production discovery, public policy delivery, exact governed event multiset and failure cases for each. Maintain a four-row status table; one cell's success never substitutes for another's. Do not repeat unchanged closed append/enablement matrices.
 - [x] Document both named APIs and exact bounded/profile restrictions. Explain row-image filter transitions, policy-owned key/metadata masks, duplicate preservation and absence of pairing/order guarantees. Show consumer checkpoint advancement from the successfully processed requested end after sink success, not maximum visible metadata; distinguish empty success from failure. Explain policy-only changes require consumer reconciliation and receipts are not durable checkpoints. Mark destination MERGE/writebacks as the next functional ELT milestone; no claim of complete Delta or end-to-end ELT support.
-- [ ] Obtain one integrated review of the final implementation/spec/qualification evidence. Fix concrete findings with targeted reruns. Verify clean intended diff, final artifact bindings and all four acceptance results, then commit as `docs(delta): close governed batch CDF read milestone` and push `codex/delta-spark-feasibility` to its existing remote. Verify the remote commit equals the closure commit and retain the worktree.
+- [x] Obtain one integrated review of the final implementation/spec/qualification evidence. Fix concrete findings with targeted reruns. Verify clean intended diff, final artifact bindings and all four acceptance results, then commit as `docs(delta): close governed batch CDF read milestone` and push `codex/delta-spark-feasibility` to its existing remote. Verify the remote commit equals the closure commit and retain the worktree.
 
 ## Inline plan review
 
@@ -170,5 +170,13 @@ documentation-only deltas and original receipts are indexed in retained
 `task-5-matrix-index.json`. Public contract and limits:
 [governed batch CDF consumption](../../delta-cdf-consumption.md).
 
-No closed append/enablement live matrix was replayed. The final integrated-review
-and closure/push checkbox above remains pending for the controller.
+No closed append/enablement live matrix was replayed. Task 5 scoped review and the
+single integrated review both passed without new findings at implementation commit
+`5d282987d385250d254f6016d5cf44ebe3d4c6c1`. Their full reports are retained as
+`task-5-review.md` and `final-review.md` in the evidence directory above. Closure
+changes only this plan; `closure-source-delta.json` binds that documentation delta
+to the reviewed source inventory, and `closure-receipt.json` records the closure
+commit, authorized push and verified remote equality. No production or application
+source changed after qualification. Governed target MERGE/upserts and writebacks
+remain the next functional ELT milestone; streaming and broader Delta profiles
+remain separate work.
