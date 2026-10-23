@@ -26,12 +26,15 @@
 **Files:** In catalog-demo create `docker-compose.delta-cdf-merge.yml`, `workspaces/notebooks/13_governed_cdf_merge.py` and `docs/delta-cdf-merge.md`; update README. The overlay consumes the closed milestone's exact artifacts and supplies matching driver/worker classpaths, private fixture inputs and independent storage/ports.
 
 - [ ] Inspect the then-current demo configuration and dirty state; bind exact qualified artifacts and actual Ranger 2.8.0 installation.
-- [ ] Write the named SQL and DataFrame examples, source/target grants and application checkpoint handling in an isolated fixture. Preserve current policy semantics and existing demos.
+- [ ] Write the named SQL example, source/target grants and application checkpoint handling in an isolated fixture. Preserve current policy semantics and existing demos.
 - [ ] Verify rendered configuration and worker classpath before bringing up only the new project. Commit local changes after scoped review.
 
 ## Task 2: Prove separate-executor behavior and document deployment limits
 
-- [ ] Run both frontends on Spark 3.5.4/Delta 3.3.0 with at least one separate worker process and actual Ranger 2.8.0/MinIO. Record actual driver/worker origins and source execution; no CDF payload collect/toPandas/createDataFrame bridge.
+- [ ] Run the named SQL frontend on Spark 3.5.4/Delta 3.3.0 with at least one separate worker process and actual Ranger 2.8.0/MinIO. Record actual driver/worker origins and source execution; no CDF payload collect/toPandas/createDataFrame bridge.
 - [ ] Prove distinct destination and same-table writeback, masks/filters, hidden target preservation, denials and correct checkpoints. Compare actual native rows/actions, registration and original process exits.
 - [ ] Fix only demonstrated deployment issues with affected checks. Update demo documentation and Gravitino support/parity docs to the exact demonstrated scope, then obtain one integrated review.
 - [ ] Retain original evidence and worktrees. Report local commits and deployment outcome; seek separate authorization before pushing catalog-demo.
+
+The companion DataFrame builder has its own deferred plan and is not an exit gate
+for this SQL deployment plan. Qualify it separately after its implementation.

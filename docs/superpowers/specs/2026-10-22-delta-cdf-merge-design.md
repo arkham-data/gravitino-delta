@@ -2,7 +2,9 @@
 
 Status: approved for task-by-task execution on 2026-10-22; product implementation
 starts with Task 1. The user confirmed target row-filter read semantics and deferred
-the catalog-demo/separate-worker deployment to its own plan. Baseline: `b321beace14a2313e54aee033d883df30d47f6c7`.
+the catalog-demo/separate-worker deployment to its own plan. After the native frontend
+probe, the user selected named SQL MERGE first; a companion DataFrame builder is
+deferred to a separate plan. Baseline: `b321beace14a2313e54aee033d883df30d47f6c7`.
 
 ## Outcome
 
@@ -33,29 +35,34 @@ CDF payload rows as the bridge into MERGE is not.
 
 ## User surface and initial limits
 
-Support both native frontends, independently tested:
+Support named SQL MERGE with a source subquery over literal named `table_changes`:
 
-```python
-from delta.tables import DeltaTable
-
-changes = (spark.read.option("readChangeFeed", "true")
-    .option("startingVersion", "12").option("endingVersion", "15")
-    .table("lake.db.source"))
-prepared = changes.where("_change_type IN ('insert', 'update_postimage', 'delete')")
-(DeltaTable.forName(spark, "lake.db.target").alias("t")
-    .merge(prepared.alias("s"), "t.id = s.id")
-    .whenMatchedDelete(condition="s._change_type = 'delete'")
-    .whenMatchedUpdate(condition="s._change_type <> 'delete'", set={"value": "s.value"})
-    .whenNotMatchedInsert(condition="s._change_type <> 'delete'",
-                         values={"id": "s.id", "value": "s.value"})
-    .execute())
+```sql
+MERGE INTO lake.db.target AS t
+USING (
+  SELECT id, value, _change_type
+  FROM table_changes('lake.db.source', 12, 15)
+  WHERE _change_type IN ('insert', 'update_postimage', 'delete')
+) AS s
+ON t.id = s.id
+WHEN MATCHED AND s._change_type = 'delete' THEN DELETE
+WHEN MATCHED AND s._change_type <> 'delete' THEN UPDATE SET value = s.value
+WHEN NOT MATCHED AND s._change_type <> 'delete'
+  THEN INSERT (id, value) VALUES (s.id, s.value)
 ```
 
-Also support SQL MERGE with a source subquery over literal named `table_changes`.
-Both routes produce one internal command contract. The example is an explicit
-consumer program, not a generic replica algorithm: discarding preimages can leave
-stale destination rows when source rows cross a policy boundary. Fixtures must
-exercise that boundary rather than describing the example as complete replication.
+The example is an explicit consumer program, not a generic replica algorithm:
+discarding preimages can leave stale destination rows when source rows cross a
+policy boundary. Fixtures must exercise that boundary rather than describing the
+example as complete replication.
+
+A companion named DataFrame builder is deferred to
+[its separate plan](../plans/2026-10-22-delta-cdf-merge-builder.md). The stock
+`DeltaTable.forName` frontend is not supported by this milestone: both pinned Delta
+versions reject three-part names through the V1 identifier parser and subsequently
+use V1 session-catalog metadata. The stock builder also aligns omitted fields into
+self-assignments before a complete command reaches our extension hooks, losing the
+authored distinction required for masking. A raw-path fallback is not named support.
 
 Use one bounded CDF source, its existing deterministic scalar projection/filter/
 alias grammar, and native MERGE ON/ordered matched UPDATE or DELETE/unmatched
@@ -134,8 +141,8 @@ protected methods. This duplicates a small amount of version-pinned orchestratio
 it is not an untouched stock MergeIntoCommand invocation. Compilation and installed
 execution are the first gate, before broad policy implementation or runtime packaging.
 
-SQL and DeltaMergeBuilder reach preprocessing differently. Capture both original
-named operands and authored demands before Delta PreprocessTableMerge aligns
+Capture the original SQL named operands and authored demands before Delta
+PreprocessTableMerge aligns
 assignments; associate only the resulting owned command. Never authorize by an
 unknown command's matching name/path/schema. DeltaFullTable rejects a filtered
 MERGE target, so filtering the target relation itself is not the design.
@@ -195,7 +202,7 @@ remain unchanged on precommit denial. Never delete uncertain evidence to retry.
 
 ## Qualification and exit criteria
 
-1. First-pair installed proof: both named frontends, native trait linkage, source
+1. First-pair installed proof: named SQL MERGE, native trait linkage, source
    materialization/repeated reads, target preservation and actual precommit hook.
    Include same-table CDF writeback and CDF-enabled target actions as an early gate.
 2. Focused behavior: positive target filters/masks, hidden rows sharing touched files,
@@ -207,7 +214,7 @@ remain unchanged on precommit denial. Never delete uncertain evidence to retry.
    SELECT and MODIFY grants/revokes, checkpoint outcomes and registration readback.
 4. Deferred deployment (separate plan, not this milestone exit gate): catalog-demo
    uses an isolated overlay with qualified packages, actual Ranger
-   2.8.0 and MinIO; demonstrate both frontends and a separate executor process on
+   2.8.0 and MinIO; demonstrate named SQL MERGE and a separate executor process on
    Spark 3.5.4/Delta 3.3.0. Do not upgrade/rewrite its existing policies or services
    silently. Existing compose declares Ranger 2.7.0; an unused Dockerfile declares
    2.5.0. Neither satisfies this milestone. Additional pairs' cluster deployment

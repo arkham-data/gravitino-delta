@@ -10,7 +10,7 @@
 
 **Spec:** [Governed named Delta CDF-to-MERGE pipelines](../specs/2026-10-22-delta-cdf-merge-design.md).
 
-**Status:** Approved for task-by-task execution on 2026-10-22, with former Task 6 deferred to a separate plan. Execute and review Task 1, report its result, then await the next task instruction. Target row-filter read semantics remain confirmed. Baseline `b321beace14a2313e54aee033d883df30d47f6c7`.
+**Status:** Approved for task-by-task execution on 2026-10-22, with former Task 6 deferred to a separate plan. Execute and review Task 1, report its result, then await the next task instruction. Target row-filter read semantics remain confirmed. Following two-pin frontend characterization, the user selected named SQL MERGE first and deferred a companion DataFrame builder to its own plan. Baseline `b321beace14a2313e54aee033d883df30d47f6c7`.
 
 ## Global Constraints
 
@@ -99,7 +99,7 @@ claim for tasks absent from this module.
 
 **Interfaces:** Establish Capture → rewritten DeltaMergeInto → exact native preprocessing successor → owned command; inherit native protected source/selection/write methods and own runMerge transaction/commit. Initial source/native/commit units support the exact positive fixture and reject unknown branches; Tasks 3–4 complete their lifecycle/recovery contracts. Initial positive fixtures use actual allowed policies with no transforms; active transforms reject until Task 2, not silently pass through. This is an integration gate, not a separately advertised MERGE release.
 
-- [ ] `namedSqlAndBuilderReachOwnedNativeMerge`: RED both SQL source-subquery and DeltaTable.forName/DataFrame APIs with named registrations, source versions [0,4], explicit update/delete/insert clauses; assert actual target rows/native Merge action type, no driver CDF payload collection/reparallelization.
+- [ ] `namedSqlReachesOwnedNativeMerge`: RED the SQL source-subquery frontend with named registrations, source versions [0,4], explicit update/delete/insert clauses; assert actual target rows/native Merge action type, no driver CDF payload collection/reparallelization.
 - [ ] Compile the minimal trait adapter against Delta 3.3.0 and 3.3.2. Supply the native abstract source/target/targetFileIndex/condition/clause/schema fields from the retained processed descriptor; keep schema evolution false. Delegate native row algorithms; document the small orchestration copied from pinned runMerge.
 - [ ] `nativePhasesRetainNamedOwnership`: prove actual AUTO localCheckpoint, repeated source reads, exact target transaction/index, helper actions, final precommit validation and recache ownership. Reject raw paths, unissued command copies and a foreign checkpoint RDD. Native metadata/metric collects remain allowed only within their owned phase.
 - [ ] `sameTableCdfWritebackHasFiniteSourceLifetime`: fixed pre-write interval on the same named CDF-enabled target; verify one native update and correct CDC output, source execution ends before commit and old receipt rejects afterward. Distinct-registration aliases to the same UUID/location reject. A distinct-table fixture must also pass.
@@ -111,7 +111,7 @@ claim for tasks absent from this module.
 
 **Interfaces:** issue/validate/rewrite produces policy-governed original user expressions and frozen SELECT/UPDATE demands. The complete native target and generated unassigned-field preservation remain raw internally. Identity binding uses resolved attributes/occurrences.
 
-- [ ] RED `hiddenRowsAndUnassignedMaskedFieldsSurviveRewrite`: visible and hidden rows in the same file, masked secret, update value only; hidden rows and every unassigned raw secret remain exact. Explicit `secret = t.secret` stores the permitted masked value with SELECT+UPDATE. Run both frontend routes.
+- [ ] RED `hiddenRowsAndUnassignedMaskedFieldsSurviveRewrite`: visible and hidden rows in the same file, masked secret, update value only; hidden rows and every unassigned raw secret remain exact. Explicit `secret = t.secret` stores the permitted masked value with SELECT+UPDATE. Run the named SQL frontend; the companion builder is deferred.
 - [ ] RED `targetMatchUsesPoliciesAndNativeMultiplicity`: hidden matching key causes native unmatched insert; masked/null keys obey SQL/null-safe equality; one source matching multiple visible target rows updates them; multiple sources matching one target preserve native ambiguity error (and native unconditional-delete exception). No key precondition or deduplication.
 - [ ] Implement original-expression capture before assignment alignment; raw Ranger filter AND governed ON, governed user matched predicates/RHS, no postimage filter. Add update moving a row outside visibility and insert outside visibility positive cases. Reject NOT MATCHED BY SOURCE before execution.
 - [ ] RED/GREEN actual Ranger cases: wildcard UPDATE allow + named-column deny; column-only assigned UPDATE allow; denied-but-unassigned field survives copy; explicit RHS SELECT deny; UPDATE-star expansion; INSERT omitted fields and DELETE demand UPDATE on every physical field; unreachable clause and empty-source demands retained; scheduled/role changes invalidate.
@@ -148,7 +148,7 @@ claim for tasks absent from this module.
 **Interfaces:** `cdf_merge_live.py --runtime <manifest> --inputs <private-inputs> --out <fresh-directory>` provisions isolated fixtures/identities and emits original JSON evidence. `cdf_merge_live_checks.verify_result(result: dict) -> None` raises on incomplete/incorrect evidence. The new Gradle init retains existing pins/memory settings and registers a thin JAR containing the MERGE app and explicitly required existing helpers; extend the packager with that app selection without changing old app contents. Checker validates original outcomes, native oracles and checkpoint states, never boolean summaries alone.
 
 - [ ] RED checker rejects missing pair/provider pin, child-only success, absent policy download, altered target/source row bag, lost hidden row, extra commit, false checkpoint advancement and missing same-table result; permutations preserve multiset equality.
-- [ ] First pair runs real Ranger 2.8.0/MinIO public SELECT/MODIFY grant/revoke/regrant plus positive key/metadata masks and target filters/masks. Prove both frontends, distinct destination, same-table writeback, INSERT/UPDATE/DELETE, native duplicate handling, empty interval, column deny, ambiguous merge and post-helper revoke. Inspect actual target log/actions, original source invariance where distinct, registration persistence/restart and application checkpoint behavior.
+- [ ] First pair runs real Ranger 2.8.0/MinIO public SELECT/MODIFY grant/revoke/regrant plus positive key/metadata masks and target filters/masks. Prove named SQL MERGE, distinct destination, same-table writeback, INSERT/UPDATE/DELETE, native duplicate handling, empty interval, column deny, ambiguous merge and post-helper revoke. Inspect actual target log/actions, original source invariance where distinct, registration persistence/restart and application checkpoint behavior.
 - [ ] Run all new/affected focused suites and the same fresh original pipeline phases sequentially for all four pairs. Retain exact pins, original outer/child exits, source/JAR/provider bindings and runtime observations. Reuse an already final first cell with proven identical inputs; do not rerun the closed whole append/CDF matrices.
 - [ ] One complete package per changed runtime; retain unique source inputs/artifacts, share immutable proven-equal blobs rather than duplicate evidence trees. Scope failures precisely and rerun only affected checks before final qualification. Commit `test(delta): qualify governed cdf merge with Ranger 2.8` after review.
 
@@ -162,7 +162,7 @@ milestone. No separate-worker/cluster deployment claim may be made from this pla
 
 ## Inline plan review
 
-The five tasks map to native feasibility/frontends, policy semantics, executor
+The five tasks map to native feasibility/SQL frontend, policy semantics, executor
 composition, transaction/recovery and four-pair live qualification. Deployment
 is explicitly deferred to its own plan.
 Every review-focus item has named tests. The first proof explicitly covers the
@@ -170,3 +170,13 @@ highest-risk native APIs before expensive packaging; later tasks cannot treat
 source inspection as execution evidence. Read semantics are confirmed; proposed
 column-write demands and the bounded native orchestration are visible in the spec
 for task-by-task execution. Implementation method remains subagent-driven.
+
+## Deferred DataFrame builder plan
+
+The user selected named SQL MERGE first after Task 1 proved that the stock
+DeltaTable.forName route cannot resolve canonical Gravitino names and loses authored
+assignment provenance before the available complete-command hook. A companion named
+DataFrame builder is tracked in [its own plan](2026-10-22-delta-cdf-merge-builder.md).
+It is not a gate for this SQL milestone. Native trait linkage passed on both Delta
+pins; installed SQL remains unimplemented until Task 1's positive and ownership
+tests pass. The characterization does not complete Task 1.
