@@ -6,11 +6,11 @@
 
 **Architecture:** Capture original named operands and user expressions before native preprocessing, preserve Delta's full target relation, and apply Ranger policies to user match/action expressions. A companion command delegates row algorithms to native MERGE traits while owning source materialization, transaction authorization, commit evidence and registration publication. Prove native linkage and phase ownership before implementing the broader behavior or packaging fixtures.
 
-**Tech Stack:** Spark 3.5.4/3.5.6, Delta 3.3.0/3.3.2, JDK 17, Scala 2.12.21, Ranger 2.8.0, MinIO, Gradle, Python acceptance harness, catalog-demo standalone Spark worker.
+**Tech Stack:** Spark 3.5.4/3.5.6, Delta 3.3.0/3.3.2, JDK 17, Scala 2.12.21, Ranger 2.8.0, MinIO, Gradle, Python acceptance harness.
 
 **Spec:** [Governed named Delta CDF-to-MERGE pipelines](../specs/2026-10-22-delta-cdf-merge-design.md).
 
-**Status:** Draft for written review. Target row-filter read semantics confirmed by the user; no product implementation or new runtime qualification has occurred. Baseline `b321beace14a2313e54aee033d883df30d47f6c7`.
+**Status:** Approved for task-by-task execution on 2026-10-22, with former Task 6 deferred to a separate plan. Execute and review Task 1, report its result, then await the next task instruction. Target row-filter read semantics remain confirmed. Baseline `b321beace14a2313e54aee033d883df30d47f6c7`.
 
 ## Global Constraints
 
@@ -41,7 +41,6 @@ All paths below are relative to the existing feasibility worktree. Abbreviations
 - `J = M/src/main/java/org/apache/gravitino/spark/connector/delta/ranger`
 - `T = M/src/test/scala/org/apache/gravitino/spark/connector/delta/ranger`
 - `A = delta/acceptance`
-- `D = /Users/jacobo.calderon/Code/Arkham/catalog-demo`
 - `E = .superpowers/sdd/2026-10-22-delta-cdf-merge/` (new implementation evidence; preserve planning discovery separately).
 
 New units are companion-private, not Gravitino APIs: `DeltaRangerMergeCommand`
@@ -72,7 +71,9 @@ For every task: run focused RED, implement, run covering GREEN/formatting, then
 independent scoped review and local commit. Serialize implementation/build/live
 ownership. Test only the changed behavior and affected seams before final matrix.
 Retain exact commands/exits and concise evidence indexes; avoid repeated copies of
-unchanged packages. No milestone-close claim until the whole pipeline and demo pass.
+unchanged packages. No milestone-close claim until the five-task pipeline qualification and final review pass.
+The user explicitly requested task-by-task progress; do not automatically start the
+next task after reporting the current task and its independent review.
 
 Base focused command (substitute task selectors; use JDK 17):
 
@@ -151,23 +152,21 @@ claim for tasks absent from this module.
 - [ ] Run all new/affected focused suites and the same fresh original pipeline phases sequentially for all four pairs. Retain exact pins, original outer/child exits, source/JAR/provider bindings and runtime observations. Reuse an already final first cell with proven identical inputs; do not rerun the closed whole append/CDF matrices.
 - [ ] One complete package per changed runtime; retain unique source inputs/artifacts, share immutable proven-equal blobs rather than duplicate evidence trees. Scope failures precisely and rerun only affected checks before final qualification. Commit `test(delta): qualify governed cdf merge with Ranger 2.8` after review.
 
-## Task 6: Demonstrate separate-executor ELT and close the milestone
+- [ ] Publish `docs/delta-cdf-merge.md` and `docs/delta-spark-parity.md`; update integration status, module/acceptance READMEs and this plan with exact local qualification and remaining limits. Obtain one integrated review of Tasks 1–5, resolve concrete findings with targeted checks, verify artifact bindings and all four original results, commit closure and push the existing Gravitino branch as already authorized. Verify remote SHA; retain evidence/worktree; no PR. Separate-worker deployment remains unqualified until the deferred demo plan completes.
 
-**Files:** In Gravitino create `docs/delta-cdf-merge.md`, `docs/delta-spark-parity.md`; update `docs/delta-integration-status.md`, `M/README.md`, `A/README.md` and this plan. In catalog-demo create `docker-compose.delta-cdf-merge.yml`, `workspaces/notebooks/13_governed_cdf_merge.py` and `docs/delta-cdf-merge.md`; update its README with an isolated overlay command. Follow catalog-demo AGENTS.md before any symbol edits/commits; inspect existing dirty work and isolate task changes.
+## Deferred deployment plan
 
-**Interfaces:** overlay consumes qualified immutable packages and current existing Compose configuration; override Ranger to actual verified 2.8.0, separate fixture storage/service ports/identities and supply matching driver/worker classpaths. The Python walkthrough consumes named APIs and owns its durable checkpoint.
-
-- [ ] On Spark 3.5.4/Delta 3.3.0, run both frontends against Ranger 2.8.0/MinIO with at least one executor in a separate worker process. Verify loaded origins there and on the driver, executor work for source rows, final native target rows/commits and no source collect/toPandas/createDataFrame bridge. Exercise same-table writeback, masked keys, hidden target preservation and denial/checkpoint behavior.
-- [ ] Do not modify existing demo policy meanings or replace its running services implicitly. Use a new Compose project/owned volumes and qualified distribution; preserve existing demos. Record base-vs-overlay version differences and exact runnable commands. Fix deployment-only failures with affected checks, without replaying all unchanged local cells.
-- [ ] Publish feature matrix separating named catalog behavior, governed source, governed target and deployment evidence. List joins/windows/general actions, standalone UPDATE/DELETE, NOT MATCHED BY SOURCE, schema evolution, streaming and advanced features as remaining work; no full Delta/Iceberg parity claim.
-- [ ] Verify six-task spec coverage, final artifact/source bindings, four original live outcomes and separate-worker demo. Obtain one integrated review, resolve concrete findings with targeted checks, commit milestone closure and push existing Gravitino branch as authorized; verify remote SHA. Keep catalog-demo changes on an isolated local branch unless separately authorized to push that repository. No PR, no evidence/worktree deletion.
+The former Task 6 is moved to [the separate catalog-demo plan](2026-10-22-delta-cdf-merge-demo.md)
+at the user's request. It is not required to close this five-task local qualification
+milestone. No separate-worker/cluster deployment claim may be made from this plan.
 
 ## Inline plan review
 
-The six tasks map to native feasibility/frontends, policy semantics, executor
-composition, transaction/recovery, four-pair live qualification and deployment.
+The five tasks map to native feasibility/frontends, policy semantics, executor
+composition, transaction/recovery and four-pair live qualification. Deployment
+is explicitly deferred to its own plan.
 Every review-focus item has named tests. The first proof explicitly covers the
 highest-risk native APIs before expensive packaging; later tasks cannot treat
 source inspection as execution evidence. Read semantics are confirmed; proposed
 column-write demands and the bounded native orchestration are visible in the spec
-for written review. Implementation method remains subagent-driven.
+for task-by-task execution. Implementation method remains subagent-driven.

@@ -1,8 +1,8 @@
 # Governed named Delta CDF-to-MERGE pipelines
 
-Status: proposed written design for review; product implementation has not started.
-The user authorized preparation of this plan and confirmed target row filters retain
-read semantics on 2026-10-22. Baseline: `b321beace14a2313e54aee033d883df30d47f6c7`.
+Status: approved for task-by-task execution on 2026-10-22; product implementation
+starts with Task 1. The user confirmed target row-filter read semantics and deferred
+the catalog-demo/separate-worker deployment to its own plan. Baseline: `b321beace14a2313e54aee033d883df30d47f6c7`.
 
 ## Outcome
 
@@ -205,13 +205,15 @@ remain unchanged on precommit denial. Never delete uncertain evidence to retry.
 3. Four Spark/Delta pairs: affected tests plus fresh original Ranger 2.8.0/MinIO
    source-to-target pipeline outcomes, exact native final rows/actions, independent
    SELECT and MODIFY grants/revokes, checkpoint outcomes and registration readback.
-4. catalog-demo: an isolated overlay uses the qualified packages, actual Ranger
+4. Deferred deployment (separate plan, not this milestone exit gate): catalog-demo
+   uses an isolated overlay with qualified packages, actual Ranger
    2.8.0 and MinIO; demonstrate both frontends and a separate executor process on
    Spark 3.5.4/Delta 3.3.0. Do not upgrade/rewrite its existing policies or services
    silently. Existing compose declares Ranger 2.7.0; an unused Dockerfile declares
    2.5.0. Neither satisfies this milestone. Additional pairs' cluster deployment
    is not implied by their local executor qualification.
-5. One integrated review, clear support/parity matrix, closure commit and authorized
+5. One integrated review of Tasks 1–5 and their local qualification, clear
+   support/parity matrix, closure commit and authorized
    branch push with remote equality. Preserve evidence and worktree; no PR.
 
 ## Remaining parity work
