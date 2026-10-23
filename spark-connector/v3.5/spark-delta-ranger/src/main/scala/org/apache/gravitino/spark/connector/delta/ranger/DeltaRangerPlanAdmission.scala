@@ -105,6 +105,7 @@ private[ranger] object DeltaRangerPlanAdmission {
       DeltaRangerAppendCommit.current
         .map(_.metadata)
         .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata))
+        .orElse(DeltaRangerMergeCommit.current.map(_.metadata))
         .exists(_.checkpointPlan(plan))
     ) return true
     if (snapshotStateAggregate(plan) || snapshotStateBinding(plan)) return true
@@ -173,6 +174,7 @@ private[ranger] object DeltaRangerPlanAdmission {
                    DeltaRangerAppendCommit.current
                      .map(_.metadata)
                      .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata))
+                     .orElse(DeltaRangerMergeCommit.current.map(_.metadata))
                      .exists(_.ownsLog(fs, index))
                  else if (operation != null && operation.cdfReadOwner() != null)
                    index.rootPaths.nonEmpty && index.rootPaths.forall(

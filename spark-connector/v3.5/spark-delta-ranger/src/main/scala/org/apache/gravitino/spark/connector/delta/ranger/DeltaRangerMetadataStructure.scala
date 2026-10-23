@@ -60,6 +60,65 @@ import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRela
 
 /** Structural facts only; callers retain all source, operation, and execution authority. */
 private[ranger] final class DeltaRangerMetadataStructure(rejectionPrefix: String) {
+
+  /** Resolved stock analyzer stages of a caller-supplied independent recipe. */
+  def analysisStages(plan: LogicalPlan, spark: SparkSession): Vector[LogicalPlan] = {
+    val stages = mutable.ArrayBuffer.empty[LogicalPlan]
+    val analyzer = new Analyzer(spark.sessionState.catalogManager) {
+      override def batches: Seq[Batch] = super.batches.map { batch =>
+        Batch(
+          batch.name,
+          batch.strategy,
+          batch.rules.map { rule =>
+            new org.apache.spark.sql.catalyst.rules.Rule[LogicalPlan] {
+              override def apply(input: LogicalPlan): LogicalPlan = {
+                val result = rule(input)
+                if (result.resolved) stages += result
+                result
+              }
+            }
+          }: _*
+        )
+      }
+    }
+    stages += analyzer.execute(plan)
+    stages.toVector.distinct
+  }
+
+  /** Validates a native empty decoder construction; this never authorizes its execution. */
+  def encoderBinding(
+      plan: LogicalPlan,
+      encoder: ExpressionEncoder[_],
+      output: Seq[org.apache.spark.sql.catalyst.expressions.Attribute]
+  ): Boolean = {
+    import org.apache.spark.sql.catalyst.plans.logical.{DeserializeToObject, LocalRelation}
+    import org.apache.spark.sql.catalyst.expressions.{AttributeSeq, BindReferences}
+    import org.apache.spark.sql.catalyst.optimizer.SimplifyCasts
+    import org.apache.spark.sql.catalyst.analysis.SimpleAnalyzer
+    plan match {
+      case binding: DeserializeToObject =>
+        binding.child match {
+          case local: LocalRelation
+              if !local.isStreaming && local.data.isEmpty &&
+                local.output == output && binding.deserializer.dataType == encoder.objDeserializer.dataType =>
+            try {
+              val expected = encoder.resolveAndBind(output, SimpleAnalyzer).deserializer
+              val actual = BindReferences.bindReference(
+                SimplifyCasts(binding).asInstanceOf[DeserializeToObject].deserializer,
+                AttributeSeq(output)
+              )
+              def normalized(expression: Expression): Expression =
+                ReassignLambdaVariableID(binding.copy(deserializer = expression))
+                  .asInstanceOf[DeserializeToObject]
+                  .deserializer
+              recipeBinding(normalized(actual)) == recipeBinding(normalized(expected))
+            } catch { case scala.util.control.NonFatal(_) => false }
+          case _ => false
+        }
+      case _ => false
+    }
+  }
+
   def reconstruction(
       actual: LogicalPlan,
       spark: SparkSession,

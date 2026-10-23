@@ -351,6 +351,11 @@ private[ranger] object DeltaRangerAppendV1Input {
 private[ranger] final class DeltaRangerAppendInputStrategy(spark: SparkSession)
     extends SparkStrategy {
   override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+    case merge: DeltaRangerMergeCommand                => Seq(merge.receipt.plan(merge))
+    case result: DeltaRangerMergeResult.Carrier        => Seq(result.owner.plan(result))
+    case writer: DeltaRangerMergeWrite.Carrier         => Seq(writer.owner.plan(writer))
+    case metric: DeltaRangerMergeNative.Carrier        => Seq(metric.owner.plan(metric))
+    case source: DeltaRangerMergeSource.Carrier        => Seq(source.owner.plan(source))
     case helper: DeltaRangerCdfReadScans.HelperCarrier => Seq(helper.ticket.plan(helper))
     case cdf: DeltaRangerCdfRead.Carrier               => Seq(cdf.receipt.plan(cdf))
     case cdf: DeltaRangerCdfPropertyCommand.Carrier    => Seq(cdf.owner.plan(cdf, spark))

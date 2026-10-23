@@ -45,7 +45,8 @@ import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRegistration
 private[ranger] final class DeltaRangerCdfReadScans private[ranger] (
     val interval: DeltaRangerCdfHistory.ValidatedInterval,
     spark: SparkSession
-) extends DeltaRangerNativeOperation.CdfReadOwner {
+) extends DeltaRangerNativeOperation.CdfReadOwner
+    with DeltaRangerCdfReadScans.MatchOwner {
   import DeltaRangerCdfRead.denied
   private val settings = spark.sessionState.conf.getAllConfs
   private val thread = Thread.currentThread()
@@ -346,7 +347,7 @@ private[ranger] final class DeltaRangerCdfReadScans private[ranger] (
     requireLive()
     if (helper == null) None else helper.normalize(plan)
   }
-  def requireHelper(candidate: DeltaRangerCdfReadScans.Match): Unit = {
+  override def requireHelper(candidate: DeltaRangerCdfReadScans.Match): Unit = {
     requireLive()
     if ((helper ne candidate) || matching == null) denied("inactive CDF matching helper")
   }
@@ -426,15 +427,24 @@ private[ranger] final class DeltaRangerCdfReadScans private[ranger] (
 
 private[ranger] object DeltaRangerCdfReadScans {
 
+  trait MatchOwner {
+    def requireHelper(candidate: Match): Unit
+  }
+
   /** One exact native file-matching call and its encoded, policy-internal file rows. */
   final class Match(
-      owner: DeltaRangerCdfReadScans,
+      owner: MatchOwner,
       index: TahoeFileIndexWithSnapshotDescriptor,
       files: Vector[org.apache.spark.sql.delta.actions.AddFile],
       partitions: Seq[org.apache.spark.sql.catalyst.expressions.Expression],
       spark: SparkSession
   ) {
     import DeltaRangerCdfRead.denied
+    owner match {
+      case _: DeltaRangerCdfReadScans | _: DeltaRangerMergeNative | _: DeltaRangerMergeWrite =>
+      case _ => denied("unrecognized manifest owner")
+    }
+    private val structure = new DeltaRangerMetadataStructure("Delta manifest decoder rejected: ")
     import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
     import org.apache.spark.sql.catalyst.expressions.{And, Literal}
     private val encoder = org.apache.spark.sql.Encoders
@@ -491,6 +501,9 @@ private[ranger] object DeltaRangerCdfReadScans {
     }
     def analysis(plan: LogicalPlan): Boolean = {
       owner.requireHelper(this)
+      if (local != null && structure.encoderBinding(plan, encoder, local.output)) return true
+      if (analyzedFilter != null && structure.encoderBinding(plan, encoder, analyzedFilter.output))
+        return true
       plan match {
         case candidate: LocalRelation
             if candidate.getClass == classOf[LocalRelation] && checkRows(candidate) =>

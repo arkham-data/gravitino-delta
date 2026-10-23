@@ -64,8 +64,12 @@ private[ranger] class DeltaRangerReadRule(
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
     DeltaRangerNativeOperation.requireNoRawSelection()
+    if (DeltaRangerMergeWrite.analysis(plan, spark)) return plan
+    if (DeltaRangerMergeNative.analysis(plan, spark)) return plan
+    if (DeltaRangerMergeSource.analysis(plan, spark)) return plan
     if (DeltaRangerCdfReadScans.analysis(plan, spark)) return plan
     DeltaRangerCdfRead.resolve(plan, spark, catalogs).foreach(result => return result)
+    DeltaRangerMergeCommand.resolve(plan, spark, catalogs).foreach(result => return result)
     if (DeltaRangerCdfRead.pending(plan, spark).nonEmpty) return plan
     plan match {
       case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return helper
@@ -205,7 +209,14 @@ private[ranger] object DeltaRangerReadRule {
   }
 
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
+    if (DeltaRangerMergeWrite.analysis(plan, spark)) return
+    if (DeltaRangerMergeNative.analysis(plan, spark)) return
+    if (DeltaRangerMergeSource.analysis(plan, spark)) return
     if (DeltaRangerCdfReadScans.analysis(plan, spark)) return
+    plan match {
+      case merge: DeltaRangerMergeCommand => merge.receipt; return
+      case _                              =>
+    }
     DeltaRangerCdfRead.pending(plan, spark).foreach { source =>
       source.observe(plan)
       return
@@ -226,10 +237,19 @@ private[ranger] object DeltaRangerReadRule {
   }
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
+    DeltaRangerMergeWrite.forbidConstructionAction()
+    plan match {
+      case result: DeltaRangerMergeResult.Carrier => result.owner; return result
+      case writer: DeltaRangerMergeWrite.Carrier  => writer.owner; return writer
+      case metric: DeltaRangerMergeNative.Carrier => metric.owner; return metric
+      case source: DeltaRangerMergeSource.Carrier => source.owner; return source
+      case _                                      =>
+    }
     plan match {
       case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return helper
       case cdf: DeltaRangerCdfRead.Carrier               => cdf.receipt; return cdf
       case cdf: DeltaRangerCdfPropertyCommand.Carrier    => cdf.owner.check(cdf, spark); return cdf
+      case merge: DeltaRangerMergeCommand                => merge.receipt; return merge
       case raw: DeltaRangerRawMaintenance.Carrier        => return raw.owner.prepare(raw.child)
       case _                                             =>
     }

@@ -36,6 +36,18 @@ import org.junit.jupiter.api.Test
 /** Foreign plans and native reconstruction state cannot inherit another action's authority. */
 class TestDeltaRangerCdfReadOwnership {
   @Test
+  def unrecognizedManifestOwnerCannotMintHelper(): Unit = {
+    val fake = new DeltaRangerCdfReadScans.MatchOwner {
+      override def requireHelper(candidate: DeltaRangerCdfReadScans.Match): Unit = ()
+    }
+    val rejected = assertThrows(
+      classOf[SecurityException],
+      () => new DeltaRangerCdfReadScans.Match(fake, null, Vector.empty, Nil, null)
+    )
+    assertTrue(rejected.getMessage.contains("unrecognized manifest owner"))
+  }
+
+  @Test
   def concurrentAnalyzedSiblingsIssueExactlyOneReceipt(): Unit = {
     import java.util.IdentityHashMap
     import java.util.concurrent.{Callable, CountDownLatch, Executors, TimeUnit}

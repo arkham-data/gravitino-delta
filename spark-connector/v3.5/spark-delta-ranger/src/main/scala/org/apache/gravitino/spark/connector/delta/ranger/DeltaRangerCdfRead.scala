@@ -143,13 +143,19 @@ private[ranger] object DeltaRangerCdfRead {
         "endingVersion" -> bounds.last
       )
       parse(options, Long.MaxValue)
-      val namedSource = spark.sessionState.analyzer.ResolveRelations(
-        UnresolvedRelation(
-          parts,
-          new CaseInsensitiveStringMap(options.asJava),
-          isStreaming = false
-        )
-      )
+      // Spark's per-analysis name cache does not include relation options. The same named
+      // table may already be the MERGE target, so resolve this bounded CDF load in a fresh
+      // stock context instead of reusing that ordinary target relation.
+      val namedSource = org.apache.spark.sql.catalyst.analysis.AnalysisContext
+        .withNewAnalysisContext {
+          spark.sessionState.analyzer.ResolveRelations(
+            UnresolvedRelation(
+              parts,
+              new CaseInsensitiveStringMap(options.asJava),
+              isStreaming = false
+            )
+          )
+        }
       val pending = resolve(namedSource, spark, catalogs)
         .getOrElse(denied("unresolved named CDF source"))
       return Some(plan.transformDown {
@@ -222,6 +228,18 @@ private[ranger] object DeltaRangerCdfRead {
       plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan,
       spark: org.apache.spark.sql.SparkSession
   ): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan = {
+    DeltaRangerMergeWrite.forbidConstructionAction()
+    plan match {
+      case result: org.apache.spark.sql.catalyst.plans.logical.CommandResult =>
+        result.commandPhysicalPlan match {
+          case merge: DeltaRangerMergeCommand.Exec => return merge.completed(result)
+          case _                                   =>
+        }
+      case _ =>
+    }
+    DeltaRangerMergeWrite.normalize(plan, spark).foreach(result => return result)
+    DeltaRangerMergeNative.normalize(plan, spark).foreach(result => return result)
+    DeltaRangerMergeSource.normalize(plan, spark).foreach(result => return result)
     DeltaRangerCdfReadScans.normalize(plan, spark).foreach(result => return result)
     pending(plan, spark)
       .map { source =>

@@ -179,8 +179,14 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   private val tag = TreeNodeTag[Reference]("gravitino.delta.ranger.physical-evidence")
 
   def capture(plan: SparkPlan, spark: SparkSession): SparkPlan = {
+    DeltaRangerMergeWrite.forbidConstructionAction()
     DeltaRangerNativeOperation.requireNoRawSelection()
     plan match {
+      case result: DeltaRangerMergeResult.Exec        => result.verify(); return result
+      case writer: DeltaRangerMergeWrite.Exec         => writer.verify(); return writer
+      case metric: DeltaRangerMergeNative.Exec        => metric.verify(); return metric
+      case merge: DeltaRangerMergeCommand.Exec        => merge.verify(); return merge
+      case source: DeltaRangerMergeSource.SourceExec  => source.owner.before(source); return source
       case helper: DeltaRangerCdfReadScans.HelperExec => helper.verify(); return helper
       case cdf: DeltaRangerCdfProducer => cdf.receipt.beforeTransitions(cdf); return cdf
       case raw: DeltaRangerRawProducer => raw.owner.beforeTransitions(raw.child); return raw
@@ -240,6 +246,11 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   def finish(plan: SparkPlan, spark: SparkSession = SparkSession.active): SparkPlan = {
     DeltaRangerNativeOperation.requireNoRawSelection()
     plan match {
+      case result: DeltaRangerMergeResult.Exec        => result.verify(); return result
+      case writer: DeltaRangerMergeWrite.Exec         => writer.verify(); return writer
+      case metric: DeltaRangerMergeNative.Exec        => metric.verify(); return metric
+      case merge: DeltaRangerMergeCommand.Exec        => merge.verify(); return merge
+      case source: DeltaRangerMergeSource.SourceExec  => source.owner.after(source); return source
       case helper: DeltaRangerCdfReadScans.HelperExec => helper.verify(); return helper
       case cdf: DeltaRangerCdfProducer => cdf.receipt.afterTransitions(cdf); return cdf
       case raw: DeltaRangerRawProducer => raw.owner.afterTransitions(raw.child); return raw
@@ -260,7 +271,8 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         }
         DeltaRangerAppendCommit.current
           .map(_.metadata)
-          .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata)) match {
+          .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata))
+          .orElse(DeltaRangerMergeCommit.current.map(_.metadata)) match {
           case Some(commit) =>
             DeltaRangerCollectGuardExec(plan)(new DeltaRangerCollectValidationContext {
               override def validateCollection(child: SparkPlan): Unit = native.verify(child)

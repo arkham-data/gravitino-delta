@@ -90,6 +90,12 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     case relation: LogicalRelation if relation eq source.logical => payload
   }
   val carrier: DeltaRangerCdfRead.Carrier = DeltaRangerCdfRead.Carrier(governed.output)(this)
+  private var mergeOwner: DeltaRangerMergeReceipt = null
+  def bindMerge(owner: DeltaRangerMergeReceipt): Unit = {
+    if (mergeOwner != null || (owner.cdf ne this)) denied("foreign MERGE source binding")
+    owner.requireSource(this)
+    mergeOwner = owner
+  }
   private var physical: SparkPlan = null
   private var prepared = false
   private var installed = false
@@ -166,6 +172,7 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     scans.verify(child); validateAction(spark); scans.verify(child)
   }
   private def requireContext(): Unit = {
+    if (mergeOwner != null) mergeOwner.requireSource(this)
     if (
       (SparkSession.active ne spark) || settings != spark.sessionState.conf.getAllConfs || originalBinding != DeltaRangerNativeProvenance
         .binding(original)

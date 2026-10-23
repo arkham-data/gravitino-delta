@@ -1157,6 +1157,23 @@ final class DeltaRangerRegistrationBindings {
         throw denied();
     }
 
+    // Structural named readback only. The caller separately proves its exact MERGE publication.
+    boolean requireMergePublication(boolean published, long version) {
+      requireRetained();
+      PublishedObservation original = observation();
+      PublishedObservation current = readCurrent();
+      requireCompatiblePublication(current);
+      if (original.samePublication(current)) return false;
+      Map<String, String> expected = new TreeMap<>(original.receipt().toProperties());
+      expected.put("delta.registration.receipt.nativeVersion", Long.toString(version));
+      if (!published
+          || version != nativeVersion() + 1
+          || current.nativeVersion() != version
+          || !expected.equals(current.receipt().toProperties())) throw denied();
+      owner.reader.requireLive(current);
+      return true;
+    }
+
     void recheckPublication() {
       requireLive();
       PublishedObservation current =
