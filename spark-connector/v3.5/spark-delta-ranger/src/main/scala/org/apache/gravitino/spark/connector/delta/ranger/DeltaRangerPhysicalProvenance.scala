@@ -21,6 +21,8 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.util.IdentityHashMap
 
+import scala.collection.mutable
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
@@ -320,7 +322,20 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         denied("executable subquery")
       case _ =>
     }
-    def physical(node: SparkPlan): Vector[Any] = node match {
+    // Child plans occur in both constructor fields and children. Store their complete records
+    // once per snapshot so deep native plans do not expand exponentially during capture or equals.
+    // Structural interning preserves equality of shared and independently copied subtrees.
+    val memo = new IdentityHashMap[SparkPlan, PhysicalRef]()
+    val records = mutable.ArrayBuffer.empty[Vector[Any]]
+    val interned = mutable.HashMap.empty[Vector[Any], PhysicalRef]
+    def physical(node: SparkPlan): PhysicalRef = {
+      val previous = memo.get(node)
+      if (previous != null) return previous
+      val result = record(node)
+      memo.put(node, result)
+      result
+    }
+    def record(node: SparkPlan): PhysicalRef = node match {
       case stage: ShuffleQueryStageExec if node.getClass == classOf[ShuffleQueryStageExec] =>
         if (
           stage.plan.getClass != classOf[ShuffleExchangeExec] || stage.output != stage.plan.output
@@ -363,11 +378,18 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case transition: RowToColumnarExec if node.getClass == classOf[RowToColumnarExec] =>
         physical(transition.child)
       case _ =>
-        Vector(
+        val fields = Vector(
           node.getClass,
           node.productIterator.map(value).toVector,
           node.output.map(value).toVector,
           node.children.map(physical).toVector
+        )
+        interned.getOrElseUpdate(
+          fields, {
+            val reference = PhysicalRef(records.size)
+            records += fields
+            reference
+          }
         )
     }
     def value(item: Any): Any = item match {
@@ -419,8 +441,11 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case product: Product => Vector(product.getClass, product.productIterator.map(value).toVector)
       case other: AnyRef    => new Identity(other)
     }
-    physical(plan)
+    val root = physical(plan)
+    Vector(root, records.toVector)
   }
+
+  private final case class PhysicalRef(index: Int)
 
   private final class Identity(private val item: AnyRef) {
     override def equals(other: Any): Boolean = other match {

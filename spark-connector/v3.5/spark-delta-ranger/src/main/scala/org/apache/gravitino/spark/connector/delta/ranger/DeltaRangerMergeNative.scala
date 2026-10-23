@@ -51,7 +51,8 @@ private[ranger] final class DeltaRangerMergeNative(
     receipt: DeltaRangerMergeReceipt,
     transaction: OptimisticTransaction,
     source: DeltaRangerMergeSource.Attempt,
-    condition: Expression
+    condition: Expression,
+    matchedPredicate: Expression
 ) extends DeltaRangerNativeOperation.ScanOwner
     with DeltaRangerCdfReadScans.MatchOwner {
   import DeltaRangerMergeCommand.denied
@@ -119,7 +120,8 @@ private[ranger] final class DeltaRangerMergeNative(
     targetFiles = targetIndex.addFiles.map(_.json).toVector
     val rowIds = Project(plan.output :+ named(MonotonicallyIncreasingID(), "_row_id_"), plan)
     val fileNames = Project(rowIds.output :+ named(InputFileName(), "_file_name_"), rowIds)
-    joined = Join(countedSource, fileNames, Inner, Some(condition), JoinHint.NONE)
+    val unresolvedRecipe = Join(countedSource, fileNames, Inner, Some(condition), JoinHint.NONE)
+    joined = analyzed(unresolvedRecipe)
     recipes ++= Vector(plan, rowIds, fileNames, joined)
   }
   private def retained: LogicalPlan =
@@ -186,7 +188,8 @@ private[ranger] final class DeltaRangerMergeNative(
       val touched = DeltaUDF
         .intFromStringBoolean(function.asInstanceOf[(String, Boolean) => Int])
         .asNondeterministic()
-      val touchedExpression = touched(col("_file_name_"), lit(true)).as("one").expr
+      val touchedExpression =
+        touched(col("_file_name_"), new Column(matchedPredicate)).as("one").expr
       val output = analyzed(
         Project(
           Seq(
@@ -196,7 +199,6 @@ private[ranger] final class DeltaRangerMergeNative(
           joined
         )
       )
-      // This initial profile has INSERT clauses, hence native matchedPredicate is true.
       // Native duplicate-count metadata is reconstructed; row/action generation remains native.
       if (!recipes.exists(structure.corresponds(_, projected, retained))) return
       val grouped = analyzed(
@@ -358,7 +360,7 @@ private[ranger] final class DeltaRangerMergeNative(
   def returned(files: Seq[AddFile], resolve: (Seq[String], Seq[AddFile]) => Seq[AddFile]): Unit = {
     requireLive()
     if (
-      !metricCollected || touchedAccumulator == null || files.isEmpty || files
+      !metricCollected || touchedAccumulator == null || files
         .map(_.json)
         .distinct
         .size != files.size ||
@@ -388,6 +390,10 @@ private[ranger] final class DeltaRangerMergeNative(
     opened = true
     metadata = DeltaRangerNativeOperation.prepare(this)
     metadata.capture(receipt.target.index(), transaction.snapshot)
+    // Filtered file selection need not compute the snapshot summary itself. Native selection
+    // reads these metrics later, so initialize the exact captured summary inside this prefix.
+    transaction.snapshot.numOfFiles
+    transaction.snapshot.sizeInBytes
   }
   def afterFileSelection(): Unit = {
     requireLive()

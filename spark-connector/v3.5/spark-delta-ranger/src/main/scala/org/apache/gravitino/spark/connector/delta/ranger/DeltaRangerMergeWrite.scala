@@ -21,7 +21,8 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.util.IdentityHashMap
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, IsNotNull}
+import org.apache.spark.sql.catalyst.optimizer.ReplaceDeduplicateWithAggregate
+import org.apache.spark.sql.catalyst.expressions.{Attribute, IsNotNull, MonotonicallyIncreasingID}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAlias
 import org.apache.spark.sql.catalyst.util.toPrettySQL
 import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
@@ -29,6 +30,11 @@ import org.apache.spark.sql.execution.datasources.{LogicalRelation, HadoopFsRela
 import org.apache.spark.sql.delta.{DeltaColumnMappingMode, ColumnWithDefaultExprUtils}
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.commands.merge.DeduplicateCDFDeletes
+import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{
+  SOURCE_ROW_INDEX_COL,
+  TARGET_ROW_INDEX_COL
+}
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.files.TahoeFileIndexWithSnapshotDescriptor
 import org.apache.spark.sql.delta.stats.StatisticsCollection
@@ -43,7 +49,7 @@ import org.apache.spark.sql.catalyst.expressions.{
   SubqueryExpression
 }
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.catalyst.plans.FullOuter
+import org.apache.spark.sql.catalyst.plans.{FullOuter, RightOuter}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.AddFile
@@ -56,11 +62,14 @@ private[ranger] final class DeltaRangerMergeWrite(
     source: DeltaRangerMergeSource.Attempt,
     files: Seq[AddFile],
     condition: Expression,
-    clauses: Seq[DeltaMergeIntoClause]
+    clauses: Seq[DeltaMergeIntoClause],
+    matchedOnly: Boolean,
+    val deduplicate: DeduplicateCDFDeletes
 ) extends DeltaRangerCdfReadScans.MatchOwner {
   import DeltaRangerMergeCommand.denied
   private val thread = Thread.currentThread()
   private val structure = new DeltaRangerMetadataStructure("Delta MERGE write recipe rejected: ")
+  private val joinType = if (matchedOnly) RightOuter else FullOuter
   private val sourcePlan = source.logical
   private var targetPlan: LogicalPlan = null
   private var index: TahoeBatchFileIndex = null
@@ -73,6 +82,7 @@ private[ranger] final class DeltaRangerMergeWrite(
   private var recipes = Vector.empty[LogicalPlan]
   private var statistics = Vector.empty[LogicalPlan]
   private var constructing = false
+  private var deduplicating = false
   private var anchor: LogicalPlan = null
   private var anchorBinding: Vector[Any] = null
   private val observations = new IdentityHashMap[LogicalPlan, Vector[Any]]()
@@ -102,7 +112,7 @@ private[ranger] final class DeltaRangerMergeWrite(
   }
   private def retained: LogicalPlan =
     if (targetPlan == null) sourcePlan
-    else Join(sourcePlan, targetPlan, FullOuter, None, JoinHint.NONE)
+    else Join(sourcePlan, targetPlan, joinType, None, JoinHint.NONE)
   private def stages(plan: LogicalPlan): LogicalPlan = {
     val result = structure.analysisStages(plan, receipt.spark)
     recipes ++= result
@@ -130,13 +140,23 @@ private[ranger] final class DeltaRangerMergeWrite(
     requireLive()
     if (name == "numSourceRowsInSecondScan") {
       if (targetPlan == null || joined != null) denied("invalid second source scan")
-      val projected =
-        Project(sourcePlan.output :+ named(expression, "_source_row_present_"), sourcePlan)
+      val left =
+        if (deduplicate.enabled && deduplicate.includesInserts)
+          Project(
+            sourcePlan.output :+ named(MonotonicallyIncreasingID(), SOURCE_ROW_INDEX_COL),
+            sourcePlan
+          )
+        else sourcePlan
+      val projected = Project(left.output :+ named(expression, "_source_row_present_"), left)
       val filtered = Filter(projected.output.last, projected)
-      val right =
+      val target =
         Project(targetPlan.output :+ named(Literal.TrueLiteral, "_target_row_present_"), targetPlan)
-      joined = stages(Join(filtered, right, FullOuter, Some(condition), JoinHint.NONE))
-      recipes ++= Vector(projected, filtered, right, joined)
+      val right =
+        if (deduplicate.enabled)
+          Project(target.output :+ named(MonotonicallyIncreasingID(), TARGET_ROW_INDEX_COL), target)
+        else target
+      joined = stages(Join(filtered, right, joinType, Some(condition), JoinHint.NONE))
+      recipes ++= Vector(left, projected, filtered, target, right, joined)
     }
   }
   private def same(expected: LogicalPlan, candidate: LogicalPlan): Boolean =
@@ -157,6 +177,12 @@ private[ranger] final class DeltaRangerMergeWrite(
                 if candidate.children.size == 1 &&
                   !candidate.expressions.exists(_.exists(_.isInstanceOf[SubqueryExpression])) =>
               derived(candidate.children.head)
+            case distinct: Deduplicate
+                if deduplicating &&
+                  distinct.keys.size == 2 && distinct.keys.map(_.name).toSet ==
+                  Set(TARGET_ROW_INDEX_COL, CDCReader.CDC_TYPE_COLUMN_NAME) &&
+                  distinct.keys.forall(key => distinct.child.output.exists(_ == key)) =>
+              derived(distinct.child)
             case _ => false
           }
       }
@@ -165,7 +191,11 @@ private[ranger] final class DeltaRangerMergeWrite(
       true
     } else recipes.exists(same(_, plan))
   }
-  private def construct[T](input: LogicalPlan, frame: T => DataFrame)(body: => T): T = {
+  private def construct[T](
+      input: LogicalPlan,
+      frame: T => DataFrame,
+      allowDeduplication: Boolean = false
+  )(body: => T): T = {
     requireLive()
     if (constructing) denied("nested native row construction")
     receipt.requireTransaction(transaction)
@@ -173,6 +203,7 @@ private[ranger] final class DeltaRangerMergeWrite(
     anchorBinding = DeltaRangerNativeProvenance.binding(input)
     observations.clear()
     constructing = true
+    deduplicating = allowDeduplication
     try {
       val result = body
       val returned = frame(result).queryExecution.analyzed
@@ -183,7 +214,10 @@ private[ranger] final class DeltaRangerMergeWrite(
         denied("unobserved native construction successor")
       recipes :+= returned
       result
-    } finally { constructing = false; anchor = null; anchorBinding = null; observations.clear() }
+    } finally {
+      constructing = false; deduplicating = false; anchor = null; anchorBinding = null;
+      observations.clear()
+    }
   }
   def precompute(input: DataFrame, original: Seq[DeltaMergeIntoClause])(
       body: => (DataFrame, Seq[DeltaMergeIntoClause])
@@ -212,7 +246,10 @@ private[ranger] final class DeltaRangerMergeWrite(
       (input.queryExecution.analyzed ne precomputed) || finalOutput != null
     )
       denied("foreign native CDC generation")
-    val result = construct(precomputed, (frame: DataFrame) => frame)(body)
+    val result =
+      construct(precomputed, (frame: DataFrame) => frame, allowDeduplication = deduplicate.enabled)(
+        body
+      )
     finish(result.queryExecution.analyzed)
     result
   }
@@ -329,14 +366,18 @@ private[ranger] final class DeltaRangerMergeWrite(
         }
       }
     if (replacements != 1) denied("writer target coverage changed")
-    val child = DeltaRangerPhysicalPlanning.lower(receipt.spark, logical)
+    // The owned writer bypasses the general optimizer. Lower only the native CDC delete
+    // deduplication with Spark's own rule before planning; never copy its row algorithm.
+    val executable = if (deduplicate.enabled) ReplaceDeduplicateWithAggregate(logical) else logical
+    val child = DeltaRangerPhysicalPlanning.lower(receipt.spark, executable)
     physicalBinding = DeltaRangerPhysicalProvenance.binding(child)
     physicalShapes += shape(child)
     physicalShapes += shape(
       org.apache.spark.sql.execution
         .ApplyColumnarRulesAndInsertTransitions(Nil, outputsColumnar = false)(child.clone())
     )
-    physicalShapes += shape(DeltaRangerPhysicalPlanning.tail(receipt.spark, logical, child))
+    physicalShapes += shape(DeltaRangerPhysicalPlanning.tail(receipt.spark, executable, child))
+    prepareScans(child)
     writerRoot = DeltaRangerMergeWrite.Exec(child)(this)
     writerRoot
   }
@@ -362,21 +403,27 @@ private[ranger] final class DeltaRangerMergeWrite(
       ) != physicalBinding
     )
       denied("writer transition changed")
+    prepareScans(child)
     writerRoot = DeltaRangerMergeWrite.Exec(child)(this)
     writerRoot
   }
   def execute(candidate: DeltaRangerMergeWrite.Exec): org.apache.spark.rdd.RDD[InternalRow] = {
     verify(candidate)
     receipt.requireTransaction(transaction)
-    DeltaRangerPhysicalProvenance.nodes(candidate.child).foreach {
-      case scan: org.apache.spark.sql.execution.FileSourceScanExec =>
-        requireLive(); scan.inputRDD; requireLive()
-      case _ =>
-    }
+    prepareScans(candidate.child)
     started = true
     val result = candidate.child.execute()
     requireLive()
     result
+  }
+  private def prepareScans(child: SparkPlan): Unit = {
+    // Spark prepares broadcasts before doExecute. Resolve the exact accepted target manifest
+    // while installing each owned physical successor, before any broadcast worker can request it.
+    DeltaRangerPhysicalProvenance.nodes(child).foreach {
+      case scan: org.apache.spark.sql.execution.FileSourceScanExec =>
+        requireLive(); scan.inputRDD; requireLive()
+      case _ =>
+    }
   }
   override def requireHelper(candidate: DeltaRangerCdfReadScans.Match): Unit = {
     requireLive()

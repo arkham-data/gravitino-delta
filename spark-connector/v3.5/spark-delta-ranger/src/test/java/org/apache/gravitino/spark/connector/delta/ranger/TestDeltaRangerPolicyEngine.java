@@ -58,6 +58,7 @@ import org.apache.ranger.authorization.hadoop.config.RangerPluginConfig;
 import org.apache.ranger.plugin.model.RangerPolicy;
 import org.apache.ranger.plugin.model.RangerRole;
 import org.apache.ranger.plugin.model.RangerServiceDef;
+import org.apache.ranger.plugin.model.RangerValiditySchedule;
 import org.apache.ranger.plugin.policyengine.RangerAccessRequest;
 import org.apache.ranger.plugin.policyengine.RangerAccessResult;
 import org.apache.ranger.plugin.policyengine.RangerPluginContext;
@@ -669,7 +670,7 @@ class TestDeltaRangerPolicyEngine {
     UpdateFixture real = new UpdateFixture(fixture);
     try (DeltaRangerPolicyEngine lease = real.engine) {
       DeltaRangerResourceKey target =
-          new DeltaRangerResourceKey("delta_a", "sales", "orders", null, "update", null);
+          new DeltaRangerResourceKey("delta_a", "sales", "orders", "amount", "update", null);
       String roleName = "GRAVITINO_METALAKE_1_ROLE_appender";
       RangerPolicy policy = targetPolicy(1L, "delta_a", "update", false);
       policy.getPolicyItems().get(0).setUsers(Collections.emptyList());
@@ -696,6 +697,65 @@ class TestDeltaRangerPolicyEngine {
       assertThrows(SecurityException.class, () -> lease.requireSnapshot(granted));
       assertThrows(SecurityException.class, () -> lease.authorize(fixture.subject, target));
       assertEquals(policyVersion, real.plugin.getPoliciesVersion());
+    }
+  }
+
+  @Test
+  void realEngineColumnUpdateAllowsNarrowGrantAndHonorsNamedDeny() throws Exception {
+    Fixture fixture = new Fixture(directory);
+    UpdateFixture real = new UpdateFixture(fixture);
+    try (DeltaRangerPolicyEngine lease = real.engine) {
+      DeltaRangerResourceKey amount =
+          new DeltaRangerResourceKey("delta_a", "sales", "orders", "amount", "update", null);
+      DeltaRangerResourceKey secret =
+          new DeltaRangerResourceKey("delta_a", "sales", "orders", "secret", "update", null);
+      RangerPolicy wildcard = targetPolicy(1L, "delta_a", "update", false);
+      RangerPolicy denied = targetPolicy(2L, "delta_a", "update", true);
+      denied.getResources().put("column", new RangerPolicy.RangerPolicyResource("secret"));
+      real.publish(Arrays.asList(wildcard, denied));
+      lease.authorize(fixture.subject, amount);
+      assertThrows(SecurityException.class, () -> lease.authorize(fixture.subject, secret));
+      RangerPolicy narrow = targetPolicy(3L, "delta_a", "update", false);
+      narrow.getResources().put("column", new RangerPolicy.RangerPolicyResource("amount"));
+      real.publish(Collections.singletonList(narrow));
+      lease.authorize(fixture.subject, amount);
+      assertThrows(SecurityException.class, () -> lease.authorize(fixture.subject, secret));
+      assertThrows(
+          SecurityException.class,
+          () ->
+              lease.authorize(
+                  fixture.subject,
+                  new DeltaRangerResourceKey("delta_a", "sales", "orders", null, "update", null)));
+      assertThrows(
+          SecurityException.class,
+          () ->
+              lease.authorize(
+                  fixture.subject,
+                  new DeltaRangerResourceKey(
+                      "delta_a", "sales", "orders", "amount", "select", null)));
+    }
+  }
+
+  @Test
+  void realEngineColumnUpdateRechecksScheduledGrantWithoutVersionChange() throws Exception {
+    Fixture fixture = new Fixture(directory);
+    UpdateFixture real = new UpdateFixture(fixture);
+    try (DeltaRangerPolicyEngine lease = real.engine) {
+      DeltaRangerResourceKey amount =
+          new DeltaRangerResourceKey("delta_a", "sales", "orders", "amount", "update", null);
+      RangerPolicy policy = targetPolicy(1L, "delta_a", "update", false);
+      policy.getResources().put("column", new RangerPolicy.RangerPolicyResource("amount"));
+      policy.setValiditySchedules(
+          Collections.singletonList(
+              new RangerValiditySchedule(
+                  "2026/10/22 12:00:00", "2026/10/22 13:00:00", "UTC", null)));
+      real.publish(Collections.singletonList(policy));
+      DeltaRangerPolicyEngine.SnapshotStamp stamp = lease.snapshotStamp();
+      lease.authorize(fixture.subject, amount, Instant.parse("2026-10-22T12:30:00Z"));
+      assertThrows(
+          SecurityException.class,
+          () -> lease.authorize(fixture.subject, amount, Instant.parse("2026-10-22T14:00:00Z")));
+      lease.requireSnapshot(stamp);
     }
   }
 

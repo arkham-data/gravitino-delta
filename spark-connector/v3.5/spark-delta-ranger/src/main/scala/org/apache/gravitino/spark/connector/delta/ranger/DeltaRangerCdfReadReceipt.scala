@@ -119,6 +119,21 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     before.requireSame(source.binding.validateCurrent(spark))
     requireContext()
   }
+  // Authorization-only recheck after the exact owning MERGE has validated its session/config.
+  // This never reopens a carrier, producer, checkpoint, or source registration.
+  def requireMergePolicies(owner: DeltaRangerMergeReceipt): Unit = {
+    if ((mergeOwner ne owner) || (owner.cdf ne this) || (SparkSession.active ne spark))
+      denied("foreign MERGE policy validation")
+    engine.requireSnapshot(stamp)
+    val currentSubject = DeltaRangerQuerySubject.current(spark)
+    if (currentSubject.user() != subject.user() || currentSubject.groups() != subject.groups())
+      denied("CDF subject changed")
+    val now = Instant.now()
+    keys.foreach(engine.authorize(subject, _, now))
+    val current = DeltaRangerMaskRules.capture(scan, columns, engine, subject, now)
+    if (current.filter != decisions.filter || current.masks != decisions.masks)
+      denied("CDF policy changed")
+  }
   def plan(candidate: DeltaRangerCdfRead.Carrier): SparkPlan = {
     requireCarrier(candidate)
     validateAction(spark)

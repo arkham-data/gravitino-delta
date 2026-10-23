@@ -145,10 +145,11 @@ class TestDeltaRangerInstalledMerge {
   private def withFixture(test: SparkSession => Unit): Unit =
     withPolicies((spark, _) => test(spark))
 
-  private def withPolicies(
+  private[ranger] def withPolicies(
       test: (SparkSession, RangerBasePlugin) => Unit,
       aliasTarget: Boolean = false,
-      rowTracking: Boolean = false
+      rowTracking: Boolean = false,
+      prepareTarget: SparkSession => Unit = _ => ()
   ): Unit = {
     val transport = new TestDeltaRangerNativeSelect.Fixture
     val nativePlugin = new RangerBasePlugin(transport.plugin.getConfig)
@@ -199,6 +200,7 @@ class TestDeltaRangerInstalledMerge {
         Some(NativeSelectFixture.extension(transport)),
         beforeExtension = spark => {
           setup(spark)
+          prepareTarget(spark)
           if (rowTracking)
             spark
               .sql(
@@ -248,7 +250,7 @@ class TestDeltaRangerInstalledMerge {
     if (mask) {
       val policy = resource(3L, 1, columns = true)
       val masked = new RangerDataMaskPolicyItem; access(masked)
-      masked.setDataMaskInfo(new RangerPolicyItemDataMaskInfo("CUSTOM", null, "NULL"))
+      masked.setDataMaskInfo(new RangerPolicyItemDataMaskInfo("CUSTOM", null, "sha2({col}, 256)"))
       policy.setDataMaskPolicyItems(Collections.singletonList(masked)); values += policy
     }
     val policies = new ServicePolicies
@@ -343,14 +345,12 @@ class TestDeltaRangerInstalledMerge {
   }
 
   @Test
-  def missingSelectOrUpdateAndActiveTransformsRejectBeforeFiles(): Unit = withPolicies {
+  def missingSelectOrUpdateAndUnsupportedMasksRejectBeforeFiles(): Unit = withPolicies {
     (spark, plugin) =>
       val service = plugin.getServiceDef
       publish(plugin, service, Set("select"), 2L)
       rejectWithoutMutation(spark, distinctSql)
       publish(plugin, service, Set("update"), 3L)
-      rejectWithoutMutation(spark, distinctSql)
-      publish(plugin, service, Set("select", "update"), 4L, filter = true)
       rejectWithoutMutation(spark, distinctSql)
       publish(plugin, service, Set("select", "update"), 5L, mask = true)
       rejectWithoutMutation(spark, distinctSql)

@@ -29,7 +29,12 @@ import org.apache.spark.sql.catalyst.plans.logical.{
 import org.apache.spark.sql.delta.{DeltaAnalysis, PreprocessTableMerge}
 import org.apache.spark.sql.delta.util.AnalysisHelper.FakeLogicalPlan
 import org.apache.spark.sql.catalyst.analysis.Analyzer
-import org.apache.spark.sql.catalyst.expressions.{Expression, NamedExpression, SubqueryExpression}
+import org.apache.spark.sql.catalyst.expressions.{
+  Expression,
+  Literal,
+  NamedExpression,
+  SubqueryExpression
+}
 import org.apache.spark.sql.delta.commands.{MergeIntoCommand, MergeIntoCommandBase}
 import org.apache.spark.sql.delta.commands.merge.{
   ClassicMergeExecutor,
@@ -53,7 +58,9 @@ private[ranger] final case class DeltaRangerMergeCommand private (
   override val target = native.target
   override val targetFileIndex = native.targetFileIndex
   override val condition = native.condition
-  override val matchedClauses = native.matchedClauses
+  // MergeIntoCommandBase initializes its unconditional-delete flag from this abstract val.
+  // Lazy initialization exposes the exact native clauses during trait initialization too.
+  override lazy val matchedClauses = native.matchedClauses
   override val notMatchedClauses = native.notMatchedClauses
   override val notMatchedBySourceClauses = native.notMatchedBySourceClauses
   override val migratedSchema = native.migratedSchema
@@ -150,7 +157,9 @@ private[ranger] final case class DeltaRangerMergeCommand private (
       rowVersion: Option[String],
       deduplicate: DeduplicateCDFDeletes
   ): DataFrame = {
-    if (writePhase == null || rowId.nonEmpty || rowVersion.nonEmpty || deduplicate.enabled)
+    if (
+      writePhase == null || rowId.nonEmpty || rowVersion.nonEmpty || deduplicate != writePhase.deduplicate
+    )
       DeltaRangerMergeCommand.denied("unsupported CDC generation")
     writePhase.cdc(input, columns) {
       super.generateCdcAndOutputRows(input, columns, names, noops, rowId, rowVersion, deduplicate)
@@ -186,7 +195,13 @@ private[ranger] final case class DeltaRangerMergeCommand private (
           )
           sourceAttempt.returned(getMergeSource.df.queryExecution.analyzed, materializedSourceRDD)
         }
-        nativePhase = new DeltaRangerMergeNative(owned, transaction, sourceAttempt, condition)
+        nativePhase = new DeltaRangerMergeNative(
+          owned,
+          transaction,
+          sourceAttempt,
+          condition,
+          if (isMatchedOnly) clauseDisjunction(matchedClauses) else Literal.TrueLiteral
+        )
         val selected =
           try {
             val result = findTouchedFiles(spark, transaction)
@@ -200,7 +215,7 @@ private[ranger] final case class DeltaRangerMergeCommand private (
             result
           } finally { nativePhase.close(); nativePhase = null }
         if (
-          selected._2.enabled || notMatchedClauses.isEmpty || shouldWritePersistentDeletionVectors(
+          shouldWritePersistentDeletionVectors(
             spark,
             transaction
           )
@@ -212,7 +227,9 @@ private[ranger] final case class DeltaRangerMergeCommand private (
           sourceAttempt,
           selected._1,
           condition,
-          matchedClauses ++ notMatchedClauses
+          matchedClauses ++ notMatchedClauses,
+          shouldOptimizeMatchedOnlyMerge(spark),
+          selected._2
         )
         val written =
           try

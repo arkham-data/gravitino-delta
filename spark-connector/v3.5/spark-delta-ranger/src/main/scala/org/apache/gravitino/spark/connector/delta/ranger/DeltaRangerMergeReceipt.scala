@@ -22,7 +22,14 @@ package org.apache.gravitino.spark.connector.delta.ranger
 import java.time.Instant
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression}
+import org.apache.spark.sql.catalyst.expressions.{
+  Alias,
+  And,
+  Attribute,
+  AttributeSet,
+  ExprId,
+  Expression
+}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
@@ -115,6 +122,24 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       scan.owner.orNull
     )
   )
+  private val decisions =
+    DeltaRangerMaskRules.capture(scan, selected, engine, subject, Instant.now())
+  // Reuse the read parser and type checks, but retain only its policy expressions. The native
+  // target itself must remain complete for hidden rows and unassigned raw copy-forward fields.
+  private val governed = DeltaRangerMaskRules.rewrite(scan, selected, decisions, spark)
+  private val masks = governed
+    .collectFirst { case Project(output, _) =>
+      targetRelation.output
+        .zip(output)
+        .collect { case (attribute, alias: Alias) =>
+          attribute.exprId -> alias.child
+        }
+        .toMap
+    }
+    .getOrElse(Map.empty)
+  private val filter = governed.collectFirst { case Filter(condition, _) => condition }
+  if (AttributeSet(original.source.output).intersect(AttributeSet(original.target.output)).nonEmpty)
+    denied("ambiguous source/target attribute occurrence")
   private var sourceClosed = false
   private var commitOwner: DeltaRangerMergeCommit = null
   private var publicationAdvanced = false
@@ -145,20 +170,10 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     engine.requireSnapshot(stamp); sourceEngine.requireSnapshot(sourceStamp)
     val now = Instant.now()
     keys.foreach(engine.authorize(subject, _, now))
-    rejectTransforms(scan, targetRelation.output.map(_.name).toSet, engine, now)
-    val sourceId = sourceAnchor.descriptor().identifier
-    rejectTransforms(
-      DeltaRangerReadRule.Scan(
-        source.logical,
-        sourceId.catalog.get,
-        sourceId.database.get,
-        sourceId.table,
-        Option(sourceAnchor.descriptor().owner).filter(_.nonEmpty)
-      ),
-      source.logical.output.map(_.name).toSet,
-      sourceEngine,
-      now
-    )
+    val currentDecisions = DeltaRangerMaskRules.capture(scan, selected, engine, subject, now)
+    if (currentDecisions.filter != decisions.filter || currentDecisions.masks != decisions.masks)
+      denied("target policies changed")
+    if (sourceReceipt != null) sourceReceipt.requireMergePolicies(this)
   }
   def validate(): Unit = {
     requireContext()
@@ -215,26 +230,39 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     target.recheckPublication(); sourceAnchor.recheckPublication()
     checkTransaction(transaction)
   }
-  private def rejectTransforms(
-      scan: DeltaRangerReadRule.Scan,
-      columns: Set[String],
-      engine: DeltaRangerPolicyEngine,
-      now: Instant
-  ): Unit = {
-    val decisions = DeltaRangerMaskRules.capture(scan, columns, engine, subject, now)
-    if (
-      decisions.filter.isPresent || decisions.masks.values.exists(
-        _.kind() != DeltaRangerPolicyEngine.MaskDecision.Kind.NONE
-      )
-    )
-      denied("policy transforms are not yet qualified")
-  }
+  private def govern(expression: Expression, sourceAttributes: Map[ExprId, Attribute]): Expression =
+    expression.transformUp {
+      // transformUp does not revisit the replacement: the mask's raw attribute stays raw.
+      case attribute: Attribute if masks.contains(attribute.exprId) => masks(attribute.exprId)
+      case attribute: Attribute if sourceAttributes.contains(attribute.exprId) =>
+        sourceAttributes(attribute.exprId)
+    }
   def rewrite(): DeltaMergeInto = {
     if (rewritten != null) denied("repeated rewrite")
     source.observe(original.source)
     sourceReceipt = DeltaRangerCdfReadReceipt.issue(source, original.source, spark)
     sourceReceipt.bindMerge(this)
-    rewritten = original.copy(source = sourceReceipt.carrier)
+    if (original.source.output.size != sourceReceipt.carrier.output.size)
+      denied("governed source arity changed")
+    val sourceAttributes = original.source.output
+      .zip(sourceReceipt.carrier.output)
+      .map { case (before, after) =>
+        if (before.name != after.name || before.dataType != after.dataType)
+          denied("governed source output changed")
+        before.exprId -> after
+      }
+      .toMap
+    val userCondition = govern(original.condition, sourceAttributes)
+    rewritten = original.copy(
+      source = sourceReceipt.carrier,
+      condition = filter.map(And(_, userCondition)).getOrElse(userCondition),
+      matchedClauses = original.matchedClauses.map(c =>
+        govern(c, sourceAttributes).asInstanceOf[DeltaMergeIntoMatchedClause]
+      ),
+      notMatchedClauses = original.notMatchedClauses.map(c =>
+        govern(c, sourceAttributes).asInstanceOf[DeltaMergeIntoNotMatchedClause]
+      )
+    )
     rewritten
   }
   def cdf: DeltaRangerCdfReadReceipt = sourceReceipt
@@ -242,7 +270,10 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     if ((candidate ne sourceReceipt) || closed || sourceClosed)
       denied("expired MERGE CDF source")
   }
-  def materializedColumns = sourceReceipt.carrier.output.filter(refs.contains)
+  def materializedColumns = {
+    val governedRefs = AttributeSet(rewritten.expressions.flatMap(_.references))
+    sourceReceipt.carrier.output.filter(governedRefs.contains)
+  }
   def plan(candidate: DeltaRangerMergeCommand): DeltaRangerMergeCommand.Exec = {
     requireCommand(candidate)
     validate()
