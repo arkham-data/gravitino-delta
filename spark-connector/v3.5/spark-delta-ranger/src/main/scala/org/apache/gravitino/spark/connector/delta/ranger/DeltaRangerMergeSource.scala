@@ -32,10 +32,11 @@ private[ranger] object DeltaRangerMergeSource {
   import DeltaRangerMergeCommand.denied
   private val active = new ThreadLocal[Attempt]()
 
-  def begin(receipt: DeltaRangerMergeReceipt, attempt: Int): Attempt = {
-    receipt.validate()
-    if (attempt != 1) denied("source retry not yet qualified")
-    new Attempt(receipt)
+  def begin(permit: DeltaRangerMergeCommand.SourcePermit): Attempt = {
+    val receipt = permit.consume()
+    val result = new Attempt(receipt)
+    receipt.openSourceAttempt(result, permit.number)
+    result
   }
   def analysis(plan: LogicalPlan, spark: SparkSession): Boolean =
     DeltaRangerNativeOperation.current() == null && Option(active.get())
@@ -66,6 +67,7 @@ private[ranger] object DeltaRangerMergeSource {
     def validate(): Unit = {
       if (closed || (Thread.currentThread() ne thread) || (SparkSession.active ne spark))
         denied("expired source attempt")
+      receipt.requireSourceAttempt(this)
       receipt.validate()
     }
     private def requireConstructing(): Unit = {
@@ -223,7 +225,14 @@ private[ranger] object DeltaRangerMergeSource {
       plan.asInstanceOf[LogicalRDD].rdd.eq(issued)
     }
     def owns(plan: LogicalPlan): Boolean = { validate(); ownsRetained(plan) }
-    def close(): Unit = { closed = true }
+    def requireExecution(): Unit = requireConstructing()
+    def isClosed: Boolean = closed
+    def close(): Unit = {
+      if (!closed) {
+        closed = true
+        receipt.closeSourceAttempt(this)
+      }
+    }
   }
 
   final case class Carrier(override val output: Seq[Attribute])(

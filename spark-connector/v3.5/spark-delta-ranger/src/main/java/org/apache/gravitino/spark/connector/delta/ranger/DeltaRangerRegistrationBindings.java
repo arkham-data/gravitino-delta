@@ -286,6 +286,16 @@ final class DeltaRangerRegistrationBindings {
       return observation;
     }
 
+    // A bounded CDF source keeps its original interval when an unrelated source writer advances
+    // the named head. Native helper callbacks cannot start a nested metadata observation; action
+    // boundaries separately run validateCurrent, including the native schema/protocol/config
+    // checks.
+    void recheckPublication() {
+      requireRetained();
+      anchor.requireCompatiblePublication(anchor.readCurrent());
+      requireRetained();
+    }
+
     @SuppressWarnings("ReferenceEquality")
     void requireRetained() {
       anchor.requireRetained();

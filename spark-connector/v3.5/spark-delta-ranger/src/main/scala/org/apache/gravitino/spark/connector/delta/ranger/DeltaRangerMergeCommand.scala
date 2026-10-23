@@ -176,13 +176,14 @@ private[ranger] final case class DeltaRangerMergeCommand private (
   override protected def runMerge(spark: SparkSession): Seq[Row] = {
     val owned = receipt
     owned.validate()
-    if (attempt != 1 || isInsertOnly || canMergeSchema || canOverwriteSchema)
+    if (attempt < 1 || isInsertOnly || canMergeSchema || canOverwriteSchema)
       DeltaRangerMergeCommand.denied("unsupported native branch")
     targetDeltaLog.withNewTransaction(native.catalogTable) { transaction =>
       owned.requireTransaction(transaction)
       if (org.apache.spark.sql.delta.RowTracking.isSupported(transaction.protocol))
         DeltaRangerMergeCommand.denied("row tracking is not qualified")
-      val sourceAttempt = DeltaRangerMergeSource.begin(owned, attempt)
+      val sourceAttempt =
+        DeltaRangerMergeSource.begin(new DeltaRangerMergeCommand.SourcePermit(this, attempt))
       try {
         sourceAttempt.materialize {
           prepareMergeSource(
@@ -279,6 +280,19 @@ private[ranger] final case class DeltaRangerMergeCommand private (
 }
 
 private[ranger] object DeltaRangerMergeCommand {
+
+  /** One-use issuance capability created only by the inherited native attempt callback. */
+  final class SourcePermit private[DeltaRangerMergeCommand] (
+      command: DeltaRangerMergeCommand,
+      val number: Int
+  ) {
+    private var consumed = false
+    def consume(): DeltaRangerMergeReceipt = {
+      if (consumed) denied("source attempt permit already consumed")
+      consumed = true
+      command.receipt
+    }
+  }
   def resolve(
       plan: LogicalPlan,
       spark: SparkSession,

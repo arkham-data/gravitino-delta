@@ -97,10 +97,33 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     mergeOwner = owner
   }
   private var physical: SparkPlan = null
+  private var compiledChild: SparkPlan = null
+  private var mergeExecutionOpen = false
   private var prepared = false
   private var installed = false
   private var actionStarted = false
 
+  def openMergeExecution(owner: DeltaRangerMergeReceipt): Unit = {
+    if (mergeOwner == null || (mergeOwner ne owner) || mergeExecutionOpen || physical != null)
+      denied("foreign MERGE execution renewal")
+    owner.requireSource(this)
+    mergeExecutionOpen = true
+  }
+  def closeMergeExecution(owner: DeltaRangerMergeReceipt): Unit = {
+    if (mergeOwner == null || (mergeOwner ne owner)) denied("foreign MERGE execution cleanup")
+    // Retain only the sealed data-task recipe, never the previous driver's producer authority.
+    physical = null
+    prepared = false
+    installed = false
+    actionStarted = false
+    mergeExecutionOpen = false
+  }
+  private def requireMergeExecution(): Unit = {
+    if (mergeOwner != null) {
+      if (!mergeExecutionOpen) denied("expired MERGE CDF execution")
+      mergeOwner.requireSourceExecution(this)
+    }
+  }
   def requireCarrier(candidate: DeltaRangerCdfRead.Carrier): Unit = {
     if ((candidate ne carrier) || candidate.output != governed.output)
       denied("copied or changed CDF executable carrier")
@@ -136,13 +159,17 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
   }
   def plan(candidate: DeltaRangerCdfRead.Carrier): SparkPlan = {
     requireCarrier(candidate)
+    requireMergeExecution()
     validateAction(spark)
     if (physical != null) denied("CDF physical compilation repeated")
-    val owned = scans.prepare(governed)
-    val child = DeltaRangerPhysicalPlanning.lower(spark, owned)
-    scans.seal(child)
-    scans.tail(DeltaRangerPhysicalPlanning.tail(spark, owned, child))
-    physical = DeltaRangerCdfProducer(child)(this)
+    if (compiledChild == null) {
+      val owned = scans.prepare(governed)
+      compiledChild = DeltaRangerPhysicalPlanning.lower(spark, owned)
+      scans.seal(compiledChild)
+      scans.tail(DeltaRangerPhysicalPlanning.tail(spark, owned, compiledChild))
+    }
+    scans.verify(compiledChild)
+    physical = DeltaRangerCdfProducer(compiledChild)(this)
     physical
   }
   def beforeTransitions(candidate: DeltaRangerCdfProducer): Unit = {
@@ -171,6 +198,7 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     next
   }
   def requireProducer(candidate: DeltaRangerCdfProducer): Unit = {
+    requireMergeExecution()
     if (!installed || (candidate ne physical)) denied("copied CDF physical carrier")
     actionStarted = true
   }

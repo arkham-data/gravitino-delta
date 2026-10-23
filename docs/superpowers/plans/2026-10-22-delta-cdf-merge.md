@@ -123,11 +123,11 @@ claim for tasks absent from this module.
 
 **Interfaces:** begin/validate/close issues one attempt-local source/materialization contract from original bounded evidence. Native helper ownership is distinct from user grammar. Exact issued materialized source remains tied to the original receipt even after localCheckpoint cuts lineage.
 
-- [ ] RED `materializedSourceStillRevalidatesBeforeSecondPass`: apply source or target revoke/filter/mask change after first materialization and before later use/commit; fail without a committed target version although CDF producer need not execute again.
-- [ ] RED `blockLossRetryCreatesFreshAttempt`: native source-block loss triggers native retry with fresh attempt and current authorization; success under unchanged policy, denial under changed policy, exhausted retry surfaces native failure. Cleanup removes only attempt-owned materialization; no global cache purge.
-- [ ] RED `copiedMaterializationCannotBorrowMergeAuthority`: same-schema foreign RDD, copied command/receipt, source substitution, cross-session/subject, wrong source/target index, stale native UUID/schema and user cache/persist/checkpoint all reject. Correct executor serialization transfers data tasks, not driver authority.
-- [ ] Implement exact native join/aggregate/UDF/index/write-helper admission under the MERGE phase owner. Preserve ordinary/CDF SELECT grammar. Same-table source closes before publication while target role accepts only its own proven advancement; compatible unrelated source advancement cannot extend the fixed interval.
-- [ ] GREEN new source/ownership suites plus affected CDF ownership/SQL/physical tests and append command-boundary regressions. Commit `feat(delta): compose governed cdf with native merge execution` after review.
+- [x] RED `materializedSourceStillRevalidatesBeforeSecondPass`: apply source or target revoke/filter/mask change after first materialization and before later use/commit; fail without a committed target version although CDF producer need not execute again.
+- [x] RED `blockLossRetryCreatesFreshAttempt`: native source-block loss triggers native retry with fresh attempt and current authorization; success under unchanged policy, denial under changed policy, exhausted retry surfaces native failure. Cleanup removes only attempt-owned materialization; no global cache purge.
+- [x] RED `copiedMaterializationCannotBorrowMergeAuthority`: same-schema foreign RDD, copied command/receipt, source substitution, cross-session/subject, wrong source/target index, stale native UUID/schema and user cache/persist/checkpoint all reject. Correct executor serialization transfers data tasks, not driver authority.
+- [x] Implement exact native join/aggregate/UDF/index/write-helper admission under the MERGE phase owner. Preserve ordinary/CDF SELECT grammar. Same-table source closes before publication while target role accepts only its own proven advancement; compatible unrelated source advancement cannot extend the fixed interval.
+- [x] GREEN new source/ownership suites plus affected CDF ownership/SQL/physical tests and append command-boundary regressions. Commit `feat(delta): compose governed cdf with native merge execution` after review.
 
 ## Task 4: Validate native publication, idempotency and writeback recovery
 
@@ -153,6 +153,35 @@ claim for tasks absent from this module.
 - [ ] One complete package per changed runtime; retain unique source inputs/artifacts, share immutable proven-equal blobs rather than duplicate evidence trees. Scope failures precisely and rerun only affected checks before final qualification. Commit `test(delta): qualify governed cdf merge with Ranger 2.8` after review.
 
 - [ ] Publish `docs/delta-cdf-merge.md` and `docs/delta-spark-parity.md`; update integration status, module/acceptance READMEs and this plan with exact local qualification and remaining limits. Obtain one integrated review of Tasks 1–5, resolve concrete findings with targeted checks, verify artifact bindings and all four original results, commit closure and push the existing Gravitino branch as already authorized. Verify remote SHA; retain evidence/worktree; no PR. Separate-worker deployment remains unqualified until the deferred demo plan completes.
+
+## Required compatibility follow-up
+
+On 2026-10-22 the user confirmed proceeding with Task 3 while requiring the
+remaining limitations to be addressed. These are open obligations against full
+Delta support, not accepted permanent exclusions. Closing this bounded MERGE
+milestone must not close the broader compatibility objective.
+
+| Open area | Required evidence before claiming support | Execution placement |
+| --- | --- | --- |
+| Materialization and native retries | Fresh attempt authority, policy changes, block loss, exhaustion and owned cleanup | Task 3 |
+| Publication, idempotency and uncertain outcomes | Exact intent, authorized duplicate, no replay after known commit, registration reconciliation | Task 4 |
+| Native constraints and empty/no-op paths | Actual native success/failure and unchanged committed state on failure; distinguish adapter rejection from native constraint enforcement | Task 4 |
+| PySpark SQL frontend | Real Python `spark.sql` named CDF-to-MERGE with masks/filters and authorization denial, original Python process exit and target/CDC evidence on each pinned pair | Task 5 |
+| Runtime and live integration | All four pairs, actual Ranger 2.8.0, MinIO, separate identities and persisted registration | Task 5 |
+| Partitioned MERGE targets | Native partition routing and touched-file rewrite with hidden-row preservation and correct target CDF, including same-table writeback | Explicit follow-up implementation and qualification |
+| Insert-only MERGE optimization | Owned native branch with original column demands, masks/filters, correct output and denial evidence | Explicit follow-up implementation and qualification |
+| Column mapping and default-expression features | Supported protocol/schema profiles and native behavior under policy-aware authored expressions and raw copy-forward | Explicit follow-up implementation and qualification |
+| AQE, schema evolution, row tracking and deletion-vector write paths | Exact owned execution and native feature semantics for each supported profile | Explicit follow-up implementation and qualification |
+| Broader source grammar and MERGE clauses | Defined semantics and authorization for additional transformations and NOT MATCHED BY SOURCE; no generic admission by schema equivalence | Explicit follow-up design, implementation and qualification |
+| DataFrame builder and separate-worker deployment | Named Python/JVM builder behavior and deployed identity/executor boundaries | Existing separate builder and catalog-demo plans |
+| Native strict source-count issue | Retain stock/governed oracle and strict check; document affected join shape, evaluate compatible upstream correction without suppressing validation | Task 5 disclosure and native compatibility follow-up |
+
+The Python harness launching a Scala application is not evidence of the PySpark
+frontend. Add a real Python application to Task 5 qualification. Classic PySpark
+SQL forwards to the JVM SparkSession and is the intended Python entry point;
+the stock DeltaTable builder and Spark Connect are not implied by that evidence.
+Track feature-specific gaps and their evidence in `docs/delta-spark-parity.md` at
+closure; any unsupported profile stays visibly open until implemented and tested.
 
 ## Deferred deployment plan
 

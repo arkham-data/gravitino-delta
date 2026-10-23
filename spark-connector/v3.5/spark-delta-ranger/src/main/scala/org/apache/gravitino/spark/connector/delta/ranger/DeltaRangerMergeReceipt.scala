@@ -140,6 +140,8 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   private val filter = governed.collectFirst { case Filter(condition, _) => condition }
   if (AttributeSet(original.source.output).intersect(AttributeSet(original.target.output)).nonEmpty)
     denied("ambiguous source/target attribute occurrence")
+  private var sourceAttempt: DeltaRangerMergeSource.Attempt = null
+  private var sourceAttemptNumber = 0
   private var sourceClosed = false
   private var commitOwner: DeltaRangerMergeCommit = null
   private var publicationAdvanced = false
@@ -183,6 +185,33 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       denied("target head changed")
     if (sourceReceipt != null) sourceReceipt.validateAction(spark)
   }
+  def openSourceAttempt(candidate: DeltaRangerMergeSource.Attempt, number: Int): Unit = {
+    if (
+      !running || sourceClosed || number != sourceAttemptNumber + 1 ||
+      (sourceAttempt != null && !sourceAttempt.isClosed)
+    ) denied("foreign source attempt")
+    sourceAttempt = candidate
+    sourceAttemptNumber = number
+    try {
+      validate()
+      sourceReceipt.openMergeExecution(this)
+    } catch {
+      case failure: Throwable => candidate.close(); throw failure
+    }
+  }
+  def requireSourceAttempt(candidate: DeltaRangerMergeSource.Attempt): Unit = {
+    if (!running || closed || sourceClosed || (candidate ne sourceAttempt))
+      denied("foreign source attempt")
+  }
+  def requireSourceExecution(candidate: DeltaRangerCdfReadReceipt): Unit = {
+    requireSource(candidate)
+    if (sourceAttempt == null) denied("missing source attempt")
+    sourceAttempt.requireExecution()
+  }
+  def closeSourceAttempt(candidate: DeltaRangerMergeSource.Attempt): Unit = {
+    if (candidate ne sourceAttempt) denied("foreign source attempt cleanup")
+    sourceReceipt.closeMergeExecution(this)
+  }
   def closeSource(): Unit = {
     validate()
     if (sourceClosed) denied("source already closed")
@@ -208,7 +237,7 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       sourceAnchor.requireMergePublication(published, target.nativeVersion() + 1)
     } else {
       sourceAnchor.requireRetained()
-      sourceAnchor.recheckPublication()
+      source.binding.recheckPublication()
     }
     advanced
   }
@@ -227,7 +256,7 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   def requireRetainedTransaction(transaction: OptimisticTransaction): Unit = {
     requireContext()
     target.requireRetained(); sourceAnchor.requireRetained()
-    target.recheckPublication(); sourceAnchor.recheckPublication()
+    target.recheckPublication(); source.binding.recheckPublication()
     checkTransaction(transaction)
   }
   private def govern(expression: Expression, sourceAttributes: Map[ExprId, Attribute]): Expression =

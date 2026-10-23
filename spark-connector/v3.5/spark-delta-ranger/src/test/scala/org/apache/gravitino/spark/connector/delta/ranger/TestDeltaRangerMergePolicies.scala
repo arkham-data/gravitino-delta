@@ -576,7 +576,7 @@ class TestDeltaRangerMergePolicies {
     )
 
   private var version = 10L
-  private def publish(
+  private[ranger] def publish(
       plugin: RangerBasePlugin,
       filter: Option[String] = None,
       masks: Map[String, String] = Map.empty,
@@ -588,7 +588,9 @@ class TestDeltaRangerMergePolicies {
       sourceSchedule: Option[RangerValiditySchedule] = None,
       useRole: Boolean = false,
       targetCatalog: String = "b",
-      filterSchedule: Option[RangerValiditySchedule] = None
+      filterSchedule: Option[RangerValiditySchedule] = None,
+      sourceDeniedSelect: Seq[String] = Nil,
+      sourceFilter: Option[String] = None
   ): Unit = {
     if (useRole) {
       val role = new RangerRole; role.setName("merge-role")
@@ -630,16 +632,19 @@ class TestDeltaRangerMergePolicies {
         if (deny) p.setDenyPolicyItems(Collections.singletonList(item))
         else p.setPolicyItems(Collections.singletonList(item))
       }
-    grant("a", "select", Seq("*")); grant(targetCatalog, "select", selected);
+    grant("a", "select", Seq("*")); grant("a", "select", sourceDeniedSelect, true)
+    grant(targetCatalog, "select", selected);
     grant(targetCatalog, "update", updated)
     grant(targetCatalog, "select", deniedSelect, true);
     grant(targetCatalog, "update", deniedUpdate, true)
-    filter.foreach { value =>
-      val p = resource(targetCatalog, 2, Nil); val item = new RangerRowFilterPolicyItem;
-      access(item, "select")
-      item.setRowFilterInfo(new RangerPolicyItemRowFilterInfo(value));
-      p.setRowFilterPolicyItems(Collections.singletonList(item))
-      filterSchedule.foreach(s => p.setValiditySchedules(Collections.singletonList(s)))
+    Seq(targetCatalog -> filter, "a" -> sourceFilter).foreach { case (catalog, value) =>
+      value.foreach { value =>
+        val p = resource(catalog, 2, Nil); val item = new RangerRowFilterPolicyItem;
+        access(item, "select")
+        item.setRowFilterInfo(new RangerPolicyItemRowFilterInfo(value));
+        p.setRowFilterPolicyItems(Collections.singletonList(item))
+        filterSchedule.foreach(s => p.setValiditySchedules(Collections.singletonList(s)))
+      }
     }
     Seq("a" -> sourceMasks, targetCatalog -> masks).foreach { case (catalog, values) =>
       values.foreach { case (column, value) =>
