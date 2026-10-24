@@ -58,7 +58,6 @@ private[ranger] final class DeltaRangerMergeNative(
   import DeltaRangerMergeCommand.denied
   private val thread = Thread.currentThread()
   if (DeltaRangerMergeNative.active.get() != null) denied("nested native selection")
-  DeltaRangerMergeNative.active.set(this)
   private val structure = new DeltaRangerMetadataStructure("Delta MERGE native helper rejected: ")
   private val sourcePlan = source.logical
   private var recipes = Vector.empty[LogicalPlan]
@@ -84,6 +83,8 @@ private[ranger] final class DeltaRangerMergeNative(
   private var closed = false
   private var opened = false
   private var metadata: DeltaRangerNativeOperation = null
+  // Publish only after fallible initialization, so a denied constructor leaves no owner.
+  DeltaRangerMergeNative.active.set(this)
   override def session(): SparkSession = receipt.spark
   override def bindings() = Collections.singletonList(receipt.target)
   override def requireLive(): Unit = {

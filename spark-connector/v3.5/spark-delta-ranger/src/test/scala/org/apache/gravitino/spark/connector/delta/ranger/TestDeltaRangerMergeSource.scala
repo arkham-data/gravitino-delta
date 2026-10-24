@@ -37,6 +37,54 @@ class TestDeltaRangerMergeSource {
   def exhaustedBlockLossRetainsNativeFailure(): Unit = retry(exhaust = true)
 
   @Test
+  def failedNativeSelectionConstructionDoesNotPoisonThread(): Unit =
+    new TestDeltaRangerInstalledMerge().withPolicies { (spark, plugin) =>
+      val policies = new TestDeltaRangerMergePolicies
+      val thread = Thread.currentThread()
+      val registration = NativeSelectFixture.bindingFixture(spark, "b")
+      val refresh = registration.onRead
+      var changed = false
+      registration.onRead = n => {
+        refresh(n)
+        // Fail the constructor's real policy readback, independently of owner activation.
+        val constructing = Thread
+          .currentThread()
+          .getStackTrace
+          .exists(frame =>
+            frame.getClassName == classOf[DeltaRangerMergeNative].getName &&
+              frame.getMethodName == "<init>"
+          )
+        if (!changed && constructing) {
+          changed = true
+          policies.publish(plugin, sourceDeniedSelect = Seq("id"))
+        }
+      }
+      val failure = assertThrows(classOf[SecurityException], () => spark.sql(sql).collect())
+      assertTrue(changed, "policy change did not reach native selection construction")
+      assertTrue(
+        failure.getStackTrace.exists(frame =>
+          frame.getClassName == classOf[DeltaRangerMergeNative].getName &&
+            frame.getMethodName == "<init>"
+        ),
+        failure.toString
+      )
+      assertEquals(0L, version("b"), "denied construction must not commit")
+      registration.onRead = refresh
+      policies.publish(plugin)
+      assertSame(thread, Thread.currentThread())
+      assertEquals(
+        Set(Row(1L, "b-one", "keep"), Row(2L, "b-two", "drop"), Row(3L, null, "keep")),
+        spark.table("b.db.t").collect().toSet
+      )
+      assertEquals(Seq(Row(3L, 1L, 1L, 1L)), spark.sql(sql).collect().toSeq)
+      assertEquals(1L, version("b"))
+      assertEquals(
+        Set(Row(1L, "changed", "keep"), Row(3L, null, "keep"), Row(4L, "new", "keep")),
+        spark.table("b.db.t").collect().toSet
+      )
+    }
+
+  @Test
   def materializedSourceStillRevalidatesBeforeSecondPass(): Unit = {
     Seq(
       "source-revoke",
