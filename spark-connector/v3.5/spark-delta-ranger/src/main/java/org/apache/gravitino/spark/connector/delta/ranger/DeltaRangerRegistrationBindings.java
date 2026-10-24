@@ -809,9 +809,76 @@ final class DeltaRangerRegistrationBindings {
     }
   }
 
+  /** Scalar state authority over one exact retained target transaction. */
+  @SuppressWarnings("ReferenceEquality")
+  static final class BoundMergeTransaction
+      implements DeltaRangerNativeOperation.TransactionOwner, AutoCloseable {
+    private final BoundRegistrationScan target;
+    private final SparkSession session;
+    private final OptimisticTransaction transaction;
+    private final Thread thread = Thread.currentThread();
+    private final DeltaRangerQuerySubject subject;
+    private final DeltaRangerPolicyEngine.SnapshotStamp stamp;
+    private final Map<String, String> settings;
+    private boolean closed;
+
+    private BoundMergeTransaction(
+        BoundRegistrationScan target, SparkSession session, OptimisticTransaction transaction) {
+      this.target = target;
+      this.session = session;
+      this.transaction = transaction;
+      this.subject = DeltaRangerQuerySubject.current(session);
+      this.stamp = target.engine().snapshotStamp();
+      this.settings = BoundAppendTransaction.settings(session);
+      requireLive();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public SparkSession session() {
+      return session;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public Snapshot snapshot() {
+      return transaction.snapshot();
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void requireLive() {
+      if (closed
+          || Thread.currentThread() != thread
+          || SparkSession.getActiveSession().isEmpty()
+          || SparkSession.getActiveSession().get() != session
+          || OptimisticTransaction.getActive().isEmpty()
+          || OptimisticTransaction.getActive().get() != transaction
+          || transaction.deltaLog() != target.log()
+          || transaction.catalogTable().isEmpty()
+          || transaction.catalogTable().get() != target.descriptor()
+          || transaction.readVersion() != target.nativeVersion()) throw denied();
+      DeltaRangerQuerySubject current = DeltaRangerQuerySubject.current(session);
+      if (!subject.user().equals(current.user())
+          || !subject.groups().equals(current.groups())
+          || !settings.equals(BoundAppendTransaction.settings(session))) throw denied();
+      target.engine().requireSnapshot(stamp);
+      target.requireRetained();
+      target.recheckPublication();
+      target.requireCompatibleHead(snapshot(), target.observation());
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void close() {
+      closed = true;
+    }
+  }
+
   /** Phase-local association with the exact active target transaction. */
   @SuppressWarnings("ReferenceEquality")
-  static final class BoundAppendTransaction implements AutoCloseable {
+  static final class BoundAppendTransaction
+      implements AutoCloseable, DeltaRangerNativeOperation.TransactionOwner {
     private final BoundAppendTarget target;
     private final SparkSession session;
     private final OptimisticTransaction transaction;
@@ -852,11 +919,15 @@ final class DeltaRangerRegistrationBindings {
       requireLive();
     }
 
-    SparkSession session() {
+    /** {@inheritDoc} */
+    @Override
+    public SparkSession session() {
       return session;
     }
 
-    Snapshot snapshot() {
+    /** {@inheritDoc} */
+    @Override
+    public Snapshot snapshot() {
       return snapshot;
     }
 
@@ -865,7 +936,9 @@ final class DeltaRangerRegistrationBindings {
       requireLive();
     }
 
-    void requireLive() {
+    /** {@inheritDoc} */
+    @Override
+    public void requireLive() {
       if (closed
           || Thread.currentThread() != thread
           || SparkSession.getActiveSession().isEmpty()
@@ -1165,6 +1238,11 @@ final class DeltaRangerRegistrationBindings {
           || !binding.partitionSchemaJson.equals(relation.partitionSchema().json())
           || !locationMatches(binding.observation.location(), log.dataPath().toUri()))
         throw denied();
+    }
+
+    BoundMergeTransaction mergeTransaction(
+        SparkSession session, OptimisticTransaction transaction) {
+      return new BoundMergeTransaction(this, session, transaction);
     }
 
     // Structural named readback only. The caller separately proves its exact MERGE publication.

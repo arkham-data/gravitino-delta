@@ -26,7 +26,6 @@ import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
-import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRegistrationBindings.BoundAppendTransaction;
 import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRegistrationBindings.BoundRegistrationScan;
 import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRegistrationReader.PublishedObservation;
 import org.apache.hadoop.fs.Path;
@@ -105,6 +104,22 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     boolean ownsHistoryFile(Path path);
   }
 
+  /** Scalar transaction metadata authority; only final bound owner implementations are admitted. */
+  interface TransactionOwner {
+    /**
+     * @return the exact active Spark session
+     */
+    SparkSession session();
+
+    /**
+     * @return the exact retained native transaction snapshot
+     */
+    Snapshot snapshot();
+
+    /** Rejects expired or changed transaction, registration, subject, or configuration bindings. */
+    void requireLive();
+  }
+
   interface CommitOwner {
     SparkSession session();
 
@@ -133,7 +148,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   @Nullable private final PublishedObservation before;
   @Nullable private final ScanOwner scanOwner;
   @Nullable private final BoundRegistrationScan retainedOwner;
-  @Nullable private final BoundAppendTransaction transactionOwner;
+  @Nullable private final TransactionOwner transactionOwner;
   @Nullable private TransactionCache transactionCache;
   private final List<Lineage> lineages = new ArrayList<>();
   @Nullable private DeltaRangerNativeOperation statePreparation;
@@ -157,7 +172,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       @Nullable PublishedObservation before,
       @Nullable ScanOwner scanOwner,
       @Nullable BoundRegistrationScan retainedOwner,
-      @Nullable BoundAppendTransaction transactionOwner) {
+      @Nullable TransactionOwner transactionOwner) {
     this(session, loadOwner, reader, before, scanOwner, retainedOwner, transactionOwner, null);
   }
 
@@ -168,7 +183,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       @Nullable PublishedObservation before,
       @Nullable ScanOwner scanOwner,
       @Nullable BoundRegistrationScan retainedOwner,
-      @Nullable BoundAppendTransaction transactionOwner,
+      @Nullable TransactionOwner transactionOwner,
       @Nullable CommitOwner commitOwner) {
     this(
         session,
@@ -189,7 +204,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       @Nullable PublishedObservation before,
       @Nullable ScanOwner scanOwner,
       @Nullable BoundRegistrationScan retainedOwner,
-      @Nullable BoundAppendTransaction transactionOwner,
+      @Nullable TransactionOwner transactionOwner,
       @Nullable CommitOwner commitOwner,
       @Nullable RawOwner rawOwner) {
     this.rawOwner = rawOwner;
@@ -243,7 +258,10 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     return new DeltaRangerNativeOperation(session, null, null, null, null, binding, null);
   }
 
-  static DeltaRangerNativeOperation transactionState(BoundAppendTransaction owner) {
+  static DeltaRangerNativeOperation transactionState(TransactionOwner owner) {
+    if (!(owner instanceof DeltaRangerRegistrationBindings.BoundAppendTransaction)
+        && !(owner instanceof DeltaRangerRegistrationBindings.BoundMergeTransaction))
+      throw denied();
     Objects.requireNonNull(owner).requireLive();
     return new DeltaRangerNativeOperation(owner.session(), null, null, null, null, null, owner);
   }

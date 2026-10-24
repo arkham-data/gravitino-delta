@@ -36,12 +36,13 @@ import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 
 /** Authority limited to one native commit and its exact target-state continuation. */
 private[ranger] final class DeltaRangerMergeCommit(
-    receipt: DeltaRangerMergeReceipt,
-    transaction: OptimisticTransaction,
-    actions: Seq[Action],
-    nativeOperation: DeltaOperations.Merge,
-    tags: Map[String, String]
+    private val permit: DeltaRangerMergeCommand.PublicationPermit
 ) extends DeltaRangerNativeOperation.CommitOwner {
+  private val receipt = permit.consume()
+  private val transaction = permit.transaction
+  private val actions = permit.actions
+  private val nativeOperation = permit.operation
+  private val tags = permit.tags
   import DeltaRangerMergeCommit._
   private val structure = new DeltaRangerMetadataStructure("Delta MERGE commit rejected: ")
   import structure._
@@ -50,6 +51,8 @@ private[ranger] final class DeltaRangerMergeCommit(
   receipt.beginCommit(this, transaction)
   private val intent = new Intent(transaction, actions, nativeOperation, tags, spark)
   private val version = transaction.readVersion + 1
+  private val journal = receipt.journal
+  journal.prepare(intent.encoded, version)
   private val nextPath = new Path(transaction.deltaLog.logPath, f"$version%020d.json")
   private val fs = nextPath.getFileSystem(spark.sessionState.newHadoopConf())
   if (fs.exists(nextPath)) denied("next commit already exists")
@@ -102,6 +105,7 @@ private[ranger] final class DeltaRangerMergeCommit(
     val digest = MessageDigest.getInstance("SHA-256").digest(bytes).toVector
     val observed = fileStamp(after) -> digest
     if (publication.exists(_ != observed)) denied("published commit content or status changed")
+    journal.committed(bytes)
     publication = Some(observed)
     Some(fileStamp(after))
   }
@@ -136,14 +140,32 @@ private[ranger] final class DeltaRangerMergeCommit(
       nativeResult = Some(result)
       requireLive()
       operation.succeed()
-      if (!result.contains(version) || !reconciled) denied("publication is not reconciled")
+      val skipped =
+        result.isEmpty && actions.isEmpty && publication.isEmpty && receipt.transactionIdentity.isEmpty
+      if (!skipped && (!result.contains(version) || !reconciled))
+        denied("publication is not reconciled")
       operation.close()
       operation = null
-      receipt.recache(this, transaction)
-      requireLive()
+      if (skipped) {
+        receipt.completeNoop(this, transaction)
+        requireLive()
+        journal.skipped()
+      } else {
+        receipt.recache(this, transaction)
+        requireLive()
+        journal.reconciled()
+      }
       result
     } catch {
-      case failure: Throwable => primary = failure; throw failure
+      case failure: Throwable =>
+        primary = failure
+        try {
+          if (invoked) observePublication()
+          if (publication.isEmpty) journal.unknown()
+        } catch {
+          case evidence: Throwable => if (evidence ne failure) failure.addSuppressed(evidence)
+        }
+        throw failure
     } finally {
       try {
         if (operation != null) operation.close()
@@ -230,6 +252,50 @@ private[ranger] object DeltaRangerMergeCommit {
       ) denied("submitted intent changed")
     }
 
+    val encoded: String = {
+      val node = mapper.createObjectNode()
+      val array = node.putArray("actions"); frozenActions.foreach(array.add)
+      val parameters = node.putObject("parameters")
+      frozenParameters.toVector.sortBy(_._1).foreach { case (key, value) =>
+        parameters.set[JsonNode](key, value)
+      }
+      val tagNode = node.putObject("tags");
+      frozenTags.toVector.sorted.foreach { case (key, value) => tagNode.put(key, value) }
+      node.put("operation", frozenOperation)
+      node.put("userMetadata", userMetadata.orNull)
+      node.put("metrics", metrics)
+      node.put("nativeId", nativeId)
+      node.put("readVersion", readVersion)
+      node.put("engine", engine)
+      val allowed = node.putArray("allowedMetrics");
+      operation.operationMetrics.toVector.sorted.foreach(allowed.add)
+      node.toString
+    }
+    def verify(bytes: Array[Byte]): Unit = verifyPublication(bytes, encoded)
+    private def parse(json: String): JsonNode = mapper.readTree(json)
+  }
+
+  def verifyPublication(bytes: Array[Byte], encoded: String): Unit =
+    new Proof(encoded).verify(bytes)
+
+  private final class Proof(encoded: String) {
+    private val mapper = new ObjectMapper()
+      .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+      .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+    private val node = parse(encoded)
+    private val frozenActions = node.get("actions").elements().asScala.toVector
+    private val frozenTags = stringMap(node.get("tags"))
+    private val frozenParameters =
+      node.get("parameters").fields().asScala.map(e => e.getKey -> e.getValue).toMap
+    private val frozenOperation = node.get("operation").textValue()
+    private val userMetadata =
+      Option(node.get("userMetadata")).filterNot(_.isNull).map(_.textValue())
+    private val metrics = node.get("metrics").booleanValue()
+    private val nativeId = node.get("nativeId").textValue()
+    private val readVersion = node.get("readVersion").longValue()
+    private val engine = node.get("engine").textValue()
+    private val allowedMetrics =
+      node.get("allowedMetrics").elements().asScala.map(_.textValue()).toSet
     def verify(bytes: Array[Byte]): Unit = {
       val text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString
       val lines = text.split("\n", -1).toVector
@@ -290,7 +356,7 @@ private[ranger] object DeltaRangerMergeCommit {
       if (metrics) {
         val observed = stringMap(info.get("operationMetrics"))
         if (
-          !observed.keySet.subsetOf(operation.operationMetrics) ||
+          !observed.keySet.subsetOf(allowedMetrics) ||
           observed.values.exists(value => !value.matches("[0-9]+"))
         )
           denied("native operation metrics changed")

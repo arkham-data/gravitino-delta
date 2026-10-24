@@ -42,7 +42,8 @@ import org.apache.spark.sql.delta.commands.merge.{
   DeduplicateCDFDeletes
 }
 import org.apache.spark.sql.delta.OptimisticTransaction
-import org.apache.spark.sql.delta.actions.FileAction
+import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.DeltaOperations
 
 /** One exact preprocessed SQL command, retaining authored demands separately from native defaults.
   */
@@ -182,6 +183,26 @@ private[ranger] final case class DeltaRangerMergeCommand private (
       owned.requireTransaction(transaction)
       if (org.apache.spark.sql.delta.RowTracking.isSupported(transaction.protocol))
         DeltaRangerMergeCommand.denied("row tracking is not qualified")
+      if (owned.transactionIdentity.nonEmpty) {
+        val binding = owned.target.mergeTransaction(spark, transaction)
+        val executed =
+          try {
+            val operation = DeltaRangerNativeOperation.transactionState(binding)
+            try {
+              operation.captureTransactionState()
+              val duplicate = hasBeenExecuted(transaction, spark)
+              owned.requireRetainedTransaction(transaction)
+              operation.succeed()
+              duplicate
+            } finally operation.close()
+          } finally binding.close()
+        if (executed) {
+          owned.recoverPublication()
+          return Nil
+        }
+        if (owned.journal.existing.nonEmpty)
+          DeltaRangerMergeCommand.denied("unpublished or unknown recorded attempt cannot replay")
+      }
       val sourceAttempt =
         DeltaRangerMergeSource.begin(new DeltaRangerMergeCommand.SourcePermit(this, attempt))
       try {
@@ -245,7 +266,8 @@ private[ranger] final case class DeltaRangerMergeCommand private (
         owned.requireTransaction(transaction)
         checkNonDeterministicSource(spark)
         transaction.registerSQLMetrics(spark, metrics)
-        val actions = written ++ selected._1.map(_.remove)
+        val actions =
+          createSetTransaction(spark, targetDeltaLog).toSeq ++ written ++ selected._1.map(_.remove)
         owned.closeSource()
         sourceAttempt.close()
         val operation = org.apache.spark.sql.delta.DeltaOperations.Merge(
@@ -257,11 +279,13 @@ private[ranger] final case class DeltaRangerMergeCommand private (
           notMatchedBySourcePredicates = Nil
         )
         new DeltaRangerMergeCommit(
-          owned,
-          transaction,
-          actions,
-          operation,
-          Map.empty[String, String]
+          new DeltaRangerMergeCommand.PublicationPermit(
+            this,
+            transaction,
+            actions.toVector,
+            operation,
+            Map.empty[String, String]
+          )
         ).run()
         sendDriverMetrics(spark, metrics)
         Seq(
@@ -280,6 +304,23 @@ private[ranger] final case class DeltaRangerMergeCommand private (
 }
 
 private[ranger] object DeltaRangerMergeCommand {
+
+  /** One-use handoff of the exact actions returned by the owned native helpers. */
+  final class PublicationPermit private[DeltaRangerMergeCommand] (
+      command: DeltaRangerMergeCommand,
+      val transaction: OptimisticTransaction,
+      val actions: Vector[Action],
+      val operation: DeltaOperations.Merge,
+      val tags: Map[String, String]
+  ) {
+    private val thread = Thread.currentThread()
+    private var consumed = false
+    def consume(): DeltaRangerMergeReceipt = {
+      if (consumed || (Thread.currentThread() ne thread)) denied("expired publication permit")
+      consumed = true
+      command.receipt
+    }
+  }
 
   /** One-use issuance capability created only by the inherited native attempt callback. */
   final class SourcePermit private[DeltaRangerMergeCommand] (

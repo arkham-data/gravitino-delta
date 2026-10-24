@@ -44,8 +44,6 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   import DeltaRangerMergeCommand.denied
   if (
     original.withSchemaEvolution || original.notMatchedBySourceClauses.nonEmpty ||
-    spark.conf.getOption("spark.databricks.delta.write.txnAppId").nonEmpty ||
-    spark.conf.getOption("spark.databricks.delta.write.txnVersion").nonEmpty ||
     spark.sessionState.conf.adaptiveExecutionEnabled ||
     spark.conf.get("spark.databricks.delta.schema.autoMerge.enabled", "false").toBoolean
   )
@@ -71,7 +69,22 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     id.table,
     Option(descriptor.owner).filter(_.nonEmpty)
   )
-  val target = catalogs(scan).registrationBindings().resolve(targetRelation)
+  private val targetCatalog = catalogs(scan)
+  val target = targetCatalog.registrationBindings().resolve(targetRelation)
+  val transactionIdentity: Option[(String, Long)] = {
+    val app = spark.conf.getOption("spark.databricks.delta.write.txnAppId")
+    val version = spark.conf.getOption("spark.databricks.delta.write.txnVersion")
+    if (app.isDefined != version.isDefined || app.exists(_.isEmpty))
+      denied("incomplete transaction identity")
+    if (
+      app.nonEmpty && spark.conf.get(
+        "spark.databricks.delta.write.txnVersion.autoReset.enabled",
+        "true"
+      ) != "false"
+    )
+      denied("transaction version auto reset must be false")
+    app.map(a => a -> version.get.toLong)
+  }
   private val sourceAnchor = source.binding.anchor()
   if (
     (target.observation().nativeId() == sourceAnchor.observation().nativeId() ||
@@ -176,6 +189,7 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     if (currentDecisions.filter != decisions.filter || currentDecisions.masks != decisions.masks)
       denied("target policies changed")
     if (sourceReceipt != null) sourceReceipt.requireMergePolicies(this)
+    engine.requireSnapshot(stamp); sourceEngine.requireSnapshot(sourceStamp)
   }
   def validate(): Unit = {
     requireContext()
@@ -239,6 +253,8 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       sourceAnchor.requireRetained()
       source.binding.recheckPublication()
     }
+    // Metadata readback can complete a newer policy download. Check again at the boundary.
+    requireContext(published)
     advanced
   }
   def recache(candidate: DeltaRangerMergeCommit, transaction: OptimisticTransaction): Unit = {
@@ -249,6 +265,21 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       denied("recache state changed")
     recached = true
   }
+  def completeNoop(candidate: DeltaRangerMergeCommit, transaction: OptimisticTransaction): Unit = {
+    if (
+      recached || transactionIdentity.nonEmpty || requireCommitContext(
+        candidate,
+        transaction,
+        published = false
+      )
+    )
+      denied("invalid native no-op completion")
+    target.recheckPublication()
+    if (target.log().unsafeVolatileSnapshot.version != target.nativeVersion())
+      denied("no-op head changed")
+    recached = true
+  }
+
   def endCommit(candidate: DeltaRangerMergeCommit): Unit = {
     if (candidate ne commitOwner) denied("foreign commit cleanup")
     commitOwner = null
@@ -294,6 +325,100 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     )
     rewritten
   }
+  lazy val journal: DeltaRangerMergeJournal = {
+    if (sourceReceipt == null || rewritten == null) denied("unresolved journal intent")
+    import DeltaRangerMergeJournal.{vector, hash}
+    def binding(value: DeltaRangerRegistrationBindings.BoundRegistrationScan): String = {
+      val observation = value.observation()
+      vector(
+        Vector(
+          observation.metalake(),
+          observation.catalog(),
+          observation.database(),
+          observation.table(),
+          vector(
+            observation
+              .receipt()
+              .toProperties
+              .asScala
+              .toVector
+              .filterNot(_._1 == "delta.registration.receipt.nativeVersion")
+              .sortBy(_._1)
+              .map { case (key, v) => vector(Seq(key, v)) }
+          ),
+          value.nativeSchemaJson(),
+          value.nativeProtocolJson(),
+          vector(
+            value.index().snapshotAtAnalysis.metadata.configuration.toVector.sortBy(_._1).map {
+              case (k, v) => vector(Seq(k, v))
+            }
+          )
+        )
+      )
+    }
+    val fingerprint = hash(
+      vector(
+        Vector(
+          binding(sourceAnchor),
+          binding(target),
+          source.request.start.toString,
+          source.request.end.toString,
+          DeltaRangerMergeJournal.plan(original.source),
+          vector(original.expressions.map(_.sql)),
+          sourceReceipt.mergeIntent,
+          vector(rewritten.expressions.map(_.sql)),
+          subject.user(),
+          vector(subject.groups().asScala.toVector.sorted),
+          vector(
+            settings.toVector
+              .filterNot(_._1 == "spark.databricks.delta.lastCommitVersionInSession")
+              .sortBy(_._1)
+              .map { case (k, v) => vector(Seq(k, v)) }
+          )
+        )
+      )
+    )
+    new DeltaRangerMergeJournal(
+      targetCatalog.mergeJournalDirectory(),
+      transactionIdentity,
+      fingerprint
+    )
+  }
+
+  def recoverPublication(): Unit = {
+    validate()
+    if (!running || transactionIdentity.isEmpty)
+      denied("recovery requires fresh transaction identity")
+    val entry = journal.existing.getOrElse(denied("missing durable MERGE intent"))
+    if (
+      entry.state == DeltaRangerMergeJournal.Unknown || entry.skipped ||
+      target.nativeVersion() < entry.version || target.observation().nativeVersion() != target
+        .nativeVersion()
+    )
+      denied("unknown publication or unreconciled current registration")
+    val path = new org.apache.hadoop.fs.Path(target.log().logPath, f"${entry.version}%020d.json")
+    val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    val before = fs.getFileStatus(path)
+    val input = fs.open(path)
+    val bytes =
+      try input.readAllBytes()
+      finally input.close()
+    val after = fs.getFileStatus(path)
+    if (
+      !before.isFile || before.getLen != after.getLen || before.getModificationTime != after.getModificationTime || bytes.length.toLong != after.getLen
+    )
+      denied("recovery publication changed")
+    journal.committed(bytes)
+    validate()
+    closeSource()
+    spark.sharedState.cacheManager.recacheByPlan(spark, original.target)
+    requireContext()
+    target.recheckPublication(); source.binding.recheckPublication()
+    requireContext()
+    journal.reconciled()
+    recached = true
+  }
+
   def cdf: DeltaRangerCdfReadReceipt = sourceReceipt
   def requireSource(candidate: DeltaRangerCdfReadReceipt): Unit = {
     if ((candidate ne sourceReceipt) || closed || sourceClosed)
@@ -376,6 +501,8 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       !running || !OptimisticTransaction.getActive.exists(_ eq transaction) ||
       (transaction.deltaLog ne target.log()) || !transaction.catalogTable.exists(_ eq descriptor) ||
       transaction.readVersion != target.nativeVersion() ||
+      transaction.metadata != transaction.snapshot.metadata || transaction.protocol != transaction.snapshot.protocol ||
+      transaction.snapshot.metadata != target.index().snapshotAtAnalysis.metadata ||
       transaction.snapshot.metadata.schemaString != target.nativeSchemaJson() ||
       transaction.snapshot.protocol.json != target.nativeProtocolJson()
     ) denied("foreign transaction")

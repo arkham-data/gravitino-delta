@@ -58,6 +58,7 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   private final State state;
   @Nullable private DeltaRangerPolicyEngine engine;
   @Nullable private DeltaRangerRegistrationBindings bindings;
+  @Nullable private Path mergeJournalDirectory;
   @Nullable private DeltaRangerRawMaintenanceDeployment rawMaintenance;
   @Nullable private SparkContext context;
   @Nullable private SparkListener shutdown;
@@ -72,6 +73,12 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   DeltaRangerCatalogSpark35(State state) {
     super(state.metadata, state::actor);
     this.state = state;
+  }
+
+  Path mergeJournalDirectory() {
+    if (closed || mergeJournalDirectory == null)
+      throw new IllegalStateException("Delta journal unavailable");
+    return mergeJournalDirectory;
   }
 
   /** {@inheritDoc} */
@@ -125,6 +132,8 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
           builder -> builder.withSimpleAuth(metadata.principal));
       engine = state.engines.apply(conf);
       super.initialize(name, options);
+      mergeJournalDirectory =
+          Paths.get(options.get(JOURNAL_DIRECTORY)).toAbsolutePath().normalize();
       DeltaRangerRegistrationReader reader =
           new DeltaRangerRegistrationReader(state.metadata, metalake, name);
       bindings = new DeltaRangerRegistrationBindings(reader, engine);

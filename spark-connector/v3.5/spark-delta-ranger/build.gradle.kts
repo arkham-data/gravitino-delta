@@ -86,6 +86,8 @@ tasks.withType<Javadoc>().configureEach {
   isFailOnError = true
 }
 tasks.test {
+  // The deterministic journal race mock delegates private Files helpers in the test JVM only.
+  jvmArgs("--add-opens=java.base/java.nio.file=ALL-UNNAMED")
   maxParallelForks = 1
   environment("SPARK_LOCAL_IP", "127.0.0.1")
 }

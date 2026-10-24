@@ -690,7 +690,7 @@ class TestDeltaRangerNativeIdempotency {
   }
 
   @Test
-  def uncachedStateAndMissingChecksumRemainClosed(): Unit = {
+  def uncachedStateRejectsAndOwnedMissingChecksumReadsCurrentTransaction(): Unit = {
     withCase("owned-uncached") { c =>
       configure(c)
       val target = bound(c)
@@ -773,18 +773,17 @@ class TestDeltaRangerNativeIdempotency {
       val location = Paths.get(NativeSelectFixture.locations("a"))
       val published = manifest(location, c.trace.directory.resolve("published"))
       val before = c.spark.sessionState.conf.getAllConfs
-      val error = assertThrows(
-        classOf[Exception],
-        () => {
-          DeltaRangerNativeIdempotency.hasBeenExecuted(c.spark, target, Map.empty); ()
-        }
-      )
-      assertSecurity(error, "Native Delta registration binding is unavailable")
-      assertTrue(c.transaction.isEmpty)
-      assertTrue(c.aggregates.isEmpty)
+      assertTrue(DeltaRangerNativeIdempotency.hasBeenExecuted(c.spark, target, Map.empty))
+      assertEquals(1L, c.transaction.get.snapshot.version)
+      assertEquals(1L, target.log().unsafeVolatileSnapshot.version)
+      assertFalse(c.aggregates.isEmpty)
+      assertTrue(c.appends.isEmpty)
       assertEquals(before, c.spark.sessionState.conf.getAllConfs)
       assertEquals(published, manifest(location, c.trace.directory.resolve("validated")))
-      c.trace.record("owned-checksum-outcome", "entry-target=FAILED transaction=NOT_REACHED")
+      c.trace.record(
+        "owned-checksum-outcome",
+        "native-idempotency=true version=1 publishedBytesEqual=true confEqual=true"
+      )
     }
   }
 
@@ -950,7 +949,7 @@ class TestDeltaRangerNativeIdempotency {
   }
 
   @Test
-  def checksumAbsentHistoryRecordsEntryFailure(): Unit = {
+  def checksumAbsentUnownedHistoryRejectsAggregate(): Unit = {
     var staged = Map.empty[Path, Array[Byte]]
     withHistoryCase(
       "checksum-absent",
@@ -1002,17 +1001,20 @@ class TestDeltaRangerNativeIdempotency {
         classOf[Exception],
         () => { inspectCold(c, target, receipt, sourceReceipt, Map.empty); () }
       )
-      assertSecurity(error, "Native Delta registration binding is unavailable")
-      assertEquals(Some("entry-target"), c.trace.firstFailure.map(_._1))
-      assertTrue(c.transaction.isEmpty)
-      assertTrue(c.aggregates.isEmpty)
+      assertSecurity(error, "Unqualified Delta Ranger route: Aggregate")
+      assertEquals(Some("hasBeenExecuted"), c.trace.firstFailure.map(_._1))
+      assertEquals(1L, c.transaction.get.snapshot.version)
+      assertFalse(computed(c.transaction.get.snapshot))
+      assertEquals(1, c.aggregates.size)
+      assertTrue(c.completions.isEmpty)
+      assertTrue(c.appends.isEmpty)
       assertTrue(c.trace.skip.isEmpty)
-      assertEquals(0L, target.log().unsafeVolatileSnapshot.version)
+      assertEquals(1L, target.log().unsafeVolatileSnapshot.version)
       assertEquals(before, c.spark.sessionState.conf.getAllConfs)
       assertEquals(published, manifest(location, c.trace.directory.resolve("validated")))
       c.trace.record(
         "checksum-outcome",
-        "entry-target=FAILED transaction=NOT_REACHED native-idempotency=NOT_REACHED boolean=NOT_RETURNED publishedBytesEqual=true"
+        "hasBeenExecuted=DENIED_AGGREGATE computed=false boolean=NOT_RETURNED publishedBytesEqual=true"
       )
     }
   }

@@ -89,6 +89,7 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
   private val governed = rewritten.transformUp {
     case relation: LogicalRelation if relation eq source.logical => payload
   }
+  def mergeIntent: String = DeltaRangerMergeJournal.plan(rewritten)
   val carrier: DeltaRangerCdfRead.Carrier = DeltaRangerCdfRead.Carrier(governed.output)(this)
   private var mergeOwner: DeltaRangerMergeReceipt = null
   def bindMerge(owner: DeltaRangerMergeReceipt): Unit = {

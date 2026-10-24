@@ -35,7 +35,9 @@ import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{
   SOURCE_ROW_INDEX_COL,
   TARGET_ROW_INDEX_COL
 }
-import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.constraints.{Constraints, DeltaInvariantCheckerExec}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GetStructField}
+import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.files.TahoeFileIndexWithSnapshotDescriptor
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -81,6 +83,7 @@ private[ranger] final class DeltaRangerMergeWrite(
   private var finalOutput: LogicalPlan = null
   private var recipes = Vector.empty[LogicalPlan]
   private var statistics = Vector.empty[LogicalPlan]
+  private var constraintPlans = Vector.empty[LogicalPlan]
   private var constructing = false
   private var deduplicating = false
   private var anchor: LogicalPlan = null
@@ -166,6 +169,20 @@ private[ranger] final class DeltaRangerMergeWrite(
     if ((spark ne receipt.spark) || !plan.resolved) return false
     if (matching != null) return matching.analysis(plan)
     if (statistics.exists(DeltaRangerStatisticsStructure.matches(_, plan, retained))) return true
+    if (
+      writing && plan.getClass == DeltaRangerMergeWrite.constraintWrapperClass &&
+      plan.children.isEmpty && plan.output.isEmpty && plan.productArity == 1 &&
+      plan.expressions.size == 1 &&
+      (plan.productElement(0).asInstanceOf[AnyRef] eq plan.expressions.head)
+    ) {
+      if (
+        constraintPlans.exists(
+          same(_, DeltaRangerMergeWrite.ConstraintRecipe(plan.expressions.head))
+        )
+      )
+        return true
+      denied("constraint expression changed")
+    }
     if (constructing) {
       if (DeltaRangerNativeProvenance.binding(anchor) != anchorBinding)
         denied("native construction input changed")
@@ -275,8 +292,7 @@ private[ranger] final class DeltaRangerMergeWrite(
         transaction.protocol,
         transaction.metadata,
         false
-      ) ||
-      Constraints.getAll(transaction.metadata, receipt.spark).nonEmpty
+      )
     )
       denied("unsupported native writer profile")
     val original = frame.queryExecution.analyzed
@@ -325,6 +341,34 @@ private[ranger] final class DeltaRangerMergeWrite(
       ),
       receipt.spark
     )
+    constraintPlans = Constraints
+      .getAll(transaction.metadata, receipt.spark)
+      .collect { case Constraints.Check(_, expression) =>
+        val extracted = expression.transformUp { case attribute: UnresolvedAttribute =>
+          writerPlan.output
+            .collectFirst {
+              case a: AttributeReference
+                  if SchemaUtils.DELTA_COL_RESOLVER(a.name, attribute.nameParts.head) =>
+                a
+            }
+            .map { start =>
+              attribute.nameParts.tail.foldLeft[Expression](start) { case (child, name) =>
+                child.dataType match {
+                  case StructType(fields) =>
+                    val ordinal =
+                      fields.indexWhere(f => SchemaUtils.DELTA_COL_RESOLVER(f.name, name))
+                    if (ordinal < 0) denied("constraint field unavailable")
+                    GetStructField(child, ordinal, Some(name))
+                  case _ => denied("constraint field is not a struct")
+                }
+              }
+            }
+            .getOrElse(Literal(null))
+        }
+        structure.analysisStages(DeltaRangerMergeWrite.ConstraintRecipe(extracted), receipt.spark)
+      }
+      .flatten
+      .toVector
     writing = true
     try body
     finally writing = false
@@ -451,6 +495,15 @@ private[ranger] final class DeltaRangerMergeWrite(
   def close(): Unit = { closed = true; DeltaRangerMergeWrite.active.remove() }
 }
 private[ranger] object DeltaRangerMergeWrite {
+  private final case class ConstraintRecipe(expression: Expression) extends LeafNode {
+    override def output: Seq[Attribute] = Nil
+  }
+  private val constraintWrapperClass = Class.forName(
+    "org.apache.spark.sql.delta.constraints.ExpressionLogicalPlanWrapper",
+    false,
+    classOf[DeltaInvariantCheckerExec].getClassLoader
+  )
+
   final case class Carrier(override val output: Seq[Attribute])(
       @transient private val authority: DeltaRangerMergeWrite
   ) extends LeafNode {

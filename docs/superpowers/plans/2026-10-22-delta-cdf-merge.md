@@ -135,11 +135,20 @@ claim for tasks absent from this module.
 
 **Interfaces:** run freezes exact Merge actions and checks authorization immediately before commit; journal binds command/source interval/target/txn identity and records exact native publication before registration reconciliation. Neither a journal row nor SetTransaction alone authorizes replay.
 
-- [ ] RED `mergeIntentRejectsForeignActions`: actual AddFile/RemoveFile/AddCDCFile/SetTransaction plus Merge parameters accepted only from the owned native phase; changed actions, foreign paths/log/UUID or copied attempt reject. Compare native final row multisets and CDF-enabled target events.
-- [ ] RED `postHelperRevokePreventsPublication`: apply completed newer source/target policy download after native files generated; commit denied, target committed version/rows unchanged, orphan files recorded separately. Repeat identity/config/schema drift at the same boundary.
-- [ ] RED `duplicateRequiresAuthorizationAndIdenticalIntent`: native txnAppId/txnVersion with autoReset=false; authorized same intent creates no second publication, denied duplicate fails, changed interval/target/clauses under same identity fails. Missing idempotency pair cannot be advertised as safe automatic replay.
-- [ ] RED `commitAcknowledgementFailureReconcilesWithoutReplay`: inject failures after native publication/before registration and after reconciliation/before caller success; inspect exact commit evidence and recover publication status without executing row changes twice. Unknown/mismatched evidence remains explicit failure; checkpoint is unchanged until success.
-- [ ] Cover no-op/zero-visible-source success, native constraint/ambiguity/missing-history failure and same-table writeback. Verify registration/native version, hidden rows, unrelated sources and caches after close; closed authority cannot run another action. GREEN focused recovery/commit plus affected append publication/idempotency tests. Commit `feat(delta): validate merge publication and recovery` after review.
+- [x] RED `mergeIntentRejectsForeignActions`: actual AddFile/RemoveFile/AddCDCFile/SetTransaction plus Merge parameters accepted only from the owned native phase; changed actions, foreign paths/log/UUID or copied attempt reject. Compare native final row multisets and CDF-enabled target events.
+- [x] RED `postHelperRevokePreventsPublication`: apply completed newer source/target policy download after native files generated; commit denied, target committed version/rows unchanged, orphan files recorded separately. Repeat identity/config/schema drift at the same boundary.
+- [x] RED `duplicateRequiresAuthorizationAndIdenticalIntent`: native txnAppId/txnVersion with autoReset=false; authorized same intent creates no second publication, denied duplicate fails, changed interval/target/clauses under same identity fails. Missing idempotency pair cannot be advertised as safe automatic replay.
+- [x] RED `commitAcknowledgementFailureReconcilesWithoutReplay`: inject failures after native publication/before registration and after reconciliation/before caller success; inspect exact commit evidence and recover publication status without executing row changes twice. Unknown/mismatched evidence remains explicit failure; checkpoint is unchanged until success.
+- [x] Cover no-op/zero-visible-source success, native constraint/ambiguity/missing-history failure and same-table writeback. Verify registration/native version, hidden rows, unrelated sources and caches after close; closed authority cannot run another action. GREEN focused recovery/commit plus affected append publication/idempotency tests. Commit `feat(delta): validate merge publication and recovery` after review.
+
+**Recovery storage boundary:** Typed MERGE evidence uses the target catalog's
+configured private journal directory. Transaction-identity conflict detection is
+scoped to that directory, including rejection of a changed target within the same
+scope. This does not create a global registry across separate catalog journal
+directories. Recovery requires retaining that durable directory and matching
+native evidence; missing, corrupt or mismatched evidence cannot authorize replay.
+Separate-worker journal placement and availability remain deployment qualification
+in the deferred catalog-demo plan.
 
 ## Task 5: Qualify the full pipeline on four pinned runtimes
 
