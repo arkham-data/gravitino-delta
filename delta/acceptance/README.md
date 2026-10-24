@@ -236,3 +236,35 @@ outputs are disclosed separately from explicit base-artifact reuse. Each changed
 pair also has a forced shadow-only assembly with complete archive-entry equality
 to its immutable live artifact; dependencies keep their normal Gradle checks. No closed append or
 CDF enablement matrix is repeated.
+
+
+## Governed CDF-to-MERGE local lane
+
+`cdf_merge_live.py --runtime <manifest> --inputs <private-inputs> --out <fresh-directory>`
+executes an isolated local cell using actual Ranger 2.8.0 and MinIO. Select the
+explicit thin application with `cdf_read_live_package.py --app merge`; the existing
+read application remains the default. The MERGE init retains the pinned memory
+limits and writes requested compile/test classpath hashes. Changed-pair shadow
+assembly runs explicitly; normal dependency/compiler cache outcomes stay visible.
+
+The Python application calls Python `spark.sql` on canonical names using the same
+installed JVM session and authenticated application UGI. The Scala application
+exercises additional transaction/no-op/error and same-table phases. A separate
+setup-identity native observer records raw rows, versions, CDC and original log
+actions. It never supplies collected payloads to application MERGE. Public
+SELECT/MODIFY transitions and completed plugin downloads are retained, including
+column denial and a post-helper revoke gate. Original process exits, application
+checkpoints, provider/source/JAR bindings and persisted registration restart are
+required by the result contract.
+
+Fixtures and failures are retained; only exact owned processes are stopped. This
+lane currently depends on preserved private local packaging/transport artifacts;
+it is not a standalone clean-checkout or separate-worker deployment kit. The
+four-pair local qualification passed on Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2,
+with 13 original phases per pair and original outer/Scala/Python/native exits of zero.
+Focused counts are 4/4/27/27; affected Python checks pass 29. The exact original
+commands, process receipts, focused XML and source/JAR/deployment bindings are
+indexed by `.superpowers/sdd/2026-10-22-delta-cdf-merge/task-5-final-evidence-index.json`.
+Historical failed attempts and pre-fix successes remain separate from these
+corrected final packages. See [governed MERGE](../../docs/delta-cdf-merge.md)
+and [remaining compatibility work](../../docs/delta-spark-parity.md).

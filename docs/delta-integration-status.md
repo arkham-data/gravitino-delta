@@ -184,7 +184,7 @@ The final [CDF result](delta-cdf-enablement.md) verifies this mapping through
 actual Ranger 2.8.0 policy downloads and named Spark execution across all four
 version pairs. It does not establish automatic or general migration.
 
-## Governed batch CDF consumption and next delivery
+## Governed batch CDF consumption
 
 [Governed named batch CDF consumption](delta-cdf-consumption.md) now qualifies both
 bounded named DataFrame reads and SQL `table_changes` on Spark 3.5.4/3.5.6 × Delta
@@ -211,9 +211,10 @@ not a checkpoint, denied/failed/incomplete batches cannot advance, and driver
 receipts provide no durable checkpoint authority. Policy-only changes require
 consumer reconciliation and can change replay results without new source events.
 
-Governed destination MERGE/UPDATE/DELETE and writebacks are the next functional
-ELT milestone. They require independent target authorization and defined key
-mapping; this source feed does not establish complete Delta or end-to-end ELT.
+Bounded governed destination named SQL MERGE and same-table writeback are now
+locally qualified as described below. Standalone UPDATE/DELETE and broader write
+profiles remain open; the source feed does not establish complete Delta or
+end-to-end ELT.
 Streaming, broader lifecycle/query/schema/feature support, a standalone clean
 checkout reproduction kit, `catalog-demo`, distributed/cloud qualification and
 authentication hardening remain separate work. The retained harness depends on
@@ -223,3 +224,18 @@ Keep accepted SELECT, append and enablement milestones closed unless a concrete
 regression or changed dependency requires new verification. Their independent
 limits, including bounded retained native cache maintenance and observation-only
 recovery, remain in the [enablement result](delta-cdf-enablement.md).
+
+
+## Locally qualified named CDF-to-MERGE
+
+The optional companion now implements bounded named SQL MERGE with native row
+reconstruction, independent destination authorization and current-policy commit
+validation. See [governed CDF-to-MERGE](delta-cdf-merge.md) and the explicit
+[compatibility obligations](delta-spark-parity.md). All four Spark 3.5.4/3.5.6 ×
+Delta 3.3.0/3.3.2 pairs pass 13 original local Ranger 2.8.0/MinIO phases each,
+including actual classic Python `spark.sql`, public denial/regrant, native CDC
+and registration persistence/restart. Exact corrected source/JAR/provider bindings
+and original outer/Scala/Python/native exits of zero are retained; focused counts are
+4/4/27/27. Separate-worker deployment remains unqualified.
+Standalone UPDATE/DELETE, the companion DataFrame builder and broader Delta
+profiles remain separate obligations.

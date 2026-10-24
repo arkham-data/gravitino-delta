@@ -1,0 +1,52 @@
+<!--
+ Licensed to the Apache Software Foundation (ASF) under one or more
+ contributor license agreements. See the NOTICE file distributed with
+ this work for additional information regarding copyright ownership.
+ The ASF licenses this file to You under the Apache License, Version 2.0
+ (the "License"); you may not use this file except in compliance with
+ the License. You may obtain a copy of the License at
+
+ http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+# Delta Spark compatibility obligations
+
+A bounded named CDF-to-MERGE milestone does not complete full Delta support.
+Unsupported profiles remain implementation and qualification obligations. They
+must not be admitted because their schema resembles a qualified relation.
+
+| Area | Current boundary | Evidence required to close |
+| --- | --- | --- |
+| Named SQL CDF-to-MERGE | Locally qualified on all four pinned pairs | Retained original Ranger 2.8.0/MinIO, native-state, identity and artifact evidence; preserve the bounded profile across changes |
+| Classic PySpark SQL | Actual Python `spark.sql` qualified on all four pairs | Original Python exit0, query-thread identity, provider/version, masks/filters, denial, target CDC and checkpoints retained |
+| Materialization and native retries | Focused local owned-attempt tests | Preserve fresh authority, changed-policy rejection, block-loss retries, exhaustion and owned cleanup across runtime changes |
+| Publication and recovery | Private durable driver-local journal and exact native proof | Current authorization/registration, exact intent, authorized duplicate, no replay after known commit; deployed placement still separate |
+| Constraints and no-op paths | Native CHECK and empty/no-match paths tested locally | Continue distinguishing native constraint failure from adapter rejection; no committed changes on failure |
+| Partitioned targets | Unsupported | Native routing/touched-file rewrites, hidden-row preservation and correct CDC, including same-table writeback |
+| Insert-only optimization | Unsupported | Owned native branch with original column demands, masks/filters, output and denial evidence |
+| Column mapping and defaults | Unsupported | Protocol/schema profiles, native features, authored-expression provenance and raw copy-forward |
+| AQE | Requires disabled AQE | Exact owned adaptive execution and policy revalidation |
+| Schema evolution | Unsupported | Native schema evolution with registration/publication and policy demand correctness |
+| Row tracking and deletion vectors | Unsupported write profiles | Exact native feature semantics and owned action/reconstruction evidence |
+| Broader source grammar/clauses | One bounded CDF source with finite scalar grammar | Defined joins/windows/aggregates and NOT MATCHED BY SOURCE semantics; no admission by schema equivalence |
+| Named DataFrame builder | Deferred | Preserve original assignments, canonical named resolution and Python/JVM behavior; stock DeltaTable.forName is not qualified |
+| Spark Connect | Not qualified | Remote-session identity/authorization and supported frontend behavior |
+| Separate workers/deployment | Deferred catalog-demo plan | Deployed authentication, executor boundaries, journal durability/placement, registration and artifact verification |
+| Native strict source-count check | Known stock-equivalent constant-key full-outer nested-loop shape | Retain strict check and both stock/governed oracle; evaluate compatible upstream correction without suppressing validation |
+| Ordinary projected SELECT with arithmetic key mask | Reproduced analysis receipt-binding rejection during Task 5 diagnostic | Fix/qualify exact analyzer binding mutation; original diagnostic retained, independent from SQL MERGE qualification |
+
+The stock-equivalent source-count behavior was observed on both Delta pins. A
+successful different join shape does not close it. Full compatibility also does
+not follow from a Python harness launching a Scala class: Python itself must
+submit the named SQL under its authenticated application identity.
+
+See [CDF consumption](delta-cdf-consumption.md) for historical-schema and finite
+read bounds, [governed MERGE](delta-cdf-merge.md) for policy/checkpoint semantics,
+and the separate [builder](superpowers/plans/2026-10-22-delta-cdf-merge-builder.md)
+and [deployment](superpowers/plans/2026-10-22-delta-cdf-merge-demo.md) plans.

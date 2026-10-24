@@ -306,8 +306,9 @@ required metadata read permissions. Keep the accepted catalog constructor's acto
 the existing current-actor transport. Application catalog discovery uses its separate minimal
 Gravitino visibility grant, never table SELECT inferred from visibility.
 
-The qualified write surface is the [bounded named append milestone](../../../docs/delta-native-governed-append.md),
-including its packaged public-grant matrix. Broader DML/DDL, governed cached queries,
+The qualified write surfaces are [bounded named append](../../../docs/delta-native-governed-append.md)
+and [bounded named CDF-to-MERGE](../../../docs/delta-cdf-merge.md), including their
+packaged public-grant matrices. Broader DML/DDL, governed cached queries,
 streaming, arbitrary-job security and full Delta support remain subsequent work.
 
 ## Governed named batch CDF reads
@@ -347,5 +348,23 @@ Consumers checkpoint the successfully processed requested end after sink success
 including successful empty intervals. Visible maximum commit metadata is not a
 cursor, and driver receipts are not durable checkpoints. Denied/incomplete/failed
 reads cannot advance. See the result for action revalidation and exact historical
-profile limits. Governed destination MERGE/UPDATE/DELETE and writebacks are the
-next functional ELT milestone; this source feed does not establish complete ELT.
+profile limits. Bounded named SQL MERGE and same-table writeback are locally
+qualified below; standalone UPDATE/DELETE and broader profiles remain open.
+This source feed does not establish complete ELT.
+
+
+## Named CDF-to-MERGE
+
+The companion implements the bounded [named SQL MERGE](../../../docs/delta-cdf-merge.md)
+path using native Delta executors. Destination row filters control matching;
+authored expressions see masks while hidden/unchanged rows retain raw storage
+values. Current authorization is checked across materialization, retries and
+publication. The caller owns its durable source checkpoint. All four Spark
+3.5.4/3.5.6 × Delta 3.3.0/3.3.2 local Ranger 2.8.0/MinIO cells pass, including
+actual classic PySpark SQL success/denial, native target CDC and persisted
+registration restart. Original process exits, loaded providers and corrected
+source/artifact bindings are retained in the linked result.
+
+This does not admit the stock DataFrame builder, Spark Connect, partitioned targets,
+AQE or arbitrary native operations. The [parity tracker](../../../docs/delta-spark-parity.md)
+keeps all unsupported profiles and deployment evidence visibly open.

@@ -88,9 +88,16 @@ def verify_runtime(runtime):
     manifest_origins(runtime)
 
 
-def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
+def app_profile(app):
+    assert app in ['read','merge'], 'Unknown thin application'
+    stem='cdf-'+app+'-live'
+    return {'init':'delta/acceptance/'+stem.replace('-','_')+'.gradle','task':'cdf'+app.title()+'LiveThinJar', 'property':'cdf'+app.title()+'LiveAppOut','jar':stem+'.jar','class':APP if app=='read' else APP.replace('CdfRead','CdfMerge')}
+
+
+def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='read'):
     """Build one pinned pair; copy only changed artifacts and link verified immutable inputs."""
     assert spark in ['3.5.4','3.5.6'] and delta in ['3.3.0','3.3.2']
+    profile=app_profile(application)
     output.mkdir(mode=0o700)
     assert shutil.disk_usage(output).free>8*1024**3,'Insufficient space for changed artifact build'
     base=read(base_path);before=capture_sources(ROOT)
@@ -101,10 +108,10 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
     assert shared and all(sha(p)==d for p,d in shared.items()),'Shared server artifact drift'
     save(output/'source-before.json',{'files':before,'digest':canonical_digest(before),'gitHead':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()})
     reuse_companion=can_reuse_companion(base,before,spark,delta)
-    tasks=[':spark-connector:spark-delta-ranger-3.5:cdfReadLiveThinJar']
+    tasks=[':spark-connector:spark-delta-ranger-3.5:'+profile['task']]
     if not reuse_companion:tasks=[':spark-connector:spark-delta-ranger-3.5:clean']+tasks+[':spark-connector:spark-delta-ranger-runtime-3.5:shadowJar']
-    argv=['./gradlew','-I','delta/acceptance/cdf_read_live.gradle']+tasks+[
-        '-PcdfReadLiveAppOut='+str(output/'app'),'-PdeltaSparkVersion='+spark,'-PdeltaVersion='+delta,
+    argv=['./gradlew','-I',profile['init']]+tasks+[
+        '-P'+profile['property']+'='+str(output/'app'),'-PdeltaSparkVersion='+spark,'-PdeltaVersion='+delta,
         '-PskipITs','-PskipDockerTests=false','--offline','--max-workers=2','--no-daemon','-Dorg.gradle.jvmargs=-Xmx1536m','--console=plain']
     launch(argv,dict(os.environ,JAVA_HOME=JAVA),output/'build',timeout=900)
     after=capture_sources(ROOT);save(output/'source-after.json',{'files':after,'digest':canonical_digest(after)})
@@ -113,7 +120,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
     else:
         shadow=next(p for p in (ROOT/RUNTIME/'build/libs').glob('*runtime*.jar') if not p.name.endswith('-empty.jar'))
         ranger=output/'ranger';ranger.mkdir();changed=ranger/shadow.name;shutil.copyfile(shadow,changed)
-    built_app=output/'app/cdf-read-live.jar';app=built_app
+    built_app=output/'app'/profile['jar'];app=built_app
     if archive_entries(built_app)==archive_entries(base['app']):app=Path(base['app']).resolve()
     compiled={str(p.relative_to(ROOT)):sha(p) for p in sorted((ROOT/MODULE/'build/classes').rglob('*.class'))}
     if reuse_companion:
@@ -126,6 +133,14 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
         thin_compiled[name]=digest
     save(output/'compiled-classes.json',compiled)
     artifacts={str(p):sha(p) for p in [changed,built_app,output/'compiled-classes.json']}
+    if application=='merge':
+        build_inputs=output/'app/cdf-merge-build-inputs.json'
+        artifacts[str(build_inputs)]=sha(build_inputs)
+        resolved=read(build_inputs)
+        for configuration in ['compileClasspath','testCompileClasspath']:
+            assert all(sha(path)==digest for path,digest in resolved[configuration].items())
+            names={Path(path).name for path in resolved[configuration]}
+            assert {'spark-sql_2.12-'+spark+'.jar','delta-spark_2.12-'+delta+'.jar','scala-library-2.12.21.jar'}<=names
     receipt={'before':str(output/'source-before.json'),'after':str(output/'source-after.json'),'exit':str(output/'build/exit.json'),
         'command':str(output/'build/command.json'),'artifacts':artifacts,'appBuildArtifact':str(built_app),'thinCompiledClasses':thin_compiled,'reusedCompanion':reuse_companion,'reusedApp':app!=built_app,'moduleSources':{p:d for p,d in before.items() if p.startswith((MODULE,RUNTIME))},
         'compiledClasses':compiled,'gitHead':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()}
@@ -139,7 +154,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
     oldstock=base['stockJarHashes'];oldjars={Path(p).name:Path(p) for p in base['jarHashes']}
     omitted=set(oldstock)-set(oldjars)
     sources={p.name:p for p in (stock/'jars').glob('*.jar') if p.name not in omitted}
-    selected={n:p for n,p in oldjars.items() if n not in oldstock and not n.startswith(('gravitino-spark-connector-delta-ranger-runtime','public-grants-live-append','delta-spark_2.12-','delta-storage-'))}
+    selected={n:p for n,p in oldjars.items() if n not in oldstock and not n.startswith(('gravitino-spark-connector-delta-ranger-runtime','public-grants-live-append','cdf-read-live','cdf-merge-live','delta-spark_2.12-','delta-storage-'))}
     selected[changed.name]=changed;selected[app.name]=app
     for artifact in ['delta-spark_2.12','delta-storage']:
         matches=list((Path.home()/'.gradle/caches/modules-2/files-2.1/io.delta'/artifact/delta).glob('*/*.jar'));assert len(matches)==1
@@ -149,14 +164,14 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
     jars=sorted((home/'jars').glob('*.jar'))
     prefix='org/apache/gravitino/spark/connector/delta/ranger/'
     ranger_classes=classes(changed)
-    names=[n for n in base['providers'] if not n.startswith(('org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveAppend','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLivePhasePin'))]
-    names+= [n[:-6].replace('/','.') for n in ranger_classes if n.startswith(prefix+'DeltaRangerCdf') and '$anon' not in n and '$$' not in n]
-    names+=[APP.replace('/','.')+'$']
+    names=[n for n in base['providers'] if not n.startswith(('org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveAppend','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLivePhasePin','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdf'))]
+    names+= [n[:-6].replace('/','.') for n in ranger_classes if n.startswith((prefix+'DeltaRangerCdf',prefix+'DeltaRangerMerge')) and '$anon' not in n and '$$' not in n]
+    names+=[profile['class'].replace('/','.')+'$']
     providers=provider_inventory(jars,sorted(set(names)))
     for name,path in selected.items():
         if path not in [changed,app] and name.startswith('gravitino-'):shared[str(path)]=sha(path)
     inventories={path:classes(path) for path in set(providers.values())}
-    manifest=dict(schemaVersion=1,javaHome=JAVA,manifestRole='CDF consumption pinned-pair runtime',
+    manifest=dict(schemaVersion=1,javaHome=JAVA,manifestRole='CDF '+application+' pinned-pair runtime',application=application,
         assemblyManifest=base['assemblyManifest'],assemblySha256=sha(base['assemblyManifest']),
         assemblyProvenanceScope='Shared server only; current companion/application provenance and reuse flags use freshBuildReceipt',spark=spark,delta=delta,sparkHome=str(home),app=str(app),changedRuntime=str(changed.resolve()),
         jarHashes={str(p.resolve()):sha(p) for p in jars},runtimeJarLinks={str(p):str(p.resolve()) for p in jars},addedJarNames=sorted(selected),
@@ -172,9 +187,9 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0'):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base',required=True);parser.add_argument('--out',required=True)
-    parser.add_argument('--spark',default='3.5.4');parser.add_argument('--delta',default='3.3.0')
+    parser.add_argument('--app',choices=['read','merge'],default='read');parser.add_argument('--spark',default='3.5.4');parser.add_argument('--delta',default='3.3.0')
     args=parser.parse_args();os.umask(0o077)
-    build_package(Path(args.base).resolve(),Path(args.out).resolve(),args.spark,args.delta)
+    build_package(Path(args.base).resolve(),Path(args.out).resolve(),args.spark,args.delta,args.app)
 
 
 if __name__=='__main__':main()
