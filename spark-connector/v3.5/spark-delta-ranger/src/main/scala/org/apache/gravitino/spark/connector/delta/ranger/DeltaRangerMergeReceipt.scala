@@ -356,27 +356,40 @@ private[ranger] final class DeltaRangerMergeReceipt private (
         )
       )
     }
-    val fingerprint = hash(
-      vector(
-        Vector(
-          binding(sourceAnchor),
-          binding(target),
-          source.request.start.toString,
-          source.request.end.toString,
-          DeltaRangerMergeJournal.plan(original.source),
-          vector(original.expressions.map(_.sql)),
-          sourceReceipt.mergeIntent,
-          vector(rewritten.expressions.map(_.sql)),
-          subject.user(),
-          vector(subject.groups().asScala.toVector.sorted),
-          vector(
-            settings.toVector
-              .filterNot(_._1 == "spark.databricks.delta.lastCommitVersionInSession")
-              .sortBy(_._1)
-              .map { case (k, v) => vector(Seq(k, v)) }
-          )
+    val legacy = vector(
+      Vector(
+        binding(sourceAnchor),
+        binding(target),
+        source.request.start.toString,
+        source.request.end.toString,
+        DeltaRangerMergeJournal.plan(original.source),
+        vector(original.expressions.map(_.sql)),
+        sourceReceipt.mergeIntent,
+        vector(rewritten.expressions.map(_.sql)),
+        subject.user(),
+        vector(subject.groups().asScala.toVector.sorted),
+        vector(
+          settings.toVector
+            .filterNot(_._1 == "spark.databricks.delta.lastCommitVersionInSession")
+            .sortBy(_._1)
+            .map { case (k, v) => vector(Seq(k, v)) }
         )
       )
+    )
+    // Preserve the complete legacy encoding for unpartitioned targets, including partitioned
+    // CDF sources. Partitioned targets use a distinct intent with both ordered native layouts;
+    // full schema/type identity remains in each existing binding above.
+    val fingerprint = hash(
+      if (target.nativePartitionStamp().isEmpty) legacy
+      else
+        vector(
+          Vector(
+            "partitioned-merge-v1",
+            legacy,
+            sourceAnchor.nativePartitionStamp(),
+            target.nativePartitionStamp()
+          )
+        )
     )
     new DeltaRangerMergeJournal(
       targetCatalog.mergeJournalDirectory(),

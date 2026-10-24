@@ -38,7 +38,7 @@ import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{
 import org.apache.spark.sql.delta.constraints.{Constraints, DeltaInvariantCheckerExec}
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, GetStructField}
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.files.TahoeFileIndexWithSnapshotDescriptor
+import org.apache.spark.sql.delta.files.{TahoeFileIndexWithSnapshotDescriptor, TransactionalWrite}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.types.{StructType, StructField}
@@ -286,7 +286,6 @@ private[ranger] final class DeltaRangerMergeWrite(
     output(frame)
     if (writing || writerPlan != null) denied("repeated native writer")
     if (
-      transaction.metadata.partitionColumns.nonEmpty ||
       transaction.metadata.columnMappingMode.name != "none" ||
       ColumnWithDefaultExprUtils.tableHasDefaultExpr(
         transaction.protocol,
@@ -296,23 +295,41 @@ private[ranger] final class DeltaRangerMergeWrite(
     )
       denied("unsupported native writer profile")
     val original = frame.queryExecution.analyzed
+    val partitionColumns = transaction.metadata.partitionColumns
+    val conf = receipt.spark.sessionState.conf
+    if (
+      partitionColumns.nonEmpty && TransactionalWrite.shouldOptimizeWrite(
+        transaction.metadata,
+        conf
+      )
+    )
+      denied("optimized partitioned writer is not qualified")
+    // MergeIntoCommandBase adds exactly this ordered repartition before TransactionalWrite
+    // adds its CDC projection. Neither recipe grants authority to a user repartition plan.
+    val partitioned =
+      if (partitionColumns.nonEmpty && conf.getConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE))
+        stages(
+          RepartitionByExpression(partitionColumns.map(UnresolvedAttribute(_)), original, None)
+        )
+      else original
     val cdc = CDCReader.isCDCEnabledOnTable(transaction.metadata, receipt.spark)
     writerPlan =
       if (cdc)
         stages(
           Project(
-            original.output :+
+            partitioned.output :+
               named(
                 IsNotNull(UnresolvedAttribute(CDCReader.CDC_TYPE_COLUMN_NAME)),
                 CDCReader.CDC_PARTITION_COL
               ),
-            original
+            partitioned
           )
         )
-      else original
+      else partitioned
+    val partitionNames = partitionColumns.toSet + CDCReader.CDC_PARTITION_COL
     val statsOutput = writerPlan.output
       .map(_.withNullability(true))
-      .filterNot(_.name == CDCReader.CDC_PARTITION_COL)
+      .filterNot(a => partitionNames(a.name))
     val inputStatsSchema = StructType(
       statsOutput.map(a => StructField(a.name, a.dataType, a.nullable, a.metadata))
     )
@@ -325,7 +342,7 @@ private[ranger] final class DeltaRangerMergeWrite(
           receipt.spark.sessionState.conf.getConf(
             DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
           )
-        ) tableSchema
+        ) StructType(tableSchema.filterNot(f => partitionNames(f.name)))
         else inputStatsSchema
       override def outputAttributeSchema: StructType = inputStatsSchema
       override val spark: SparkSession = receipt.spark

@@ -1,7 +1,7 @@
 # Partitioned named Delta CDF-to-MERGE targets
 
-Status: proposed design for the next task, selected by the user on 2026-10-24.
-Implementation has not started. Baseline: `1e35d8d39022b4a608d1ae983d7d42bd96ef0e95`.
+Status: approved by the user's subsequent "Proceed" after design review; execute
+task by task. Design baseline: `1e35d8d39022b4a608d1ae983d7d42bd96ef0e95`.
 
 ## Intent and inherited decisions
 
@@ -11,7 +11,7 @@ the same SQL surface, including classic PySpark `spark.sql`. Gravitino owns tabl
 registration; Delta owns file routing, row reconstruction and transaction actions.
 
 The user selected this feature as the next priority. The engineering approach and
-test breakdown below are proposals, using the already approved
+test breakdown below are approved, using the already approved
 [MERGE policy and lifecycle contract](2026-10-22-delta-cdf-merge-design.md).
 The companion DataFrame builder and separate-worker catalog-demo deployment stay
 in their own plans.
