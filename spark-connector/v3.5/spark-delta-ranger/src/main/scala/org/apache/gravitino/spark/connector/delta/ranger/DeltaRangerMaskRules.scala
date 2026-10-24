@@ -26,6 +26,7 @@ import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedFunction}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.BooleanType
 
 private[ranger] object DeltaRangerMaskRules {
@@ -118,7 +119,12 @@ private[ranger] object DeltaRangerMaskRules {
       DeltaRangerPlanAdmission.expression(resolved)
       if (!resolved.resolved || !resolved.checkInputDataTypes().isSuccess)
         throw new SecurityException("Invalid Ranger expression type")
-      resolved
+      // ResolveTimeZone fills even already-resolved numeric casts on the next analyzer pass.
+      // Complete that field before receipt issuance, retaining the strict type checks above.
+      resolved.transformUp {
+        case cast: Cast if cast.timeZoneId.isEmpty =>
+          cast.withTimeZone(SQLConf.get.sessionLocalTimeZone)
+      }
     } catch {
       case _: Exception =>
         throw new SecurityException("Unsupported Ranger mask or row filter expression")

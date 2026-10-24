@@ -39,7 +39,14 @@ must not be admitted because their schema resembles a qualified relation.
 | Spark Connect | Not qualified | Remote-session identity/authorization and supported frontend behavior |
 | Separate workers/deployment | Deferred catalog-demo plan | Deployed authentication, executor boundaries, journal durability/placement, registration and artifact verification |
 | Native strict source-count check | Known stock-equivalent constant-key full-outer nested-loop shape | Retain strict check and both stock/governed oracle; evaluate compatible upstream correction without suppressing validation |
-| Ordinary projected SELECT with arithmetic key mask | Reproduced analysis receipt-binding rejection during Task 5 diagnostic | Fix/qualify exact analyzer binding mutation; original diagnostic retained, independent from SQL MERGE qualification |
+| Ordinary projected SELECT with explicit BIGINT arithmetic key mask | Locally qualified on all four pinned pairs in a separate follow-up | `id + CAST(100 AS BIGINT)` returns masked values once, including admitted aliases/predicates alongside row filters; exact receipt binding and untyped-arithmetic rejection retained |
+
+The arithmetic-mask follow-up completes an already-resolved cast's session timezone
+before receipt issuance. Focused installed-stack tests used Spark 3.5.4/3.5.6 ×
+Delta 3.3.0/3.3.2 and Ranger 2.8.0 policy fixtures, retaining modified-mask,
+original-column denial, receipt, ownership and native MERGE checks. The original
+Task 5 diagnostic and historical live packages remain separate evidence; those
+packages predate this repair.
 
 The stock-equivalent source-count behavior was observed on both Delta pins. A
 successful different join shape does not close it. Full compatibility also does
