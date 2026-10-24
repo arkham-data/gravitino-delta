@@ -10,7 +10,7 @@
 
 **Spec:** [Governed named Delta CDF-to-MERGE pipelines](../specs/2026-10-22-delta-cdf-merge-design.md).
 
-**Status:** Approved for task-by-task execution on 2026-10-22, with former Task 6 deferred to a separate plan. Execute and review Task 1, report its result, then await the next task instruction. Target row-filter read semantics remain confirmed. Following two-pin frontend characterization, the user selected named SQL MERGE first and deferred a companion DataFrame builder to its own plan. Baseline `b321beace14a2313e54aee033d883df30d47f6c7`.
+**Status:** Tasks 1–5 implemented and locally qualified on 2026-10-23. Independent task and integrated reviews are complete. All four Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 pairs passed with actual Ranger 2.8.0, MinIO and classic PySpark SQL. See [qualification results](../../delta-cdf-merge.md) and [remaining parity obligations](../../delta-spark-parity.md). The user authorized publishing the milestone branch while preserving the worktree and evidence. Former Task 6 and the companion DataFrame builder remain separate plans. Baseline `b321beace14a2313e54aee033d883df30d47f6c7`.
 
 ## Global Constraints
 
@@ -156,12 +156,12 @@ in the deferred catalog-demo plan.
 
 **Interfaces:** `cdf_merge_live.py --runtime <manifest> --inputs <private-inputs> --out <fresh-directory>` provisions isolated fixtures/identities and emits original JSON evidence. `cdf_merge_live_checks.verify_result(result: dict) -> None` raises on incomplete/incorrect evidence. The new Gradle init retains existing pins/memory settings and registers a thin JAR containing the MERGE app and explicitly required existing helpers; extend the packager with that app selection without changing old app contents. Checker validates original outcomes, native oracles and checkpoint states, never boolean summaries alone.
 
-- [ ] RED checker rejects missing pair/provider pin, child-only success, absent policy download, altered target/source row bag, lost hidden row, extra commit, false checkpoint advancement and missing same-table result; permutations preserve multiset equality.
-- [ ] First pair runs real Ranger 2.8.0/MinIO public SELECT/MODIFY grant/revoke/regrant plus positive key/metadata masks and target filters/masks. Prove named SQL MERGE, distinct destination, same-table writeback, INSERT/UPDATE/DELETE, native duplicate handling, empty interval, column deny, ambiguous merge and post-helper revoke. Inspect actual target log/actions, original source invariance where distinct, registration persistence/restart and application checkpoint behavior.
-- [ ] Run all new/affected focused suites and the same fresh original pipeline phases sequentially for all four pairs. Retain exact pins, original outer/child exits, source/JAR/provider bindings and runtime observations. Reuse an already final first cell with proven identical inputs; do not rerun the closed whole append/CDF matrices.
-- [ ] One complete package per changed runtime; retain unique source inputs/artifacts, share immutable proven-equal blobs rather than duplicate evidence trees. Scope failures precisely and rerun only affected checks before final qualification. Commit `test(delta): qualify governed cdf merge with Ranger 2.8` after review.
+- [x] RED checker rejects missing pair/provider pin, child-only success, absent policy download, altered target/source row bag, lost hidden row, extra commit, false checkpoint advancement and missing same-table result; permutations preserve multiset equality.
+- [x] First pair runs real Ranger 2.8.0/MinIO public SELECT/MODIFY grant/revoke/regrant plus positive key/metadata masks and target filters/masks. Prove named SQL MERGE, distinct destination, same-table writeback, INSERT/UPDATE/DELETE, native duplicate handling, empty interval, column deny, ambiguous merge and post-helper revoke. Inspect actual target log/actions, original source invariance where distinct, registration persistence/restart and application checkpoint behavior.
+- [x] Run all new/affected focused suites and the same fresh original pipeline phases sequentially for all four pairs. Retain exact pins, original outer/child exits, source/JAR/provider bindings and runtime observations. Reuse an already final first cell with proven identical inputs; do not rerun the closed whole append/CDF matrices.
+- [x] One complete package per changed runtime; retain unique source inputs/artifacts, share immutable proven-equal blobs rather than duplicate evidence trees. Scope failures precisely and rerun only affected checks before final qualification. Commit `test(delta): qualify governed cdf merge with Ranger 2.8` after review.
 
-- [ ] Publish `docs/delta-cdf-merge.md` and `docs/delta-spark-parity.md`; update integration status, module/acceptance READMEs and this plan with exact local qualification and remaining limits. Obtain one integrated review of Tasks 1–5, resolve concrete findings with targeted checks, verify artifact bindings and all four original results, commit closure and push the existing Gravitino branch as already authorized. Verify remote SHA; retain evidence/worktree; no PR. Separate-worker deployment remains unqualified until the deferred demo plan completes.
+- [x] Publish `docs/delta-cdf-merge.md` and `docs/delta-spark-parity.md`; update integration status, module/acceptance READMEs and this plan with exact local qualification and remaining limits. Obtain one integrated review of Tasks 1–5, resolve concrete findings with targeted checks, verify artifact bindings and all four original results, commit closure and push the existing Gravitino branch as already authorized. Verify remote SHA; retain evidence/worktree; no PR. Separate-worker deployment remains unqualified until the deferred demo plan completes.
 
 ## Required compatibility follow-up
 
@@ -216,5 +216,5 @@ DeltaTable.forName route cannot resolve canonical Gravitino names and loses auth
 assignment provenance before the available complete-command hook. A companion named
 DataFrame builder is tracked in [its own plan](2026-10-22-delta-cdf-merge-builder.md).
 It is not a gate for this SQL milestone. Native trait linkage passed on both Delta
-pins; installed SQL remains unimplemented until Task 1's positive and ownership
-tests pass. The characterization does not complete Task 1.
+pins. That characterization did not itself complete Task 1; installed named SQL
+was subsequently implemented and qualified by Tasks 1–5.
