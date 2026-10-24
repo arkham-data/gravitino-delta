@@ -10,7 +10,9 @@
 
 **Spec:** [Approved partitioned MERGE design](../specs/2026-10-24-delta-partitioned-merge-design.md). Implementation baseline `b5a260a37245ca2577bcdae03b7b2f35bbb8e66d` includes the completed arithmetic-mask fix. Existing worktree: `.worktrees/delta-spark-feasibility`, branch `codex/delta-spark-feasibility`.
 
-**Task 1 verification:** Installed checks passed on Spark 3.5.4 with Delta 3.3.0 (59 cases) and Delta 3.3.2 (19 cases), using Ranger 2.8.0. Formatting/compilation passed. Independent review passed. Task 1 is complete and committed locally; Tasks 2–3 have not started. This does not qualify general partitioned support or live deployment. Original evidence: `.superpowers/sdd/2026-10-24-delta-partitioned-merge/attempt-index.json`.
+**Task 1 verification:** Installed checks passed on Spark 3.5.4 with Delta 3.3.0 (59 cases) and Delta 3.3.2 (19 cases), using Ranger 2.8.0. Formatting/compilation passed. Independent review passed. Task 1 is complete and committed locally. This does not qualify general partitioned support or live deployment. Original evidence: `.superpowers/sdd/2026-10-24-delta-partitioned-merge/attempt-index.json`.
+
+**Task 2 verification:** Installed checks passed on Spark 3.5.4 with each of Delta 3.3.0 and 3.3.2, using Ranger 2.8.0, Scala 2.12.21 and JDK 17.0.16. Each pin has 23 unique passing cases: 22 new policy/value/lifecycle tests and one existing named SQL smoke test. Module formatting and compilation passed. No production change was needed. Independent SPEC/QUALITY review passed. Task 2 is complete and committed locally; Task 3 has not started. Original case-to-XML hashes and targeted replacements are recorded in `.superpowers/sdd/2026-10-24-delta-partitioned-merge/task-2/final-evidence-map.json`; superseded assertions are excluded from the final count.
 
 ## Global Constraints
 
@@ -66,11 +68,21 @@ Reuse `DeltaRangerMergeWrite.write[T](frame: DataFrame)(body: => T): T`, its exa
 
 **Interfaces:** Consume Task 1's owned partition writer and partitioned durable fingerprint; preserve the original source/target policy demand and publication interfaces. No frontend or native row-algorithm change.
 
-- [ ] Prove masked partition predicates use governed values; omitted partition fields remain raw, explicit self-assignment masks once, and literal partition writes require UPDATE without spurious SELECT. Cover hidden-key collisions and updates moving outside a target filter without a postimage constraint.
-- [ ] Test original column denies, INSERT/DELETE all-column write demands, unreachable clauses and empty source. Assert exact committed state/checkpoint outcomes. Test ordered multiple keys, escaped/null/empty values, integer/date and materially distinct decimal/binary/timestamp branches admitted by the existing profile, using native-oracle observations. Exercise timestamp session UTC/non-UTC and account for native JVM/UTC-normalization settings.
-- [ ] Prove partitioned same-table CDF writeback fixes its interval and closes source authority before native publication. Reject alternate named aliases and stale source receipts. Test native ambiguity/constraints and relevant source retries without weakening strict native validation.
-- [ ] Extend post-helper revocation/subject/settings/registration drift cases after files exist; committed rows and version remain unchanged on denial. Mutate AddFile/RemoveFile/AddCDCFile partition maps while holding paths fixed, then paths/CDC marker, and prove exact intent/publication rejection. Test authorized known duplicate, denied duplicate, recovery and unknown-outcome no-replay behavior.
-- [ ] Run focused affected tests, retain original evidence, obtain independent review and commit locally. Record precise remaining type/settings qualification gaps for Task 3; do not advertise general partitioned support yet.
+- [x] Prove masked partition predicates use governed values; omitted partition fields remain raw, explicit self-assignment masks once, and literal partition writes require UPDATE without spurious SELECT. Cover hidden-key collisions and updates moving outside a target filter without a postimage constraint.
+- [x] Test original column denies, INSERT/DELETE all-column write demands, unreachable clauses and empty source. Assert exact committed state/checkpoint outcomes. Test ordered multiple keys, escaped/null/empty values, integer/date and materially distinct decimal/binary/timestamp branches admitted by the existing profile, using native-oracle observations. Exercise timestamp session UTC/non-UTC and account for native JVM/UTC-normalization settings.
+- [x] Prove partitioned same-table CDF writeback fixes its interval and closes source authority before native publication. Reject alternate named aliases and stale source receipts. Test native ambiguity/constraints and relevant source retries without weakening strict native validation.
+- [x] Extend post-helper revocation/subject/settings/registration drift cases after files exist; committed rows and version remain unchanged on denial. Mutate AddFile/RemoveFile/AddCDCFile partition maps while holding paths fixed, then paths/CDC marker, and prove exact intent/publication rejection. Test authorized known duplicate, denied duplicate, recovery and unknown-outcome no-replay behavior.
+- [x] Run focused affected tests, retain original evidence, obtain independent review and commit locally. Record precise remaining type/settings qualification gaps for Task 3; do not advertise general partitioned support yet.
+
+### Task 2 native conversion limits and remaining qualification
+
+The installed tests compare the governed path with stock Delta, including exact row/event bags and partition action maps. Both Delta pins reproduce these native limitations on the local filesystem:
+
+- Invalid UTF-8 binary partition bytes are lossy: authored hex `FF2F3D25` reads back as `EFBFBD2F3D25`. This proves native conversion parity, not lossless binary support.
+- A binary partition containing NUL (`X'00ff2f3d25'`) fails in the native writer with `TASK_WRITE_FAILED` caused by `IOException: Mkdirs failed`. The governed failure leaves committed state and checkpoint unchanged. This local-filesystem result does not establish S3/MinIO behavior.
+- With Spark session timezone `America/Los_Angeles`, JVM timezone `UTC`, and `spark.databricks.delta.write.utcTimestampPartitionValues=true`, authored `2024-03-11 08:02:03.654321Z` persists as `2024-03-11 01:02:03.654321Z`. Stock and governed paths both shift the instant. Matched UTC and matched Los Angeles cases were also exercised, including Los Angeles with native UTC normalization enabled and disabled. Arbitrary timezone combinations are not qualified.
+
+The numeric coverage includes ordered `region(INT), secret(STRING)` keys, DATE and DECIMAL(12,3); it does not qualify every scalar type, precision or scale. No implicit settings changes or new conversion guards were added. Task 3 must qualify fresh artifacts on Spark 3.5.6 as well as 3.5.4, real PySpark SQL, Ranger 2.8.0 and MinIO, and retain these caveats while reporting exactly which type/settings/storage profiles were exercised. The installed cases alone do not establish general partitioned support or deployed behavior.
 
 ## Task 3: Qualify four runtime pairs with Ranger and S3
 

@@ -28,7 +28,7 @@ must not be admitted because their schema resembles a qualified relation.
 | Materialization and native retries | Focused local owned-attempt tests | Preserve fresh authority, changed-policy rejection, block-loss retries, exhaustion and owned cleanup across runtime changes |
 | Publication and recovery | Private durable driver-local journal and exact native proof | Current authorization/registration, exact intent, authorized duplicate, no replay after known commit; deployed placement still separate |
 | Constraints and no-op paths | Native CHECK and empty/no-match paths tested locally | Continue distinguishing native constraint failure from adapter rejection; no committed changes on failure |
-| Partitioned targets | Unsupported | Native routing/touched-file rewrites, hidden-row preservation and correct CDC, including same-table writeback |
+| Partitioned targets | Installed checks on Spark 3.5.4 with both Delta pins; general support pending | Native routing, policies, CDC and same-table lifecycle tested locally; fresh four-pair Ranger 2.8.0/MinIO/PySpark qualification remains |
 | Insert-only optimization | Unsupported | Owned native branch with original column demands, masks/filters, output and denial evidence |
 | Column mapping and defaults | Unsupported | Protocol/schema profiles, native features, authored-expression provenance and raw copy-forward |
 | AQE | Requires disabled AQE | Exact owned adaptive execution and policy revalidation |
@@ -40,6 +40,11 @@ must not be admitted because their schema resembles a qualified relation.
 | Separate workers/deployment | Deferred catalog-demo plan | Deployed authentication, executor boundaries, journal durability/placement, registration and artifact verification |
 | Native strict source-count check | Known stock-equivalent constant-key full-outer nested-loop shape | Retain strict check and both stock/governed oracle; evaluate compatible upstream correction without suppressing validation |
 | Ordinary projected SELECT with explicit BIGINT arithmetic key mask | Locally qualified on all four pinned pairs in a separate follow-up | `id + CAST(100 AS BIGINT)` returns masked values once, including admitted aliases/predicates alongside row filters; exact receipt binding and untyped-arithmetic rejection retained |
+
+The [partitioned MERGE plan](superpowers/plans/2026-10-24-delta-partitioned-merge.md#task-2-native-conversion-limits-and-remaining-qualification)
+records native binary conversion loss, a local-filesystem NUL failure and timestamp
+shifts with mismatched session/JVM timezones. Matching stock Delta in these cases
+does not establish lossless conversion or qualify other storage/settings profiles.
 
 The arithmetic-mask follow-up completes an already-resolved cast's session timezone
 before receipt issuance. Focused installed-stack tests used Spark 3.5.4/3.5.6 ×
