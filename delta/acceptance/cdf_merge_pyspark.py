@@ -34,6 +34,7 @@ def main():
     try:
         for step in request['steps']:
             sql=bridge.before(step['name'])
+            if request.get('partitioned') and step['name']=='distinct':bridge.observeSource()
             failure=None
             try:
                 # The actual Python frontend call is the proof: no Scala SQL forwarding helper.

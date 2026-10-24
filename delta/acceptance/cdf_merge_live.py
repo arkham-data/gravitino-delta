@@ -34,7 +34,7 @@ from cdf_live import (ROOT, JAVA, Public, Ranger, Server, RecordingProxy, OwnedO
     save, sha, read, launch, clean_environment, catalog_properties, submit, command, identity,
     RECEIPT, source_resources, verify_deployed, prepare_request)
 from cdf_live_checks import exact_access, canonical_privileges, admin_role_state
-from cdf_merge_live_checks import verify_result, verify_semantics, bind_evidence
+from cdf_merge_live_checks import verify_result, verify_semantics, bind_evidence, file_ref
 from package_binding import capture_sources, canonical_digest
 
 
@@ -68,7 +68,7 @@ class NativeObserver:
     """A separate setup-identity Spark process; its credentials never enter application inputs."""
     def __init__(self,plan,runtime,output):
         output.mkdir(mode=0o700);self.output=output;self.cursor=0
-        data={k:plan[k] for k in ['primary','tables']};data.update(spark=runtime['spark'],delta=runtime['delta'],output=str(output),nativeIdentity=plan['serviceAdmin'])
+        data={k:plan[k] for k in ['primary','tables']};data.update(partitioned=plan.get('partitioned',False),spark=runtime['spark'],delta=runtime['delta'],output=str(output),nativeIdentity=plan['serviceAdmin'])
         save(output/'inputs.private.json',data)
         env=clean_environment(plan);env.update(SPARK_HOME=runtime['sparkHome'],PYSPARK_PYTHON=plan['python'],SPARK_USER=plan['serviceAdmin'],HADOOP_USER_NAME=plan['serviceAdmin'])
         self.process,self.log=start_process([runtime['sparkHome']+'/bin/spark-submit','--driver-memory','3g','--master','local[2]',ROOT/'delta/acceptance/cdf_merge_native.py',output/'inputs.private.json'],env,output/'process')
@@ -84,13 +84,35 @@ class NativeObserver:
         return finish_process(self.process,self.log,self.output/'process')
 
 
-def provision(runtime,inputs,output,association,handles):
+def application_role(ranger,plan):
+    """Find the unique owned application role across complete Ranger 2.8 result pages."""
+    offset=0;total=None;roles=[];ids=set()
+    while total is None or offset<total:
+        page=ranger.call('GET','/service/roles/roles?serviceName='+plan['resourceService']+'&startIndex='+str(offset)+'&pageSize=200')
+        assert all(type(page[key]) is int for key in ['startIndex','pageSize','totalCount','resultSize'])
+        assert page['startIndex']==offset and 0<page['pageSize']<=200 and page['totalCount']>=0
+        if total is None:total=page['totalCount']
+        else:assert page['totalCount']==total,'Role pagination changed while inspecting fixture'
+        current=page['roles'];assert isinstance(current,list)
+        assert page['resultSize']==len(current)==min(page['pageSize'],total-offset),'Incomplete or stalled role page'
+        for role in current:
+            assert type(role['id']) is int and role['id'] not in ids and isinstance(role['name'],str)
+            ids.add(role['id']);roles.append(role)
+        offset+=len(current)
+        if offset==total:break
+    assert offset==total
+    matches=[role['name'] for role in roles if role['name'].endswith('_ROLE_'+plan['appRole'])]
+    assert len(matches)==1,'Expected one owned application role across all pages'
+    return matches[0]
+
+
+def provision(runtime,inputs,output,association,handles,partitioned=False):
     output.mkdir(mode=0o700)
     for child in ['private','public-trace','ranger-trace']: (output/child).mkdir()
     endpoints=read(inputs['endpoints'])
     admin=envfile(inputs['rangerAdminFile'])
     nonce=uuid.uuid4().hex[:12]
-    plan={'nonce':nonce,'subject':'cdf_app_'+nonce,'metadataPrincipal':'cdf_meta_'+nonce,'serviceAdmin':'cdf_setup_'+nonce,
+    plan={'partitioned':partitioned,'nonce':nonce,'subject':'cdf_app_'+nonce,'metadataPrincipal':'cdf_meta_'+nonce,'serviceAdmin':'cdf_setup_'+nonce,
         'metalake':'cdf_lake_'+nonce,'catalog':'cdf_catalog','database':'shared','resourceService':'cdf_service_'+nonce,'resourceDefinition':'cdf_def_'+nonce,
         'appRole':'cdf_query_'+nonce,'metaRole':'cdf_metadata_'+nonce,'prefix':'cdf-live-'+nonce,'seedAppId':'cdf-seed-'+nonce,
         'javaHome':JAVA,'python':inputs['python'],'rangerUrl':endpoints['ranger-admin'],
@@ -99,6 +121,7 @@ def provision(runtime,inputs,output,association,handles):
         'plugin':{'username':'cdf_download_'+nonce,'password':'Aa1!'+secrets.token_urlsafe(24)},'fixtureDirectory':str(output),
         'deployedRangerEvidence':str(association),'deployedRangerEvidenceSha256':sha(association)}
     names=['source','same','incomplete','target','regrant_target','python_target','post_target','ambiguous_target']
+    if partitioned:names=['source','same','target']
     plan['tables']=[{'name':name,'prefix':plan['prefix']+'/adoption/'+name+'/',
         'location':'s3a://delta-fixtures/'+plan['prefix']+'/adoption/'+name} for name in names]
     save(output/'state.private.json',plan)
@@ -140,12 +163,12 @@ def provision(runtime,inputs,output,association,handles):
         rest.call('POST',base+'/users',{'name':user})
         rest.call('POST',base+'/roles',{'name':role,'properties':{},'securableObjects':use+[obj('TABLE',plan['catalog']+'.'+plan['database']+'.'+name,'SELECT_TABLE') for name in selected]})
         rest.call('PUT',base+'/permissions/users/'+quote(user,safe='')+'/grant/',{'roleNames':[role]})
-    roles=ranger.call('GET','/service/roles/roles?serviceName='+plan['resourceService'])['roles']
-    matches=[r for r in roles if r['name'].endswith('_ROLE_'+plan['appRole'])];assert len(matches)==1
-    app=matches[0]['name'];plan['rangerAppRole']=app
+    app=application_role(ranger,plan);plan['rangerAppRole']=app
     for table in names:
         source=table in ['source','same','incomplete']
-        for column,expression in [('id','{col} + CAST(100 AS BIGINT)'),('secret',"'MASKED'" if source else "'TARGET_MASK'"),('_commit_version','CAST(0 AS BIGINT)'),('_commit_timestamp',"TIMESTAMP '2000-01-01 00:00:00'"),(None,"region = 'allowed'")]:
+        masks=[('id','{col} + CAST(100 AS BIGINT)'),('secret',"'MASKED'" if source else "'TARGET_MASK'"),('_commit_version','CAST(0 AS BIGINT)'),('_commit_timestamp',"TIMESTAMP '2000-01-01 00:00:00'"),(None,"region = 'allowed'")]
+        if partitioned and source:masks.append(('part',"'moved/= %'"))
+        for column,expression in masks:
             if table not in ['source','same','incomplete'] and column in ['_commit_version','_commit_timestamp']:continue
             resources=source_resources(1 if column else 2,plan);resources['table']['values']=[table]
             if column:resources['column']['values']=[column]
@@ -247,10 +270,13 @@ def merge_sql(plan,target,source='source',start=1,end=1,ambiguous=False):
     prefix=plan['catalog']+'.'+plan['database']+'.'
     predicate="_change_type <> 'update_preimage' AND _commit_version = 0"
     if ambiguous:predicate="id = 106 AND _change_type = 'insert'"
-    return ("MERGE INTO "+prefix+target+" t USING (SELECT * FROM table_changes('"+prefix+source+"', "+str(start)+", "+str(end)+") WHERE "+predicate+") s ON t.id=s.id "
+    sql=("MERGE INTO "+prefix+target+" t USING (SELECT * FROM table_changes('"+prefix+source+"', "+str(start)+", "+str(end)+") WHERE "+predicate+") s ON t.id=s.id "
         "WHEN MATCHED AND s._change_type='delete' THEN DELETE "
         "WHEN MATCHED THEN UPDATE SET secret=concat(s.secret, '|', t.secret), region=s.region "
         "WHEN NOT MATCHED AND s._change_type<>'delete' THEN INSERT (id,secret,region) VALUES(s.id,s.secret,s.region)")
+    if plan.get('partitioned'):
+        sql=sql.replace('region=s.region','region=s.region, part=s.part').replace('INSERT (id,secret,region) VALUES(s.id,s.secret,s.region)','INSERT (id,secret,region,part) VALUES(s.id,s.secret,s.region,s.part)')
+    return sql
 
 
 def steps(plan,python=False):
@@ -259,10 +285,13 @@ def steps(plan,python=False):
         ('ambiguous','ambiguous_target','source',0,0),('missing','target','incomplete',1,1),('columnDenied','target','source',1,1),
         ('postHelperRevoked','post_target','source',1,1),('selectDenied','target','source',1,1),('modifyDenied','target','source',1,1),
         ('regrant','regrant_target','source',1,1),('same','same','same',1,1)]
+    if plan.get('partitioned'):
+        assert python
+        specs=[('distinct','target','source',1,1),('columnDenied','target','source',1,1),('selectDenied','target','source',1,1),('modifyDenied','target','source',1,1),('same','same','same',1,1)]
     result=[]
     for name,target,source,start,end in specs:
         step={'name':name,'target':target,'source':source,'end':end,'sourceId':plan['nativeInitial']['tables'][source]['id'],'sql':merge_sql(plan,target,source,start,end,name=='ambiguous')}
-        if name in ['distinct','duplicate']:step['txnAppId']='merge-'+plan['nonce']
+        if name in ['distinct','duplicate'] and not plan.get('partitioned'):step['txnAppId']='merge-'+plan['nonce']
         result.append(step)
     return result
 
@@ -281,7 +310,7 @@ def registration(plan,output):
 
 def application(plan,runtime,output,observer,python=False):
     output.mkdir(mode=0o700);initial=state_snapshot(plan,output/'initial')
-    request=prepare_request(plan,runtime,initial,output/'request');request.update(output=str(output/'app-evidence'),steps=steps(plan,python))
+    request=prepare_request(plan,runtime,initial,output/'request');request.update(output=str(output/'app-evidence'),steps=steps(plan,python),partitioned=plan.get('partitioned',False))
     save(output/'request/request.private.json',request)
     env=clean_environment(plan);env.update(SPARK_HOME=runtime['sparkHome'],PYSPARK_PYTHON=plan['python'],SPARK_USER=plan['subject'],HADOOP_USER_NAME=plan['subject'])
     selected=[p for p in runtime['jarHashes'] if Path(p).name in runtime['addedJarNames']]
@@ -300,14 +329,20 @@ def application(plan,runtime,output,observer,python=False):
             state=None
             if name=='python':state=privileges(plan,output/'grant',True,True)
             if name=='pythonDenied':state=privileges(plan,output/'revoke',modify=False,only='python_target')
-            if name=='distinct':state=privileges(plan,output/'grant',modify=True,only='python_target');transition_evidence['grant']=state
+            if name=='distinct' and plan.get('partitioned'):state=privileges(plan,output/'grant',select=True,modify=True)
+            if name=='distinct' and not plan.get('partitioned'):state=privileges(plan,output/'grant',modify=True,only='python_target');transition_evidence['grant']=state
             if name=='missing':observer.call('damage')
             if name=='columnDenied':state=column_deny(plan,output/'column-deny',True)
             if name=='postHelperRevoked':state=column_deny(plan,output/'column-restore',False)
-            if name=='selectDenied':state=privileges(plan,output/'modify-regrant',modify=True)
+            if name=='selectDenied' and plan.get('partitioned'):
+                column_deny(plan,output/'column-restore',False)
+                state=privileges(plan,output/'select-revoke',select=False)
+            if name=='same' and plan.get('partitioned'):state=privileges(plan,output/'same-regrant',modify=True)
+            if name=='selectDenied' and not plan.get('partitioned'):state=privileges(plan,output/'modify-regrant',modify=True)
             if name=='modifyDenied':state=privileges(plan,output/'select-regrant-modify-revoke',select=True,modify=False)
             if name=='regrant':state=privileges(plan,output/'regrant',modify=True);transition_evidence['regrant']=state
             before=observer.call(table=step['target']);source_before=source_digest(plan,step['source'])
+            native_before=observer.output/(str(observer.cursor-1)+'-result.json')
             release(name+'-before',state)
             if state:current_state=state;current_witness=name+'-before'
             if name=='postHelperRevoked':
@@ -323,6 +358,9 @@ def application(plan,runtime,output,observer,python=False):
             cp_before=read(app/(name+'-checkpoint-before.json'));cp_after=read(app/(name+'-checkpoint-after.json'))
             assert cp_before['sourceId']==cp_after['sourceId']==step['sourceId']
             value={'before':before,'after':after,'cdc':after['cdc'],'checkpointBefore':cp_before['end'],'checkpointAfter':cp_after['end'],'sql':step['sql'],'sourceBefore':source_before,'sourceAfter':source_digest(plan,step['source']),**outcome}
+            if plan.get('partitioned'):
+                value['nativeBefore']=file_ref(native_before);value['nativeAfter']=file_ref(observer.output/(str(observer.cursor-1)+'-result.json'))
+                value['consumerBefore']=file_ref(app/(name+'-checkpoint-before.json'));value['consumerAfter']=file_ref(app/(name+'-checkpoint-after.json'))
             downloaded=read(current_state['rangerStateFile'])['policies']['policies'];witness=read(app/(current_witness+'-applied.json'))
             value['authorization']={'sourceAccess':sorted(exact_access(downloaded,plan['catalog'],plan['database'],step['source'],plan['rangerAppRole'])),'targetAccess':sorted(exact_access(downloaded,plan['catalog'],plan['database'],step['target'],plan['rangerAppRole'])),'policy':witness['policy'],'downloadSha256':witness['downloadSha256']}
             if step.get('txnAppId'):value['txnAppId']=step['txnAppId']
@@ -347,17 +385,18 @@ def application(plan,runtime,output,observer,python=False):
         if not (output/'process/exit.json').exists():finish_process(process,log,output/'process',process.poll() is None)
 
 
-def run_cell(runtime_path,inputs_path,output):
+def run_cell(runtime_path,inputs_path,output,partitioned=False):
     output.mkdir(mode=0o700);runtime=read(runtime_path);runtime['manifestPath']=str(runtime_path);inputs=read(inputs_path)
     from cdf_read_live_package import verify_runtime
     verify_runtime(runtime);handles={}
     try:
         association=verify_deployed(inputs,output/'deployed-ranger')
-        plan,server,callbacks=provision(runtime,inputs,output/'fixture',association,handles)
+        plan,server,callbacks=provision(runtime,inputs,output/'fixture',association,handles,partitioned)
         plan['grants']={t['name']:([] if t['name'] in ['source','same','incomplete'] else ['SELECT_TABLE']) for t in plan['tables']}
         observer=handles['observer']
         py,_,py_observed,py_exit=application(plan,runtime,output/'python',observer,True)
-        scala,transitions,observed,child_exit=application(plan,runtime,output/'scala',observer)
+        if partitioned:scala={};transitions={};observed=py_observed;child_exit=py_exit
+        else:scala,transitions,observed,child_exit=application(plan,runtime,output/'scala',observer)
         before=registration(plan,output/'registration-before-restart');server.stop()
         from cdf_provider import store_rows
         persistence=output/'persistence';persistence.mkdir()
@@ -369,16 +408,16 @@ def run_cell(runtime_path,inputs_path,output):
             for key in ['id','generation','token']:assert str(state[key])==receipt[RECEIPT+key]
             assert str(state['observation']['version'])==receipt[RECEIPT+'nativeVersion']
             stored[name]={'id':state['id'],'generation':state['generation'],'token':state['token'],'nativeVersion':state['observation']['version'],'uuid':state['observation']['uuid']}
-        columns=server.column_snapshot('merge');assert len(columns)==3*len(plan['tables'])
+        columns=server.column_snapshot('merge');assert len(columns)==(4 if partitioned else 3)*len(plan['tables'])
         server.start();plan['gravitinoUrl']=server.uri;after=registration(plan,output/'registration-after-restart');assert before==after
         server.stop();assert columns==server.column_snapshot('merge-restart')
-        assert observer.close()==0;handles.pop('observer')
-        result={**{k:observed[k] for k in ['spark','java','scala']},'delta':runtime['delta'],'ranger':read(association)['deployedRangerVersion'],
-            'exits':{'outer':0,'child':child_exit,'python':py_exit},'identities':{'setup':plan['serviceAdmin'],'metadata':plan['metadataPrincipal'],'application':plan['subject']},
+        native_exit=observer.close();assert native_exit==0;handles.pop('observer')
+        result={'profile':'partitioned' if partitioned else 'legacy',**{k:observed[k] for k in ['spark','java','scala']},'delta':runtime['delta'],'ranger':read(association)['deployedRangerVersion'],
+            'exits':({'outer':0,'native':native_exit,'python':py_exit} if partitioned else {'outer':0,'child':child_exit,'python':py_exit}),'identities':{'setup':plan['serviceAdmin'],'metadata':plan['metadataPrincipal'],'application':plan['subject']},
             'origins':{k:{'jar':v['origin'],'sha256':v['sha256']} for k,v in plan['nativeInitial']['origins'].items()},
             'binding':{'source':runtime['sourceInputDigest'],'manifest':sha(runtime_path),'companion':sha(runtime['changedRuntime']),'app':sha(runtime['app']),'python':sha(ROOT/'delta/acceptance/cdf_merge_pyspark.py')},
-            'nativeInitial':plan['nativeInitial']['tables'],'sourceNative':plan['nativeInitial']['sourceNative'],'sourceGoverned':read(output/'scala/app-evidence/source-governed.json'),
-            'stages':dict(scala,**py),'transitions':transitions,'registration':{'beforeRestart':receipt_identity(before),'afterRestart':receipt_identity(after),'persisted':stored},'postHelper':read(output/'scala/post-helper.json')}
+            'nativeInitial':plan['nativeInitial']['tables'],'sourceNative':plan['nativeInitial']['sourceNative'],'sourceGoverned':read(output/('python' if partitioned else 'scala')/'app-evidence/source-governed.json'),
+            'stages':dict(scala,**py),'transitions':transitions,'registration':{'beforeRestart':receipt_identity(before),'afterRestart':receipt_identity(after),'persisted':stored},'postHelper':None if partitioned else read(output/'scala/post-helper.json')}
         verify_runtime(runtime)
         save(output/'candidate-result.json',result)
         # Original outer exit is supplied by the parent process after this child returns.
@@ -396,11 +435,12 @@ def run_cell(runtime_path,inputs_path,output):
 def main():
     parser=argparse.ArgumentParser()
     for key in ['runtime','inputs','out']:parser.add_argument('--'+key,required=True)
-    parser.add_argument('--child',action='store_true');args=parser.parse_args();os.umask(0o077)
+    parser.add_argument('--partitioned',action='store_true');parser.add_argument('--child',action='store_true');args=parser.parse_args();os.umask(0o077)
     runtime=Path(args.runtime).resolve();inputs=Path(args.inputs).resolve();output=Path(args.out).resolve()
-    if args.child:run_cell(runtime,inputs,output);return
+    if args.child:run_cell(runtime,inputs,output,args.partitioned);return
     process_dir=output.parent/(output.name+'-outer')
     argv=[sys.executable,__file__,'--child','--runtime',str(runtime),'--inputs',str(inputs),'--out',str(output)]
+    if args.partitioned:argv.append('--partitioned')
     process,log=start_process(argv,dict(os.environ),process_dir)
     try:code=process.wait(timeout=2400)
     except subprocess.TimeoutExpired:code=finish_process(process,log,process_dir,True);raise

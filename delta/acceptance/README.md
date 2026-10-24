@@ -257,6 +257,8 @@ column denial and a post-helper revoke gate. Original process exits, application
 checkpoints, provider/source/JAR bindings and persisted registration restart are
 required by the result contract.
 
+### Earlier unpartitioned qualification
+
 Fixtures and failures are retained; only exact owned processes are stopped. This
 lane currently depends on preserved private local packaging/transport artifacts;
 it is not a standalone clean-checkout or separate-worker deployment kit. The
@@ -268,3 +270,42 @@ indexed by `.superpowers/sdd/2026-10-22-delta-cdf-merge/task-5-final-evidence-in
 Historical failed attempts and pre-fix successes remain separate from these
 corrected final packages. See [governed MERGE](../../docs/delta-cdf-merge.md)
 and [remaining compatibility work](../../docs/delta-spark-parity.md).
+
+
+### Partitioned qualification
+
+`cdf_merge_live.py --partitioned --runtime <manifest> --inputs <private-inputs> --out <fresh-directory>`
+selects a separate five-stage profile: distinct-target and same-table real classic
+PySpark MERGE, plus column UPDATE, source SELECT and target MODIFY denial. All four
+Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 packages have fresh successful Ranger 2.8.0/MinIO
+fixtures, totaling 20 partition phases with original outer/Python/native exits zero.
+The shared catalog metadata reader is Delta Kernel 3.3.0.
+
+A fixed `part STRING` partition is independent of the `region` row filter. Visible
+and filtered rows physically share a touched file; source partition masking moves
+selected rows to escaped `moved/= %`, raw filtered rows survive rewriting, and
+untouched originals (including a null partition) retain their AddFiles/object
+hashes. Original raw rows/CDF, partition action maps/paths, active files, checkpoint
+source/end, runtime providers and registration/H2 restart state are required.
+Snapshot replay clears dataChange; commit and snapshot flags have separate checks.
+The fixture pages through the complete Ranger role list with stable totals and
+unique IDs, then requires one owned application role.
+
+Focused Task 3 runs contain 38/3/38/38 cases respectively, with 35 reviewed Task 1/2
+partition cases retained for Spark 3.5.4/Delta 3.3.2. First/third focused runs remain
+valid across checker/fixture-only changes. Missing older focused common JAR archives
+are disclosed: source-valid inheritance uses exact unchanged source/resources/build
+inputs, original Gradle outcomes and external dependency/origin records, rather than
+claiming unavailable archive-byte equivalence. Later package and actual focused
+project JAR archives are captured separately. Source relocation preserves the first
+two successful live results and their original exits; failed attempts stay failed.
+The provider lifecycle/state tests pass 59 cases, and checker tests pass 14 methods.
+
+Evidence is indexed in
+`.superpowers/sdd/2026-10-24-delta-partitioned-merge/task-3/final-evidence-index.json`.
+The report retains per-cell freezes, fresh scoped provider assembly, exact shared
+component provenance and original commands/receipts/XML. Local selected scalar
+parity preserves native invalid-UTF8 binary loss, localFS binary-NUL failure and
+mismatched timestamp-zone shifts. See the [tracked plan](../../docs/superpowers/plans/2026-10-24-delta-partitioned-merge.md)
+and [bounded MERGE support](../../docs/delta-cdf-merge.md) for qualified cases and
+remaining protocol, SQL, worker and deployment boundaries.

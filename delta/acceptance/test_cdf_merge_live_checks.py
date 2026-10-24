@@ -137,6 +137,36 @@ class TestMergeHarnessPreflight(unittest.TestCase):
         return {'catalog':'catalog','database':'db','resourceService':'service','rangerAppRole':'role','nonce':'fixture',
             'nativeInitial':{'tables':{n:{'id':'uuid-'+n} for n in ['source','same','incomplete']}}}
 
+    def test_application_role_lookup_reads_all_pages(self):
+        from cdf_merge_live import application_role
+        class RangerPages:
+            def __init__(self,pages):self.pages=iter(pages);self.calls=[]
+            def call(self,method,path):self.calls.append((method,path));return next(self.pages)
+        pages=[{'startIndex':0,'pageSize':2,'totalCount':3,'resultSize':2,'roles':[{'id':1,'name':'older'},{'id':2,'name':'another'}]},
+               {'startIndex':2,'pageSize':2,'totalCount':3,'resultSize':1,'roles':[{'id':3,'name':'GRAVITINO_METALAKE_1_ROLE_query'}]}]
+        ranger=RangerPages(pages)
+        self.assertEqual('GRAVITINO_METALAKE_1_ROLE_query',application_role(ranger,{'resourceService':'service','appRole':'query'}))
+        self.assertEqual([('GET','/service/roles/roles?serviceName=service&startIndex=0&pageSize=200'),
+                          ('GET','/service/roles/roles?serviceName=service&startIndex=2&pageSize=200')],ranger.calls)
+
+    def test_application_role_lookup_rejects_duplicate_stalled_and_malformed_pages(self):
+        from cdf_merge_live import application_role
+        def page(start,roles,total=3):return {'startIndex':start,'pageSize':2,'totalCount':total,'resultSize':len(roles),'roles':roles}
+        first=page(0,[{'id':1,'name':'older'},{'id':2,'name':'GRAVITINO_METALAKE_1_ROLE_query'}])
+        last=page(2,[{'id':3,'name':'last'}])
+        cases=[ [first,page(2,[{'id':3,'name':'GRAVITINO_METALAKE_2_ROLE_query'}])],
+                [first,page(2,[])], [dict(first,resultSize=1),last],
+                [first,dict(last,startIndex=0)], [first,dict(last,totalCount=4)],
+                [first,page(2,[{'id':2,'name':'last'}])], [dict(first,pageSize=0),last],
+                [dict(first,totalCount=True),last], [page(0,[],total=0)],
+                [page(0,[{'id':1,'name':'older'}]),last] ]
+        for index,pages in enumerate(cases):
+            class RangerPages:
+                def __init__(self):self.pages=iter(copy.deepcopy(pages))
+                def call(self,method,path):return next(self.pages)
+            with self.subTest(index=index),self.assertRaises((AssertionError,KeyError)):
+                application_role(RangerPages(),{'resourceService':'service','appRole':'query'})
+
     def test_column_deny_is_exact_and_does_not_grant_any_access(self):
         from cdf_merge_live import deny_policy
         policy=deny_policy(self.plan())
@@ -191,12 +221,13 @@ def artifact_fixture(result):
     manifest_path=save(temporary/'manifest.json',manifest)
     result['origins']={name:{'jar':providers[name],'sha256':jars[providers[name]]} for _,name in names[:3]}
     result['binding']={'source':canonical(inputs),'manifest':file_ref(manifest_path)['sha256'],'app':jars[manifest['app']],'companion':jars[manifest['changedRuntime']],'python':inputs['delta/acceptance/cdf_merge_pyspark.py']}
-    plan={'catalog':'c','database':'d','nonce':'fixture','nativeInitial':{'tables':result['nativeInitial']},'subject':'a','metadataPrincipal':'m','serviceAdmin':'s'}
+    partitioned=result.get('profile')=='partitioned'
+    plan={'partitioned':partitioned,'catalog':'c','database':'d','nonce':'fixture','nativeInitial':{'tables':result['nativeInitial']},'subject':'a','metadataPrincipal':'m','serviceAdmin':'s'}
     ranger=save(cell/'deployed-ranger/association.json',{'deployedRangerVersion':'2.8.0'});plan['deployedRangerEvidenceSha256']=file_ref(ranger)['sha256'];save(cell/'fixture/state.private.json',plan)
     native={'tables':result['nativeInitial'],'sourceNative':result['sourceNative'],'spark':'3.5.4','delta':'3.3.0','java':'17','scala':'2.12.21','identity':{'ugi':'s','sparkUser':'s'},'origins':{k:{'origin':v['jar'],'sha256':v['sha256']} for k,v in result['origins'].items()}}
-    save(cell/'fixture/native/ready.json',native);save(cell/'fixture/native/process/command.json',{'identity':'s','argv':[str(home/'bin/spark-submit'),str(root/'delta/acceptance/cdf_merge_native.py'),str(cell/'fixture/native/inputs.private.json')]});save(cell/'fixture/native/process/exit.json',{'exitCode':0})
-    save(cell/'scala/app-evidence/source-governed.json',result['sourceGoverned'])
-    for kind in ['python','scala']:
+    save(cell/'fixture/native/ready.json',native);save(cell/'fixture/native/process/command.json',{'identity':'s','argv':[str(home/'bin/spark-submit'),str(root/'delta/acceptance/cdf_merge_native.py'),str(cell/'fixture/native/inputs.private.json')]});save(cell/'fixture/native/process/exit.json',{'exitCode':0,'terminated':False})
+    save(cell/('python' if partitioned else 'scala')/'app-evidence/source-governed.json',result['sourceGoverned'])
+    for kind in (['python'] if partitioned else ['python','scala']):
         directory=cell/kind;app=directory/'app-evidence';selected=steps(plan,kind=='python')
         request={'packageManifest':str(manifest_path),'expectedSparkVersion':'3.5.4','expectedDeltaVersion':'3.3.0','subject':'a','metadataPrincipal':'m','steps':selected,'sparkConfigurationFile':str(directory/'request/spark.properties')}
         request_path=save(directory/'request/request.private.json',request)
@@ -208,10 +239,14 @@ def artifact_fixture(result):
         save(app/'observed.json',{'subject':'a','ugi':'a','spark':'3.5.4','java':'17','scala':'2.12.21'});save(app/'metadata-identity-final.json',{'principal':'m','successfulTargetGet':True})
         for step in selected:
             result['stages'][step['name']]['sql']=step['sql']
+            if partitioned:
+                stage=result['stages'][step['name']]
+                for field,path,data in [('nativeBefore',cell/'fixture/native'/(step['name']+'-before.json'),stage['before']),('nativeAfter',cell/'fixture/native'/(step['name']+'-after.json'),stage['after']),('consumerBefore',app/(step['name']+'-checkpoint-before.json'),{'sourceId':step['sourceId'],'end':stage['checkpointBefore']}),('consumerAfter',app/(step['name']+'-checkpoint-after.json'),{'sourceId':step['sourceId'],'end':stage['checkpointAfter']})]:
+                    stage[field]=file_ref(save(path,data))
             save(app/(step['name']+'-identity.json'),{'subject':'a','ugi':'a','thread':'query-thread'});save(directory/(step['name']+'-result.json'),result['stages'][step['name']])
         if kind=='python':save(app/'python-observed.json',{'frontend':'classic-pyspark','pysparkVersion':'3.5.4','python':'3.11','queries':[s['sql'] for s in selected]})
     save(temporary/'inputs.private.json',{'testFixture':True})
-    outer=cell.parent/(cell.name+'-outer');save(outer/'command.json',{'argv':['python',str(root/'delta/acceptance/cdf_merge_live.py'),'--child','--runtime',str(manifest_path),'--inputs',str(temporary/'inputs.private.json'),'--out',str(cell)]});save(outer/'exit.json',{'exitCode':0,'terminated':False})
+    outer=cell.parent/(cell.name+'-outer');save(outer/'command.json',{'argv':['python',str(root/'delta/acceptance/cdf_merge_live.py'),'--child','--runtime',str(manifest_path),'--inputs',str(temporary/'inputs.private.json'),'--out',str(cell)]+(['--partitioned'] if partitioned else [])});save(outer/'exit.json',{'exitCode':0,'terminated':False})
     registration={}
     for name,value in result['registration']['persisted'].items():
         registration[name]={'properties':{RECEIPT+key:str(value[field]) for key,field in [('id','id'),('generation','generation'),('token','token'),('nativeId','uuid'),('nativeVersion','nativeVersion')]}}

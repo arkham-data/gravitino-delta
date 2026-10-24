@@ -12,7 +12,9 @@
 
 **Task 1 verification:** Installed checks passed on Spark 3.5.4 with Delta 3.3.0 (59 cases) and Delta 3.3.2 (19 cases), using Ranger 2.8.0. Formatting/compilation passed. Independent review passed. Task 1 is complete and committed locally. This does not qualify general partitioned support or live deployment. Original evidence: `.superpowers/sdd/2026-10-24-delta-partitioned-merge/attempt-index.json`.
 
-**Task 2 verification:** Installed checks passed on Spark 3.5.4 with each of Delta 3.3.0 and 3.3.2, using Ranger 2.8.0, Scala 2.12.21 and JDK 17.0.16. Each pin has 23 unique passing cases: 22 new policy/value/lifecycle tests and one existing named SQL smoke test. Module formatting and compilation passed. No production change was needed. Independent SPEC/QUALITY review passed. Task 2 is complete and committed locally; Task 3 has not started. Original case-to-XML hashes and targeted replacements are recorded in `.superpowers/sdd/2026-10-24-delta-partitioned-merge/task-2/final-evidence-map.json`; superseded assertions are excluded from the final count.
+**Task 2 verification:** Installed checks passed on Spark 3.5.4 with each of Delta 3.3.0 and 3.3.2, using Ranger 2.8.0, Scala 2.12.21 and JDK 17.0.16. Each pin has 23 unique passing cases: 22 new policy/value/lifecycle tests and one existing named SQL smoke test. Module formatting and compilation passed. No production change was needed. Independent SPEC/QUALITY review passed. Task 2 is complete and committed locally. Original case-to-XML hashes and targeted replacements are recorded in `.superpowers/sdd/2026-10-24-delta-partitioned-merge/task-2/final-evidence-map.json`; superseded assertions are excluded from the final count.
+
+**Task 3 verification:** All four Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 pairs passed five fresh classic PySpark live scenarios each against Ranger 2.8.0 and MinIO. All accepted original outer/Python/native-observer exits are zero. The scenarios cover distinct-target and same-table MERGE plus column, SELECT and MODIFY denial, with exact native rows/CDF/actions, untouched files and persisted registration/checkpoints. The catalog regression suites passed 59 cases and the acceptance checker suites passed 14 methods. Independent integrated SPEC/QUALITY review passed. Task 3 and the partitioned MERGE milestone are complete and committed locally. The retained index is `.superpowers/sdd/2026-10-24-delta-partitioned-merge/task-3/final-evidence-index.json`.
 
 ## Global Constraints
 
@@ -82,7 +84,7 @@ The installed tests compare the governed path with stock Delta, including exact 
 - A binary partition containing NUL (`X'00ff2f3d25'`) fails in the native writer with `TASK_WRITE_FAILED` caused by `IOException: Mkdirs failed`. The governed failure leaves committed state and checkpoint unchanged. This local-filesystem result does not establish S3/MinIO behavior.
 - With Spark session timezone `America/Los_Angeles`, JVM timezone `UTC`, and `spark.databricks.delta.write.utcTimestampPartitionValues=true`, authored `2024-03-11 08:02:03.654321Z` persists as `2024-03-11 01:02:03.654321Z`. Stock and governed paths both shift the instant. Matched UTC and matched Los Angeles cases were also exercised, including Los Angeles with native UTC normalization enabled and disabled. Arbitrary timezone combinations are not qualified.
 
-The numeric coverage includes ordered `region(INT), secret(STRING)` keys, DATE and DECIMAL(12,3); it does not qualify every scalar type, precision or scale. No implicit settings changes or new conversion guards were added. Task 3 must qualify fresh artifacts on Spark 3.5.6 as well as 3.5.4, real PySpark SQL, Ranger 2.8.0 and MinIO, and retain these caveats while reporting exactly which type/settings/storage profiles were exercised. The installed cases alone do not establish general partitioned support or deployed behavior.
+The numeric coverage includes ordered `region(INT), secret(STRING)` keys, DATE and DECIMAL(12,3); it does not qualify every scalar type, precision or scale. No implicit settings changes or new conversion guards were added. Task 3 extends the installed cases to Spark 3.5.6 and separately qualifies a single STRING partition column with null/escaped values through real PySpark SQL, Ranger 2.8.0 and MinIO on all four pairs. Other scalar/settings/storage combinations and separate-worker deployment remain unqualified; the native limitations above still apply.
 
 ## Task 3: Qualify four runtime pairs with Ranger and S3
 
@@ -90,9 +92,43 @@ The numeric coverage includes ordered `region(INT), secret(STRING)` keys, DATE a
 
 **Interfaces:** Reuse Tasks 1–2 exact named SQL, owned writer and durable intent. Reuse existing live fixture separation of setup/metadata/authenticated application identities, independent observer and checkpoint records.
 
-- [ ] Add partition-specific live distinct-target and same-table scenarios with real classic PySpark SQL, Ranger 2.8.0 and MinIO. Validate original native row/event multisets, partition action maps, untouched files, registration and consumer checkpoint outcomes; include masks/filters and denial. Test checker corruption cases for newly required fields.
-- [ ] Build fresh immutable runtime packages and run all four Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 pairs. Run only the affected focused selectors and new partition live cases. Retain runtime/provider/identity/source hashes and original process exits; old package success is historical evidence only.
-- [ ] Review complete implementation against the approved design and original runtime evidence, resolve concrete issues, document exactly qualified profiles and remaining limitations, and commit locally. No automatic push, PR or catalog-demo deployment. All three tasks must be complete before this partitioned feature milestone closes.
+**Live-discovered prerequisite:** The first partitioned source failed public
+PUBLISH before MERGE because relational partition DTOs and detached domain
+transforms compare unequal. Correct only the Delta provider's complete-row
+comparison in `DeltaRegistrationStore.replace`, with real relational
+publication/refresh and changed-state regression tests. Preserve the full
+optimistic check and all Gravitino core code. Rebuild the provider in a fresh
+immutable base; retain the failed fixture and use fresh corrected live cells.
+See the [design addendum](../specs/2026-10-24-delta-partitioned-merge-design.md#registration-representation-correction-found-during-live-qualification).
+
+**Focused evidence selection:** The final mapping distinguishes fresh Task 3
+runs from inherited Tasks 1–2 cases:
+
+| Spark | Delta | Fresh focused cases in Task 3 | Inherited earlier partition cases | Fresh live scenarios |
+| --- | --- | --- | --- | --- |
+| 3.5.4 | 3.3.0 | 38 | 0 | 5 |
+| 3.5.4 | 3.3.2 | 3 | 35 | 5 |
+| 3.5.6 | 3.3.0 | 38 | 0 | 5 |
+| 3.5.6 | 3.3.2 | 38 | 0 | 5 |
+
+The first 38-case run predates the provider correction, which is absent from the
+Spark test dependency graph. The third pair's 38-case run predates a fixture-only
+Ranger pagination correction. Their unchanged Spark behavior is bound explicitly
+to the final packages. For the first two pairs, original common-JAR copies are
+unavailable: inheritance uses verified unchanged production/resource/build inputs,
+dependency records and original Gradle/XML evidence, not a claim of archive-byte
+or loaded-byte equality. The actual third/fourth common-JAR archives are retained;
+their only archive-entry difference is generated `compile.date` metadata.
+
+The failed registration fixture, failed snapshot-flag checker attempt and failed
+first-page-only Ranger lookup remain failed evidence. Successful first-two-pair
+results retain their original bytes; separate revalidation receipts bind identical
+archived source bytes after the fixture helper changed. No failed run is counted
+as a successful live cell. Final source/documentation deltas are recorded separately.
+
+- [x] Add partition-specific live distinct-target and same-table scenarios with real classic PySpark SQL, Ranger 2.8.0 and MinIO. Validate original native row/event multisets, partition action maps, untouched files, registration and consumer checkpoint outcomes; include masks/filters and denial. Test checker corruption cases for newly required fields.
+- [x] Build fresh immutable runtime packages and run all four Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 pairs. Run only the affected focused selectors and new partition live cases. Retain runtime/provider/identity/source hashes and original process exits; old package success is historical evidence only.
+- [x] Review complete implementation against the approved design and original runtime evidence, resolve concrete issues, document exactly qualified profiles and remaining limitations, and commit locally. No automatic push, PR or catalog-demo deployment. All three tasks must be complete before this partitioned feature milestone closes.
 
 ## Execution commands and evidence
 

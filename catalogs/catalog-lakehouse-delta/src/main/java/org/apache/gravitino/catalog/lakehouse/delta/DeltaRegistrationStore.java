@@ -19,6 +19,7 @@
 
 package org.apache.gravitino.catalog.lakehouse.delta;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,6 +27,7 @@ import org.apache.gravitino.Entity;
 import org.apache.gravitino.EntityStore;
 import org.apache.gravitino.NameIdentifier;
 import org.apache.gravitino.Namespace;
+import org.apache.gravitino.dto.util.DTOConverters;
 import org.apache.gravitino.exceptions.NoSuchEntityException;
 import org.apache.gravitino.meta.TableEntity;
 
@@ -76,7 +78,17 @@ final class DeltaRegistrationStore {
               TableEntity.class,
               Entity.EntityType.TABLE,
               current -> {
-                if (!current.equals(expected)) {
+                // Relational hydration returns partition DTOs, while detached state uses domain
+                // transforms. Domain single-field equality omits transform kind, so retain the
+                // complete serialized partition shape as well as the complete normalized row.
+                JsonNode currentPartitions =
+                    DeltaRegistrationState.JSON.valueToTree(
+                        DTOConverters.toDTOs(current.partitioning()));
+                JsonNode expectedPartitions =
+                    DeltaRegistrationState.JSON.valueToTree(
+                        DTOConverters.toDTOs(expected.partitioning()));
+                if (!currentPartitions.equals(expectedPartitions)
+                    || !DeltaRegistrationState.from(current).entity().equals(expected)) {
                   throw new IllegalStateException("REGISTRATION_CHANGED");
                 }
                 return detached;

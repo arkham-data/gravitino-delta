@@ -257,7 +257,9 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
     val named = text("catalog") + "." + text("database") + ".source"
     val rows = spark
       .sql(
-        "SELECT id, secret, region, _change_type, _commit_version FROM table_changes('" + named + "', 1, 1)"
+        "SELECT id, secret, region, " + (if (request.path("partitioned").asBoolean()) "part, "
+                                         else
+                                           "") + "_change_type, _commit_version FROM table_changes('" + named + "', 1, 1)"
       )
       .collect()
       .toVector

@@ -28,7 +28,7 @@ must not be admitted because their schema resembles a qualified relation.
 | Materialization and native retries | Focused local owned-attempt tests | Preserve fresh authority, changed-policy rejection, block-loss retries, exhaustion and owned cleanup across runtime changes |
 | Publication and recovery | Private durable driver-local journal and exact native proof | Current authorization/registration, exact intent, authorized duplicate, no replay after known commit; deployed placement still separate |
 | Constraints and no-op paths | Native CHECK and empty/no-match paths tested locally | Continue distinguishing native constraint failure from adapter rejection; no committed changes on failure |
-| Partitioned targets | Installed checks on Spark 3.5.4 with both Delta pins; general support pending | Native routing, policies, CDC and same-table lifecycle tested locally; fresh four-pair Ranger 2.8.0/MinIO/PySpark qualification remains |
+| Partitioned targets | Bounded named SQL profile locally qualified on all four pinned pairs | Five fresh Ranger 2.8.0/MinIO/PySpark scenarios per pair cover STRING/null/escaped partition values, governed moves, same-table writeback, denial, native CDC and persistence; broader type/settings/storage profiles remain separate |
 | Insert-only optimization | Unsupported | Owned native branch with original column demands, masks/filters, output and denial evidence |
 | Column mapping and defaults | Unsupported | Protocol/schema profiles, native features, authored-expression provenance and raw copy-forward |
 | AQE | Requires disabled AQE | Exact owned adaptive execution and policy revalidation |
@@ -45,6 +45,10 @@ The [partitioned MERGE plan](superpowers/plans/2026-10-24-delta-partitioned-merg
 records native binary conversion loss, a local-filesystem NUL failure and timestamp
 shifts with mismatched session/JVM timezones. Matching stock Delta in these cases
 does not establish lossless conversion or qualify other storage/settings profiles.
+Installed scalar checks and live MinIO STRING-partition checks are distinct scopes.
+The live qualification also verifies a Delta-provider correction for partitioned
+registration publication after relational hydration, preserving complete conflict
+checks without modifying Gravitino core.
 
 The arithmetic-mask follow-up completes an already-resolved cast's session timezone
 before receipt issuance. Focused installed-stack tests used Spark 3.5.4/3.5.6 ×

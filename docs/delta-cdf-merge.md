@@ -114,15 +114,74 @@ exactly-once sink guarantee.
 
 ## Bounded support and evidence
 
-The supported target profile is unpartitioned, reader-1/classic CDF with fixed
-schema, AQE disabled and the explicitly owned native execution path. Native
+The supported target profile includes unpartitioned and partitioned reader-1/classic
+tables, with fixed schema and partition metadata, AQE disabled and the explicitly
+owned native execution path. Native
 constraints, INSERT/UPDATE/DELETE clauses, native source materialization/retries,
 current authorization and known-commit reconciliation have focused local tests.
 The live acceptance entry point is `delta/acceptance/cdf_merge_live.py`; its result
 checker compares original native row/event multisets, log actions, checkpoints,
 policy downloads, process exits and persisted registrations.
 
-All four corrected runtime packages passed the same 13 fresh live phases:
+### Partitioned local qualification
+
+Four fresh requested-pin packages passed five partition-specific live phases each:
+distinct destination, column UPDATE denial, source SELECT revocation, target MODIFY
+revocation and same-table writeback. Every MERGE uses actual classic Python
+`spark.sql`; separate setup/native, metadata and application identities remain
+bound to original process and provider evidence. The shared catalog metadata reader
+uses Delta Kernel 3.3.0; Spark's native Delta versions are the requested pins below.
+
+| Spark | Native Delta | Task 3 focused cases / earlier cases | New partition live phases | Outer / Python / native exits |
+| --- | --- | --- | --- | --- |
+| 3.5.4 | 3.3.0 | 38 / 0 | 5 passed | 0 / 0 / 0 |
+| 3.5.4 | 3.3.2 | 3 / 35 | 5 passed | 0 / 0 / 0 |
+| 3.5.6 | 3.3.0 | 38 / 0 | 5 passed | 0 / 0 / 0 |
+| 3.5.6 | 3.3.2 | 38 / 0 | 5 passed | 0 / 0 / 0 |
+
+The live profile uses a fixed `part STRING` partition independent of the `region`
+row filter. Visible and hidden rows share a touched file. A source partition mask
+moves selected rows to escaped `moved/= %`; filtered rows retain their raw values
+in rewritten files, while original untouched files, including a null partition,
+retain their native AddFile records and object hashes. The checker compares exact
+raw row/CDF multisets, add/remove/CDC partition maps and paths, complete active-file
+changes, consumer source/end checkpoints and public/H2 registration after restart.
+Commit data-change flags and normalized native snapshot flags are checked separately.
+
+The provider's complete-row registration CAS normalizes relational partition DTOs
+and also compares the complete serialized partition shape, preserving transform
+kind, field, arguments and order. A real relational publication/refresh regression
+and seven mutation cases pass with the existing lifecycle/state tests (59 total).
+The 14 Python checker methods cover original evidence and pagination corruption.
+Fixture role lookup follows every Ranger result page and rejects incomplete or
+ambiguous results.
+
+First/third Task 3 focused runs remain valid across checker/fixture-only corrections;
+35 second-pin partition cases retain their reviewed Task 1/2 evidence. Older focused
+common JAR archives are unavailable, so inheritance rests on unchanged production,
+resource and build inputs, original Gradle outcomes and external dependency/origin
+records. Package compile-classpath snapshots are distinguished from actual focused
+JVM captures; byte-equivalence of missing archives is not claimed. Original first-two
+live results remain unchanged and revalidate through identical-byte source archives.
+
+The MinIO profile qualifies these STRING/null/escaped values. Selected local scalar
+and settings cases retain native limits: invalid UTF8 binary partition conversion
+is lossy, binary NUL fails on local filesystem, and mismatched session/JVM timestamp
+zones can shift instants. See the [partitioned plan](superpowers/plans/2026-10-24-delta-partitioned-merge.md)
+for exact cases. General scalar/timezone support, schema evolution, column mapping
+or defaults, deletion vectors, row tracking, AQE, builder/Connect, separate workers
+and deployment remain separate obligations.
+
+The original evidence index is
+`.superpowers/sdd/2026-10-24-delta-partitioned-merge/task-3/final-evidence-index.json`;
+`task-3-report.md` records source freezes, fresh provider/package provenance, focused
+inheritance, retained failed attempts and source relocation. Earlier failures keep
+their original exits. The fixture needs preserved private local transport and
+service inputs; it is not a clean-checkout bootstrap or credential-refresh test.
+
+### Earlier unpartitioned qualification
+
+All four corrected unpartitioned runtime packages passed the same 13 fresh live phases:
 real classic Python `spark.sql` success and denial; distinct destination MERGE;
 authorized transaction duplicate; empty interval; native ambiguity; incomplete
 CDF history; column denial; post-helper revoke; independent SELECT and MODIFY

@@ -33,7 +33,7 @@ def main():
     access, secret = credentials(config['primary']['credentialsFile'])
     builder = SparkSession.builder.master('local[2]').appName('cdf-read-native-oracle')
     options = {'spark.ui.enabled':'false','spark.driver.host':'127.0.0.1','spark.driver.bindAddress':'127.0.0.1',
-        'spark.sql.shuffle.partitions':'2','spark.databricks.delta.snapshotPartitions':'2',
+        'spark.sql.adaptive.enabled':'false','spark.sql.session.timeZone':'UTC','spark.sql.shuffle.partitions':'2','spark.databricks.delta.snapshotPartitions':'2',
         'spark.sql.extensions':'io.delta.sql.DeltaSparkSessionExtension',
         'spark.sql.catalog.spark_catalog':'org.apache.spark.sql.delta.catalog.DeltaCatalog',
         'spark.hadoop.fs.s3a.endpoint':config['primary']['endpoint'],'spark.hadoop.fs.s3a.endpoint.region':config['primary']['region'],
@@ -61,6 +61,7 @@ def main():
         assert Path(origins['scala.Predef$']['origin']).name=='scala-library-2.12.21.jar'
         from s3_objects import OwnedObjects
         tables={table['name']:table for table in config['tables']}
+        partitioned=config.get('partitioned',False)
         for name,table in tables.items():
             assert not OwnedObjects(config['primary'],table['prefix']).manifest(), 'Fresh prefix required'
             location=table['location'];target='delta.`'+location+'`'
@@ -68,9 +69,17 @@ def main():
                 rows=[[1,'changed','allowed'],[2,'gone','allowed'],[3,'hidden','blocked'],[6,'dup','allowed'],[6,'dup','allowed']]
             elif name=='ambiguous_target':rows=[[6,'old','allowed'],[9,'stable','allowed']]
             else:rows=[[1,'old','allowed'],[2,'old2','allowed'],[4,'hidden','blocked'],[9,'stable','allowed']]
-            spark.createDataFrame(rows,'id LONG, secret STRING, region STRING').coalesce(1).write.format('delta').mode('errorifexists').option('delta.enableChangeDataFeed','true').save(location)
+            if partitioned:
+                parts={1:'old' if name=='target' else 'new',2:'old2',3:'new',4:'old' if name=='target' else 'four',5:'blocked',6:'dup',9:None}
+                rows=[row+[parts[row[0]]] for row in rows]
+            writer=spark.createDataFrame(rows,'id LONG, secret STRING, region STRING'+(', part STRING' if partitioned else '')).coalesce(1).write
+            if partitioned:writer=writer.partitionBy('part')
+            writer.format('delta').mode('errorifexists').option('delta.enableChangeDataFeed','true').save(location)
             if name in ['source','same','incomplete']:
-                spark.sql("MERGE INTO "+target+" t USING (SELECT 1L id, 'new' secret, 'allowed' region, 'update' op UNION ALL SELECT 2L, 'gone', 'allowed', 'delete' UNION ALL SELECT 4L, 'four', 'allowed', 'insert' UNION ALL SELECT 5L, 'five', 'blocked', 'insert') s ON t.id=s.id WHEN MATCHED AND s.op='delete' THEN DELETE WHEN MATCHED THEN UPDATE SET secret=s.secret, region=s.region WHEN NOT MATCHED THEN INSERT (id,secret,region) VALUES(s.id,s.secret,s.region)").collect()
+                seed_sql="MERGE INTO "+target+" t USING (SELECT 1L id, 'new' secret, 'allowed' region, 'update' op UNION ALL SELECT 2L, 'gone', 'allowed', 'delete' UNION ALL SELECT 4L, 'four', 'allowed', 'insert' UNION ALL SELECT 5L, 'five', 'blocked', 'insert') s ON t.id=s.id WHEN MATCHED AND s.op='delete' THEN DELETE WHEN MATCHED THEN UPDATE SET secret=s.secret, region=s.region WHEN NOT MATCHED THEN INSERT (id,secret,region) VALUES(s.id,s.secret,s.region)"
+                if partitioned:
+                    seed_sql=seed_sql.replace("region=s.region", "region=s.region, part=CASE WHEN s.id=1 THEN 'new' ELSE 'four' END").replace("INSERT (id,secret,region) VALUES(s.id,s.secret,s.region)", "INSERT (id,secret,region,part) VALUES(s.id,s.secret,s.region,CASE WHEN s.id=4 THEN 'four' ELSE 'blocked' END)")
+                spark.sql(seed_sql).collect()
                 spark.sql("ALTER TABLE "+target+" SET TBLPROPERTIES ('fixture.empty'='true')").collect()
         def snapshot(name,after=-1):
             table=tables[name];location=table['location']
@@ -84,10 +93,18 @@ def main():
             rows=[list(row) for row in spark.read.format('delta').load(location).collect()]
             changes=[]
             if after>=0 and version>after:
-                changes=[[row.id,row.secret,row.region,row._change_type] for row in spark.read.format('delta').option('readChangeFeed','true').option('startingVersion',after+1).option('endingVersion',version).load(location).collect()]
-            return {'version':version,'id':snap.metadata().id(),'rows':rows,'actions':logs,'cdc':changes}
+                changes=[[row.id,row.secret,row.region]+([row.part] if partitioned else [])+[row._change_type] for row in spark.read.format('delta').option('readChangeFeed','true').option('startingVersion',after+1).option('endingVersion',version).load(location).collect()]
+            result={'version':version,'id':snap.metadata().id(),'rows':rows,'actions':logs,'cdc':changes}
+            if partitioned:
+                files=[json.loads(value) for value in snap.allFiles().toJSON().collectAsList()]
+                from urllib.parse import unquote
+                manifest={entry['key']:entry for entry in objects.manifest()}
+                result.update(partitionColumns=snap.metadata().partitionColumns().mkString(',').split(','),schema=snap.metadata().schemaString(),files=files,
+                    fileObjects={f['path']:{key:manifest[table['prefix']+unquote(f['path'])][key] for key in ['sha256','size']} for f in files})
+                assert snap.metadata().partitionColumns().mkString(',')=='part'
+            return result
         initial={name:snapshot(name) for name in tables}
-        source=[[row.id,row.secret,row.region,row._change_type,row._commit_version] for row in spark.read.format('delta').option('readChangeFeed','true').option('startingVersion',1).option('endingVersion',1).load(tables['source']['location']).collect()]
+        source=[[row.id,row.secret,row.region]+([row.part] if partitioned else [])+[row._change_type,row._commit_version] for row in spark.read.format('delta').option('readChangeFeed','true').option('startingVersion',1).option('endingVersion',1).load(tables['source']['location']).collect()]
         (output/'ready.json').write_text(json.dumps({'identity':identity,'spark':spark.version,'delta':config['delta'],'java':'17','scala':'2.12.21','origins':origins,'tables':initial,'sourceNative':source},indent=2)+'\n')
         cursor=0
         while True:

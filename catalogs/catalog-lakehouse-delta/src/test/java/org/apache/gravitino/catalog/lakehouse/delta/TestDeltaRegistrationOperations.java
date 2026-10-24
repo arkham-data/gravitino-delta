@@ -85,9 +85,11 @@ import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrati
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationIdentity;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationReceipt;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaSchemaContract;
+import org.apache.gravitino.dto.rel.partitioning.IdentityPartitioningDTO;
 import org.apache.gravitino.meta.AuditInfo;
 import org.apache.gravitino.meta.BaseMetalake;
 import org.apache.gravitino.meta.CatalogEntity;
+import org.apache.gravitino.meta.ColumnEntity;
 import org.apache.gravitino.meta.SchemaEntity;
 import org.apache.gravitino.meta.SchemaVersion;
 import org.apache.gravitino.meta.TableEntity;
@@ -96,6 +98,8 @@ import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.TableChange;
 import org.apache.gravitino.rel.expressions.transforms.Transform;
+import org.apache.gravitino.rel.expressions.transforms.Transforms;
+import org.apache.gravitino.rel.types.Types;
 import org.apache.gravitino.storage.relational.RelationalEntityStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -534,6 +538,121 @@ public class TestDeltaRegistrationOperations {
         receipt(alter(DeltaRegistrationCommand.publish(adopting.identity())));
     assertEquals("EXISTING_NATIVE_SNAPSHOT", adopted.evidence().name(), adopted.reason());
     assertFalse(rawTable(IDENT).properties().toString().contains("private"));
+  }
+
+  @Test
+  void partitionedAdoptionPublishesAndRefreshesAcrossRelationalHydration() throws Exception {
+    String location = "s3a://bucket/fixture/partitioned";
+    writeCommit(location, 0, "partitioned-id", SCHEMA, Map.of());
+    mutateCommit(
+        location,
+        0,
+        value -> {
+          if (value.has("metaData"))
+            ((ObjectNode) value.get("metaData")).withArray("partitionColumns").add("id");
+        });
+    when(authorizer.isServiceAdmin()).thenReturn(true);
+    DeltaRegistrationReceipt adopting =
+        receipt(
+            create(DeltaRegistrationCommand.adopt("adopt", location, "retired", "cutover"), 10));
+    owner("alice");
+    TableEntity hydrated = rawTable(IDENT);
+    TableEntity detached = DeltaRegistrationState.from(hydrated).entity();
+    assertEquals(IdentityPartitioningDTO.class, hydrated.partitioning()[0].getClass());
+    assertEquals(Transforms.IdentityTransform.class, detached.partitioning()[0].getClass());
+    assertNotEquals(hydrated, detached);
+    DeltaRegistrationReceipt published =
+        receipt(alter(DeltaRegistrationCommand.publish(adopting.identity())));
+    assertEquals("PUBLISHED", published.state().name(), published.reason());
+    assertEquals(adopting.identity(), published.identity());
+    writeCommit(location, 1, "partitioned-id", SCHEMA, Map.of());
+    mutateCommit(
+        location,
+        1,
+        value -> {
+          if (value.has("metaData"))
+            ((ObjectNode) value.get("metaData")).withArray("partitionColumns").add("id");
+        });
+    DeltaRegistrationReceipt refreshed = receipt(operations.loadTable(IDENT));
+    assertEquals("PUBLISHED", refreshed.state().name(), refreshed.reason());
+    assertEquals(1L, refreshed.nativeVersion().orElseThrow());
+    assertEquals(published.identity(), refreshed.identity());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"partition", "strategy", "order", "comment", "audit", "column", "properties"})
+  void partitionedCompleteRowCompareRejectsRealRelationalDrift(String field) throws Exception {
+    reserve();
+    store.update(
+        IDENT,
+        TableEntity.class,
+        Entity.EntityType.TABLE,
+        current -> {
+          TableEntity row = DeltaRegistrationState.from(current).entity();
+          return TableEntity.builder()
+              .withId(row.id())
+              .withName(row.name())
+              .withNamespace(row.namespace())
+              .withAuditInfo(row.auditInfo())
+              .withProperties(row.properties())
+              .withColumns(row.columns())
+              .withPartitioning(
+                  new Transform[] {Transforms.identity("id"), Transforms.identity("part")})
+              .build();
+        });
+    DeltaRegistrationState inspected = DeltaRegistrationState.from(rawTable(IDENT));
+    TableEntity candidate = inspected.entity();
+    store.update(
+        IDENT,
+        TableEntity.class,
+        Entity.EntityType.TABLE,
+        current -> {
+          TableEntity row = DeltaRegistrationState.from(current).entity();
+          Transform[] partitions = row.partitioning();
+          if (field.equals("partition")) partitions[0] = Transforms.identity("changed");
+          if (field.equals("strategy")) partitions[0] = Transforms.day("id");
+          if (field.equals("order")) partitions = new Transform[] {partitions[1], partitions[0]};
+          if (field.equals("properties"))
+            row.properties()
+                .put(
+                    DeltaRegistrationState.PROPERTY,
+                    inspected.data().put("actor", "bob").toString());
+          if (field.equals("column"))
+            row.columns()
+                .add(
+                    ColumnEntity.builder()
+                        .withId(101L)
+                        .withName("added")
+                        .withPosition(0)
+                        .withDataType(Types.IntegerType.get())
+                        .withAuditInfo(AUDIT)
+                        .build());
+          return TableEntity.builder()
+              .withId(row.id())
+              .withName(row.name())
+              .withNamespace(row.namespace())
+              .withProperties(row.properties())
+              .withColumns(row.columns())
+              .withPartitioning(partitions)
+              .withComment(field.equals("comment") ? "changed" : row.comment())
+              .withAuditInfo(
+                  field.equals("audit")
+                      ? AuditInfo.builder()
+                          .withCreator("alice")
+                          .withCreateTime(AUDIT.createTime())
+                          .withLastModifier("changed")
+                          .build()
+                      : row.auditInfo())
+              .build();
+        });
+    TableEntity changed = rawTable(IDENT);
+    IllegalStateException rejected =
+        assertThrows(
+            IllegalStateException.class,
+            () -> new DeltaRegistrationStore(store).replace(inspected, candidate));
+    assertEquals("REGISTRATION_CHANGED", rejected.getMessage());
+    assertEquals(changed, rawTable(IDENT));
   }
 
   @Test

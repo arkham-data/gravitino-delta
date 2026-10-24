@@ -2,6 +2,9 @@
 
 Status: approved by the user's subsequent "Proceed" after design review; execute
 task by task. Design baseline: `1e35d8d39022b4a608d1ae983d7d42bd96ef0e95`.
+All four runtime pairs have passed the bounded installed/live qualification;
+independent integrated review passed and the milestone is committed locally. Exact scopes, evidence accounting and
+native limitations are recorded in the [implementation plan](../plans/2026-10-24-delta-partitioned-merge.md).
 
 ## Intent and inherited decisions
 
@@ -153,6 +156,24 @@ documents to the exact evidence and commit locally. Do not replay unrelated clos
 append/CDF matrices or claim separate-worker deployment.
 
 ## Builder decisions and exit boundary
+
+### Registration representation correction found during live qualification
+
+The first Task 3 live fixture failed before MERGE when publishing a partitioned
+registration. Relational storage hydrates partition definitions as DTOs, while
+`DeltaRegistrationState` detaches them as domain transforms. Comparing those
+complete rows directly reports `REGISTRATION_CHANGED` even when their metadata
+has not changed. A real relational adoption/publication regression reproduces it.
+
+Normalize the current row through the existing `DeltaRegistrationState`
+representation before the complete optimistic comparison in
+`DeltaRegistrationStore.replace`. Also compare canonical partition DTO trees:
+domain transform equality alone omits transform kind. Keep every compared field
+and reject actual partition kind/arguments/field/order, column, audit, property
+and comment changes. This is a
+Delta catalog provider correction; Gravitino core and the registration protocol
+remain unchanged. Qualification requires corrected provider artifacts and fresh
+live fixtures; the original failed fixture remains failed evidence.
 
 The implementer chooses private helper structure and fixture decomposition after
 tracing the installed native plan, keeping changes concentrated in MERGE ownership

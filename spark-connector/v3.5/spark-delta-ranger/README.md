@@ -365,6 +365,25 @@ actual classic PySpark SQL success/denial, native target CDC and persisted
 registration restart. Original process exits, loaded providers and corrected
 source/artifact bindings are retained in the linked result.
 
-This does not admit the stock DataFrame builder, Spark Connect, partitioned targets,
-AQE or arbitrary native operations. The [parity tracker](../../../docs/delta-spark-parity.md)
+Partitioned targets now have separate four-pair local qualification: five new
+classic PySpark phases per pair cover distinct destination, same-table writeback
+and three authorization denials. Fixed ordered partition metadata, native routing
+and CDF remain owned by the bounded executor path. The MinIO fixture qualifies
+STRING/null/escaped partitions, including a masked partition move, raw hidden rows
+in a touched file and untouched original AddFiles/object hashes. Registration and
+consumer checkpoint outcomes follow the original SQL results; registration survives
+server restart. This evidence is separate
+from the earlier 13-phase unpartitioned profile.
+
+Focused Task 3 cases are 38/3/38/38, with 35 earlier source-valid partition cases on
+Spark 3.5.4/Delta 3.3.2. Missing older focused common JAR archives and the exact
+source/dependency basis for inheritance are disclosed in the linked report;
+original successful live results retain their source archives and original exits.
+The [tracked partitioned plan](../../../docs/superpowers/plans/2026-10-24-delta-partitioned-merge.md)
+records the selected scalar/settings cases and native invalid-UTF8 binary loss,
+localFS NUL failure and mismatched timestamp-zone limits. Fixed schema, classic
+protocol guards and AQE disabled remain required.
+
+The stock DataFrame builder, Spark Connect, AQE and arbitrary native operations
+remain unqualified. The [parity tracker](../../../docs/delta-spark-parity.md)
 keeps all unsupported profiles and deployment evidence visibly open.
