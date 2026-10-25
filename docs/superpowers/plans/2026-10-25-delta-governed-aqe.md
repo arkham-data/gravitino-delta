@@ -10,7 +10,7 @@
 
 **Spec:** [Approved governed AQE design](../specs/2026-10-25-delta-governed-aqe-design.md). User approved on 2026-10-25 with catalog-demo deferred while they verify missing operations. Planning baseline `05fb47eb9`; qualified product baseline `5a2e3676c`. Worktree `.worktrees/delta-spark-feasibility`, branch `codex/delta-spark-feasibility`.
 
-**Status:** Proposed implementation plan, awaiting review. No AQE implementation or runtime qualification has occurred. Catalog-demo integration and additional logical operations are not tasks in this plan.
+**Status:** Approved for subagent-driven task-by-task execution on 2026-10-25. Task 1 is starting; no AQE implementation or runtime qualification has occurred. Catalog-demo integration and additional logical operations are not tasks in this plan.
 
 ## Global Constraints
 
@@ -215,4 +215,4 @@ Resolve placeholders from retained verified inputs; do not paste credential cont
 
 Spec coverage: profile, actual stock insertion, async/current/final ownership and empty stages → Task 1; standalone CDF history/source and consumption → Task 2; native materialization/checkpoint identity, phases, policy semantics, maintenance and precommit authority → Task 3; retry/revocation/reconciliation and cleanup → Task 4; four pairs, actual Ranger/Python/MinIO and strict evidence/docs → Task 5. All five Review Focus conditions have named owning tests. Private factories and Owner methods are shared consistently; stage-hook details remain explicitly gated by installed Task 1 proof rather than assumed feasible.
 
-No task broadens ordinary logical grammar or starts catalog-demo integration. Additional operations await the user's assessment and separate scope. Implementation method remains subagent-driven. Review this plan before starting Task 1; subsequent task boundaries use independent review, not repeated direction questions.
+No task broadens ordinary logical grammar or starts catalog-demo integration. Additional operations await the user's assessment and separate scope. Implementation method remains subagent-driven. User approved this plan. Start Task 1; subsequent task boundaries use independent review, not repeated direction questions.
