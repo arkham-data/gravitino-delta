@@ -22,6 +22,11 @@ DataFrame CDF-to-MERGE milestone). This document records static findings and a
 recommended next scope; it is not an approved implementation design or new runtime
 qualification. Existing supported behavior and rejection boundaries remain intact.
 
+Follow-on direction: the user replied Proceed to the recommended real-AQE-first
+sequence. The [bounded AQE design](superpowers/specs/2026-10-25-delta-governed-aqe-design.md)
+now specifies that proposal and awaits approval of its detailed profile. The
+assessment-time open scope choices below are retained as historical findings.
+
 ## Recommendation
 
 Qualify **real governed AQE in bounded stages**, then the ordinary read operations
