@@ -29,6 +29,22 @@ verify which operations remain missing before follow-on scope is selected. The
 assessment-time recommendations and open choices below are historical findings,
 not authorization to begin integration or additional ordinary-read work.
 
+## Subsequent AQE feasibility result — 2026-10-25
+
+The approved [AQE plan](superpowers/plans/2026-10-25-delta-governed-aqe.md)
+reached a concrete ownership limitation in Task 1. Installed probes on both Spark
+pins show that the examined extension hooks do not expose a newly constructed
+stage before materialization method entry. A test-only internal child guard also
+failed exact invoking-stage authentication: copied stages can imitate its
+monitor/caller checks and cached copies can reuse map-stage statistics without
+another guard check. No foreign payload-row disclosure was demonstrated.
+
+This rejects the examined candidate, not every possible AQE design. Independent
+review approved the diagnostic evidence and confirmed that Task 1 remains
+incomplete. Existing product AQE rejection is intact; CDF/MERGE extension and the
+four-pair qualification have not begun. Revisiting ownership is necessary before
+continuing this plan. Catalog-demo remains deferred pending user direction.
+
 ## Recommendation
 
 Qualify **real governed AQE in bounded stages**, then the ordinary read operations

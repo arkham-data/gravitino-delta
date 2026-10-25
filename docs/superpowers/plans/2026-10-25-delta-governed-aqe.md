@@ -10,7 +10,33 @@
 
 **Spec:** [Approved governed AQE design](../specs/2026-10-25-delta-governed-aqe-design.md). User approved on 2026-10-25 with catalog-demo deferred while they verify missing operations. Planning baseline `05fb47eb9`; qualified product baseline `5a2e3676c`. Worktree `.worktrees/delta-spark-feasibility`, branch `codex/delta-spark-feasibility`.
 
-**Status:** Approved for subagent-driven task-by-task execution on 2026-10-25. Task 1 is starting; no AQE implementation or runtime qualification has occurred. Catalog-demo integration and additional logical operations are not tasks in this plan.
+**Status:** Approved for subagent-driven task-by-task execution on 2026-10-25. Task 1 is blocked at its feasibility gate; no governed AQE support has been implemented or qualified. Catalog-demo integration and additional logical operations are not tasks in this plan.
+
+## Task 1 feasibility outcome — 2026-10-25
+
+Independent review approved the bounded diagnostic evidence, not Task 1 completion.
+Both Spark pins with Delta 3.3.0 ran the installed hook probe and existing rejection /
+nonadaptive controls successfully. A second installed probe on each pin rejected a
+test-only internal-guard candidate: a copied stage can imitate its monitor/caller
+checks, and a cached copy can borrow the same map-stage future without another
+child-guard check. That future yields MapOutputStatistics; no foreign payload-row
+disclosure was demonstrated. Original failed hypotheses, named governed-read RED,
+commands, source snapshots, XML and exits are retained under
+`.superpowers/sdd/2026-10-25-delta-governed-aqe/task-1/`.
+
+No examined stock extension callback exposes the new exact stage before materialize
+method entry. Independent review clarified that an internal guard before substantive
+payload work could still satisfy the design, but the tested guard cannot authenticate
+the invoking stage. This is a concrete limitation of the examined ownership approach,
+not proof that all governed AQE designs are impossible.
+
+Production read/CDF/MERGE AQE rejection remains unchanged. Tasks 2–5 have not started.
+Broadcast/cancellation/async policy lifecycle proof is deferred because exact invocation
+identity failed first. The next step requires revisiting the ownership design; do not
+remove the guard, claim support, start catalog-demo, or run a qualification matrix for
+an unsupported implementation. Reports: `task-1-report.md`,
+`task-1-feasibility-review.md`, `task-1/round-1/investigation.md`, and
+`task-1-round1-review.md` in this plan's evidence workspace.
 
 ## Global Constraints
 
@@ -100,7 +126,7 @@ DeltaRangerPhysicalPlanning.adaptive(
 
 These are internal implementation names, not a new public API. Factories may not accept arbitrary validation lambdas, principal strings or caller-created permits. Binding a root is not stage authorization: permits are privately issued for exact exchanges/stage instances, with independently checked authorization at each boundary. `verifyCompleted` validates terminal native stage state and final output provenance before publication; it never forces a new action. `close` is idempotent and only closes this owner's resources. Naturally nonadaptive roots remain explicitly classified.
 
-Read-only inspection of pinned Spark 3.5.6 bytecode found that exchange-child stage optimization and columnar/codegen hooks run before construction of the QueryStageExec; final materialize is called directly by private adaptive execution code. Matching hook signatures in 3.5.4 do not prove matching lifecycle coverage. Task 1 must prove an exact-stage pre-materialization boundary, not equate a preparation hook with that boundary.
+Read-only inspection of pinned Spark 3.5.6 bytecode found that exchange-child stage optimization and columnar/codegen hooks run before construction of the QueryStageExec; final materialize is called directly by private adaptive execution code. Matching hook signatures in 3.5.4 do not prove matching lifecycle coverage. Task 1 must prove exact invoking-stage authorization before substantive materialization or payload work, not equate a preparation hook with that boundary. Independent review clarified that entering the stock materialize method (which initially logs/delegates) is not itself payload execution. A test-only internal guard may be investigated, but it must distinguish copied stages sharing an exchange and cover early preparation/cancellation before any product gate changes.
 
 Task 1 determines the precise stock hooks and stage guard arrangement from installed evidence; its reviewed hook map freezes that seam for Tasks 2–4. Do not treat a planning-time method name as proof that a Spark hook observes materialization. A required boundary unavailable without a fork/authority relaxation is a failed feasibility gate, not permission to weaken the design.
 
