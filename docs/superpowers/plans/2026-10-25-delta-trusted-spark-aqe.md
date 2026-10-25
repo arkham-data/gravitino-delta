@@ -27,7 +27,7 @@
 
 **Spec:** [Approved design](../specs/2026-10-25-delta-trusted-spark-aqe-design.md). Read it before this plan.
 
-**Status:** Design approved by the user's “Proceed” after `f57759621`. Plan ready for review; implementation unstarted. This supersedes the [exact-stage plan](2026-10-25-delta-governed-aqe.md); its failed probes remain historical evidence.
+**Status:** Design approved by the user's “Proceed” after `f57759621`. Plan approved by the user’s “Yes”; Task 1 starting. This supersedes the [exact-stage plan](2026-10-25-delta-governed-aqe.md); its failed probes remain historical evidence.
 
 ## Global Constraints
 
@@ -212,4 +212,4 @@ Coverage: ordinary read/startup/action timing and captured callbacks → Task 1;
 
 The real action boundary must be demonstrated by Task 1; no plan text assumes that a columnar hook alone runs before adaptive work. Failure to preserve a required semantic is a concrete blocker to report, not permission to silently weaken it. The old exact-stage requirement is withdrawn and must not be reopened as a prerequisite.
 
-Implementation method remains subagent-driven, one task and fresh review at a time. Review this replacement plan before implementation; after approval, proceed through these task gates without repeated direction questions. No additional operation or catalog-demo integration is authorized by this plan.
+Implementation method remains subagent-driven, one task and fresh review at a time. The user approved this replacement plan. Proceed through these task gates without repeated direction questions. No additional operation or catalog-demo integration is authorized by this plan.
