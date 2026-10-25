@@ -62,6 +62,12 @@ qualify Delta CDF/MERGE target-policy semantics. The wrapper test uses native-se
 tables, stock HadoopCatalog selected through the custom-backend option, and disabled
 Gravitino metadata authorization. It is not grants-to-Ranger propagation proof.
 
+The user agreed to reconsider the physical-stage contract after this baseline.
+The [revised design proposal](superpowers/specs/2026-10-25-delta-trusted-spark-aqe-design.md)
+retains Delta semantic integration and defines authorization at action/command
+boundaries with trusted stock physical execution. Its detailed timing and profile
+are awaiting approval; existing Delta support and rejection remain unchanged.
+
 ## Recommendation
 
 Qualify **real governed AQE in bounded stages**, then the ordinary read operations

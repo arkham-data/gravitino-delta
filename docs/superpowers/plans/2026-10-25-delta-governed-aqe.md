@@ -46,6 +46,12 @@ revised design, not completion of this plan's existing Task 1 ownership contract
 Independent review approved the bounded baseline evidence; Tasks 2–5 remain
 unstarted under the existing ownership design.
 
+A [revised trusted-Spark design](../specs/2026-10-25-delta-trusted-spark-aqe-design.md)
+now proposes replacing this contract. The user agreed to the direction after the
+Iceberg baseline; its detailed authorization timing and stock-AQE profile await
+approval. Do not execute the remaining tasks of this exact-stage plan as though
+the revision were already approved.
+
 ## Global Constraints
 
 - Keep Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2, Ranger 2.8.0, Java 17, Scala 2.12.21 and S3-compatible storage (MinIO locally).
