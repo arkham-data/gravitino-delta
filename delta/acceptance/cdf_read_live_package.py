@@ -56,6 +56,14 @@ def python_sources(source):
     return {p:d for p,d in source.items() if p.startswith(MODULE+'python/gravitino_delta/') and p.endswith('.py')}
 
 
+def select_python_archive(directory):
+    """Reject stale-output ambiguity instead of trusting glob enumeration order."""
+    archives=sorted(Path(directory).glob('gravitino-delta-python-*.zip'))
+    assert archives, 'Missing Python archive'
+    assert len(archives)==1, 'Ambiguous Python archives; clean stale distributions before packaging'
+    return archives[0]
+
+
 def verify_python_package(runtime):
     """Reject changed archives, extra/missing members and wrong source/member bindings."""
     assert runtime['pythonApiVersion']==1
@@ -159,8 +167,9 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
         assert matches==[digest],'Thin JAR class does not match exactly one compiled output'
         thin_compiled[name]=digest
     save(output/'compiled-classes.json',compiled)
-    python_zip=output/next((ROOT/MODULE/'build/distributions').glob('gravitino-delta-python-*.zip')).name
-    shutil.copyfile(ROOT/MODULE/'build/distributions'/python_zip.name,python_zip)
+    built_python=select_python_archive(ROOT/MODULE/'build/distributions')
+    python_zip=output/built_python.name
+    shutil.copyfile(built_python,python_zip)
     artifacts={str(p):sha(p) for p in [changed,built_app,python_zip,output/'compiled-classes.json']}
     if application=='merge':
         build_inputs=output/'app/cdf-merge-build-inputs.json'

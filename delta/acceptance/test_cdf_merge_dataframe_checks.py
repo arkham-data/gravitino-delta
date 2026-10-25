@@ -29,6 +29,22 @@ from cdf_merge_live import steps
 
 
 class TestDataframePackage(unittest.TestCase):
+    def test_rejects_ambiguous_requested_and_stale_python_archives(self):
+        # A stale archive must never win by directory enumeration order.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requested = root / 'gravitino-delta-python-2.0.0-SNAPSHOT.zip'
+            requested.write_bytes(b'requested')
+            self.assertEqual(requested, package.select_python_archive(root))
+            stale = root / 'gravitino-delta-python-1.0.0.zip'
+            stale.write_bytes(b'stale')
+            with self.assertRaisesRegex(AssertionError, 'Ambiguous Python archives'):
+                package.select_python_archive(root)
+            requested.unlink()
+            stale.unlink()
+            with self.assertRaisesRegex(AssertionError, 'Missing Python archive'):
+                package.select_python_archive(root)
+
     def fixture(self, directory):
         path = Path(directory) / "gravitino-delta-python-test.zip"
         bodies = {"gravitino_delta/__init__.py": b"export", "gravitino_delta/tables.py": b"facade"}
@@ -96,6 +112,31 @@ class TestDataframeFrontend(unittest.TestCase):
 
 
 class TestDataframeOriginalEvidence(unittest.TestCase):
+    def test_rejects_forged_final_bounds_denial_bags_jars_and_missing_exits(self):
+        from test_cdf_merge_partitioned_checks import partition_fixture
+        from cdf_merge_live_checks import verify_result
+        def change(ref, mutate):
+            document = json.loads(Path(ref['path']).read_text())
+            mutate(document)
+            Path(ref['path']).write_text(json.dumps(document))
+            ref['sha256'] = package.sha(ref['path'])
+        mutations = {
+            'source request bound': lambda r: change(r['provenance']['apps']['python']['request'], lambda v: v['steps'][0]['operation'].update(start=0)),
+            'successful denial with commit': lambda r: r['stages']['modifyDenied'].update(outcome='success', errors=[], after=dict(r['stages']['modifyDenied']['after'], version=2)),
+            'changed partition bag': lambda r: r['stages']['same']['after']['actions'][1]['remove']['partitionValues'].update(part='forged'),
+            'changed CDF multiplicity': lambda r: r['stages']['same']['cdc'].append(r['stages']['same']['cdc'][0]),
+            'missing Python exit': lambda r: r['provenance']['apps']['python'].pop('exit'),
+            'missing native exit': lambda r: r['provenance'].pop('nativeExit'),
+            'wrong JVM provider bytes': lambda r: Path(json.loads(Path(r['provenance']['runtime']['path']).read_text())['changedRuntime']).write_bytes(b'wrong JAR'),
+            'wrong requested JVM version': lambda r: change(r['provenance']['runtime'], lambda v: v.update(delta='3.3.2')),
+        }
+        verify_result(partition_fixture(frontend='dataframe'))
+        for name, mutate in mutations.items():
+            value = partition_fixture(frontend='dataframe')
+            mutate(value)
+            with self.subTest(name=name), self.assertRaises((AssertionError, KeyError, ValueError)):
+                verify_result(value)
+
     def test_requires_original_dataframe_command_frontend_and_zip(self):
         from test_cdf_merge_partitioned_checks import partition_fixture
         from cdf_merge_live_checks import verify_result

@@ -51,14 +51,97 @@ No source-row collection or Python reconstruction feeds the MERGE. The returned
 command metrics may be collected. Stock `DeltaTable.forName` and Spark Connect
 remain separate compatibility work.
 
-The companion `gravitino_delta.GravitinoDeltaTable` Python API is now implemented
-and packaged as a zip for `spark-submit --py-files`. Its actual DataFrame frontend
-passed five partitioned Ranger 2.8.0/MinIO phases on Spark 3.5.4/Delta 3.3.0,
-including strings, bound Columns, permission denials and same-table writeback.
-Installed API policy/lifecycle qualification also passed on Spark 3.5.4 with both
-Delta pins: 37 cases per pin, including exact policy demands, partition moves,
-revocation, native retries and commit reconciliation. The final packaged Python
-four-pair matrix remains pending, so this is narrower than the SQL matrix below. See the [API design](superpowers/specs/2026-10-25-delta-dataframe-merge-design.md)
+## Named DataFrame API
+
+The companion `gravitino_delta.GravitinoDeltaTable` uses the installed classic
+Spark session and its JVM Ranger runtime. Build the matching facade with
+`./gradlew :spark-connector:spark-delta-ranger-3.5:deltaPythonZip`, then pass
+`spark-connector/v3.5/spark-delta-ranger/build/distributions/gravitino-delta-python-2.0.0-SNAPSHOT.zip`
+to `spark-submit --py-files`. The matching Ranger runtime bundle and configured
+catalog/extensions must already be installed; the facade neither installs them
+nor changes Spark settings. Keep zip/JAR source and API version bindings together.
+
+```python
+from gravitino_delta import GravitinoDeltaTable
+from pyspark.sql import functions as F
+
+# Configure transaction identity and AQE=false in the application before handles.
+source = (spark.read.format("delta")
+    .option("readChangeFeed", "true")
+    .option("startingVersion", 12).option("endingVersion", 15)
+    .table("lake.db.source")
+    .filter("_change_type <> 'update_preimage'").alias("s"))
+target = GravitinoDeltaTable.forName(spark, "lake.db.target").alias("t")
+(target.merge(source, F.col("t.id") == source["id"])
+    .whenMatchedDelete(source["_change_type"] == F.lit("delete"))
+    .whenMatchedUpdate(set={"secret": source["secret"], "region": "s.region"})
+    .whenNotMatchedInsert("s._change_type <> 'delete'",
+        values={"id": source["id"], "secret": "s.secret", "region": source["region"]})
+    .execute())
+# Only now durably advance this consumer's separately stored checkpoint to 15.
+```
+
+Predicates and assignment values accept SQL expression strings or classic Columns,
+including mixed maps. `whenMatchedUpdate(condition=None, set=...)` and
+`whenNotMatchedInsert(condition=None, values=...)` require nonempty mappings from
+string keys to expressions. `whenMatchedDelete`, `whenMatchedUpdateAll` and
+`whenNotMatchedInsertAll` accept an optional condition. `None` selects the
+unconditional overload. Clauses retain authored order and native Delta ordering,
+ambiguity and missing-column validation. String expressions use the owning
+session's parser; quoted/backtick identifiers and literals keep Spark semantics.
+A bound source Column must belong to this exact source occurrence; target Columns
+use unresolved qualified references such as `F.col("t.secret")`.
+
+`execute()` blocks through publication/reconciliation and returns `None`; it does
+not return rows or metrics. Handles use one classic SparkSession and captured
+subject/settings. Set transaction identity before constructing either handle or
+source. Builders are single-use and not thread-safe; failed execution also seals
+them. An alias change cannot alter an existing builder. The named target resolves
+its current compatible registration at execute; the source retains its bounded
+registration/interval observations. Recovery requires fresh handles and source,
+current authorization and the existing known-commit protocol, never automatic
+wrapper replay.
+
+The source is exactly one fresh, bounded named Delta batch CDF read, with inclusive
+nonnegative integer starting/ending versions and fixed schema/partition metadata.
+Only Project/Filter/SubqueryAlias composition is admitted. The deterministic scalar
+expression whitelist is attributes, literals, aliases, casts, `=`, `<=>`, `>`, `>=`,
+`<`, `<=`, AND/OR/NOT, IS NULL/IS NOT NULL, IN, upper, lower, concat, coalesce and
+`+`, `-`, `*`, `/`. Native resolution and supported types/settings still apply;
+this whitelist does not qualify every type/function combination. Reject consumed,
+actioned, cached/checkpointed, foreign-session, streaming, unnamed and path sources.
+Joins, windows, aggregation, cache, UDFs/subqueries and other expressions are outside
+this MERGE source grammar. AQE remains disabled and is never toggled implicitly.
+
+Installed API tests cover unpartitioned and qualified partitioned targets. All four
+final packages passed five actual Python Ranger 2.8.0/MinIO phases each: distinct
+destination, column UPDATE/source SELECT/target MODIFY denials and same-table
+writeback. The successful phases use strings and bound Columns/mixed assignments.
+Original outer/Python/native exits are zero; strict checks cover native bags/actions,
+partition maps/files, checkpoint records and persisted registration after restart.
+Unpartitioned API coverage is installed coverage, not a live claim.
+
+| Spark | Delta | Installed methods | Final DataFrame live phases | Outer / Python / native exits |
+| --- | --- | --- | --- | --- |
+| 3.5.4 | 3.3.0 | 37 Task 1 + 37 Task 3 retained; 61 unique | 5 passed | 0 / 0 / 0 |
+| 3.5.4 | 3.3.2 | 37 Task 1 + 37 Task 3 retained; 61 unique | 5 passed | 0 / 0 / 0 |
+| 3.5.6 | 3.3.0 | 51 fresh | 5 passed | 0 / 0 / 0 |
+| 3.5.6 | 3.3.2 | 51 fresh | 5 passed | 0 / 0 / 0 |
+
+The final evidence index is
+`.superpowers/sdd/2026-10-25-delta-dataframe-merge/task-4/final-evidence-index.json`.
+Source-valid Spark 3.5.4 inheritance records exact unchanged production/test inputs
+and loaded dependencies, plus an unavailable historical common-JAR exception.
+The preserved base/current common comparison differs only in generated build-date
+metadata; full historical test-classpath byte equality is not claimed. Task 2 smoke,
+SQL qualification and failed attempts remain separate. Final independent SPEC/QUALITY review approved the milestone, committed locally.
+Later documentation status changes have separate hash/diff records and do not
+relabel the original frozen packages.
+Stock `DeltaTable.forName`, Spark Connect, streaming, NOT MATCHED BY SOURCE, schema
+evolution, feature-bearing profiles and separate-worker deployment remain outside
+this API milestone. Catalog-demo still needs its separate integration plan and an
+explicit AQE scope decision; API qualification does not establish full Delta
+compatibility. See the [API design](superpowers/specs/2026-10-25-delta-dataframe-merge-design.md)
 and [implementation status](superpowers/plans/2026-10-25-delta-dataframe-merge.md).
 
 This example is an explicit consumer program. It is not a generic replica:
@@ -98,7 +181,7 @@ qualification; see [the parity tracker](delta-spark-parity.md).
 
 ## Publication and application checkpoints
 
-Only advance the consumer checkpoint after the SQL command returns successfully,
+Only advance the consumer checkpoint after SQL or builder execution returns successfully,
 which includes native commit proof and registration reconciliation. Retain the
 source native UUID and requested inclusive end separately from masked row metadata.
 A successful empty interval may advance to its requested end. Denial, missing CDF

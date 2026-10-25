@@ -6,12 +6,12 @@ milestones are complete. The user approved the API design and implementation pla
 on 2026-10-25. JVM Task 1 is locally qualified on Spark 3.5.4 with both Delta pins. Python Task 2
 is implemented and live-qualified on Spark 3.5.4/Delta 3.3.0 with Ranger 2.8.0 and
 MinIO. Task 3 installed policy/lifecycle qualification passed 37 cases per Delta pin
-on Spark 3.5.4; the final four-pair matrix remains pending.
+on Spark 3.5.4; Task 4 final four-pair packaged qualification passed: five actual Python live phases per pair and fresh 51-case installed suites on both Spark 3.5.6 pins; unchanged Spark 3.5.4 evidence has explicit source-valid inheritance. Final independent SPEC/QUALITY review approved the milestone; the work is committed locally.
 
 The approved [DataFrame API design](../specs/2026-10-25-delta-dataframe-merge-design.md)
 defines strings and Columns, the shared SQL command path, Python packaging and
 qualification. The [implementation plan](2026-10-25-delta-dataframe-merge.md)
-supersedes the outline below for execution. Tasks 1–3 passed independent review. Task 4 (final four-pair qualification) is next.
+supersedes the outline below for execution. All four tasks are complete and passed independent integrated review. Supported install/use and exact grammar are documented in [governed MERGE](../../delta-cdf-merge.md#named-dataframe-api).
 
 ## Outcome and constraints
 

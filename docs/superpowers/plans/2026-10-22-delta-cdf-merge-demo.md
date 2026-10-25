@@ -10,7 +10,7 @@
 
 **Spec:** [CDF-to-MERGE design](../specs/2026-10-22-delta-cdf-merge-design.md).
 
-**Status:** On 2026-10-25 the user made the DataFrame API a critical prerequisite for this integration. This plan remains deferred until that API is implemented and qualified. It preserves former Task 6; artifact paths and the concrete overlay must be refreshed from the completed prerequisite milestones before activation. This priority update does not initiate catalog-demo edits or deployment.
+**Status:** On 2026-10-25 the user made the DataFrame API a critical prerequisite for this integration. This plan remains deferred; the bounded API final four-pair qualification is complete, independently approved and committed locally. Integration also requires a separate AQE scope decision because the demo enables AQE. It preserves former Task 6; artifact paths and the concrete overlay must be refreshed from the completed prerequisite milestones before activation. This priority update does not initiate catalog-demo edits or deployment.
 
 ## Prerequisites and constraints
 

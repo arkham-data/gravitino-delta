@@ -309,3 +309,32 @@ parity preserves native invalid-UTF8 binary loss, localFS binary-NUL failure and
 mismatched timestamp-zone shifts. See the [tracked plan](../../docs/superpowers/plans/2026-10-24-delta-partitioned-merge.md)
 and [bounded MERGE support](../../docs/delta-cdf-merge.md) for qualified cases and
 remaining protocol, SQL, worker and deployment boundaries.
+
+
+### Packaged DataFrame qualification
+
+Build each requested Spark/Delta pair with `cdf_read_live_package.py --app merge
+--base <verified-base-manifest> --out <fresh-package-directory> --spark <pin>
+--delta <pin>`. It binds the built facade zip, companion JAR, thin fixture app,
+source inventory and loaded providers. Ambiguous Python archives reject; clean
+stale distribution outputs before retrying. Preserve the original failed attempt.
+
+Run `cdf_merge_live.py --frontend dataframe --partitioned --runtime <new-manifest>
+--inputs <private-inputs> --out <fresh-run-directory>` for actual Python public API
+construction/execution under the application identity. Scala prepares/observes the
+fixture; it does not replace the Python application. Five phases cover distinct
+destination, column UPDATE/source SELECT/target MODIFY denials and same-table
+writeback. The successful phases exercise strings and bound Columns/mixed maps.
+Unpartitioned API coverage is installed-suite coverage, not a live claim.
+
+The strict checker reopens original outer/Python/native exits, requests, imported
+zip/module bytes, JAR/provider origins, native bags/actions, escaped/null partition
+maps, hidden rows, untouched files, checkpoint source/end and persisted registration
+across restart. SQL remains the default frontend and retains its own evidence.
+All four final pairs passed five phases each with original outer/Python/native
+exits zero. Spark 3.5.6 installed suites passed 51 cases per Delta pin; unchanged
+Spark 3.5.4 suites use explicit source-valid inheritance with the historical
+common-JAR metadata/archive exception. Original source/package/live evidence is
+indexed by `.superpowers/sdd/2026-10-25-delta-dataframe-merge/task-4/final-evidence-index.json`;
+final independent SPEC/QUALITY review approved the qualified scope and evidence.
+See [supported API and example](../../docs/delta-cdf-merge.md#named-dataframe-api).
