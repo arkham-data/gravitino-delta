@@ -118,6 +118,37 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     }
     override def toString: String = "Delta user collection evidence"
   }
+
+  /** Ordinary adaptive read: policy checks belong to the outer supported action only. */
+  final class TrustedReadTicket(
+      private val prepared: DeltaRangerNativeScans.Prepared,
+      private val spark: SparkSession,
+      private val recipe: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+  ) extends Ticket
+      with DeltaRangerCollectValidationContext {
+    private var installed = false
+    override def requireSession(session: SparkSession): Unit =
+      if (session ne spark) denied("read planning session changed")
+    // Stock adaptive stage trees are execution products, not authorization evidence.
+    override def verify(plan: SparkPlan): Unit = ()
+    override def validateCollection(plan: SparkPlan): Unit = {
+      DeltaRangerPhysicalPlanning.qualify(spark)
+      prepared.owner.beginRead(recipe)
+    }
+    override def validateExecution(plan: SparkPlan): Unit = {
+      if (prepared.owner.readContext.isEmpty) denied("read has no accepted action")
+    }
+    def finish(plan: SparkPlan): SparkPlan = synchronized {
+      if (installed) {
+        validateExecution(plan)
+        plan
+      } else {
+        installed = true
+        DeltaRangerCollectGuardExec(plan)(this)
+      }
+    }
+  }
+
   final class AppendTicket(private val spark: SparkSession) extends Ticket {
     override def requireSession(session: SparkSession): Unit =
       if (!(session eq spark)) denied("append planning session changed")
@@ -209,6 +240,13 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     }
     val inherited = nodes(plan).flatMap(_.getTagValue(tag).map(_.get)).distinct
     if (inherited.nonEmpty) {
+      if (inherited.size == 1 && inherited.head.isInstanceOf[TrustedReadTicket]) {
+        val read = inherited.head.asInstanceOf[TrustedReadTicket]
+        read.requireSession(spark)
+        read.validateExecution(plan)
+        nodes(plan).foreach(_.setTagValue(tag, new Reference(read)))
+        return plan
+      }
       if (inherited.size != 1 || !inherited.head.isInstanceOf[NativeTicket])
         denied("mixed native stage evidence")
       inherited.head.requireSession(spark)
@@ -225,10 +263,14 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       if (authorities.size != 1) denied("mixed user preparation evidence")
       val prepared = authorities.head
       prepared.owner.requireExecutable()
-      val logical = prepared.recoverExecutable(spark)
-      val witness = userWitness(logical, spark)
-      witness.verify(plan)
-      new UserTicket(witness, prepared, spark)
+      if (spark.sessionState.conf.adaptiveExecutionEnabled && !prepared.owner.appendInput) {
+        new TrustedReadTicket(prepared, spark, prepared.readRecipe(spark))
+      } else {
+        val logical = prepared.recoverExecutable(spark)
+        val witness = userWitness(logical, spark)
+        witness.verify(plan)
+        new UserTicket(witness, prepared, spark)
+      }
     } else if (natives.nonEmpty && users.isEmpty) {
       val authorities = natives.map(_._2).distinct
       if (authorities.size != 1) denied("mixed native planning evidence")
@@ -264,6 +306,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     ticket.requireSession(spark)
     ticket.verify(plan)
     ticket match {
+      case read: TrustedReadTicket => read.finish(plan)
       case user: UserTicket =>
         user.prepareInputs(plan)
         DeltaRangerCollectGuardExec(plan)(user)

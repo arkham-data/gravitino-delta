@@ -265,12 +265,12 @@ private[ranger] object DeltaRangerReadRule {
     DeltaRangerNativeProvenance.continueAtPreCbo(plan, spark).foreach { witness =>
       return DeltaRangerPhysicalPlanning.sealNative(plan, spark, witness)
     }
-    if (spark.sessionState.conf.adaptiveExecutionEnabled)
-      throw new SecurityException("Unsupported user AQE for Delta Ranger collection")
     val owner = DeltaRangerAppendHelper
       .source(plan, spark)
       .orElse(DeltaRangerAppendCoordinator.source(plan, spark))
       .getOrElse(DeltaRangerNativeScans.consume(plan, spark))
+    if (spark.sessionState.conf.adaptiveExecutionEnabled && owner.appendInput)
+      throw new SecurityException("Unsupported user AQE for Delta Ranger collection")
     owner.run { operation =>
       val prepared = new PrepareDeltaScan(spark) {
         override protected def prepareDeltaScanWithoutFileSkipping(

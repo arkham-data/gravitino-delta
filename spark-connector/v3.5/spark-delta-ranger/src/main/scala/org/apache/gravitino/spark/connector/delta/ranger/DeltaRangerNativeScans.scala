@@ -40,8 +40,31 @@ private[ranger] final class DeltaRangerNativeScans private (
     private val source: Option[DeltaRangerAppendCoordinator.Source] = None
 ) extends DeltaRangerNativeOperation.ScanOwner {
   val obligations = receipt.obligations
+  @volatile private var acceptedRead: Option[DeltaRangerExecutionContext.Context] = None
   private var frozen = false
   private val transitions = new java.util.IdentityHashMap[TahoeFileIndex, TahoeLogFileIndex]()
+
+  def owns(candidate: DeltaRangerDecisionReceipt): Boolean = receipt eq candidate
+
+  def beginRead(recipe: LogicalPlan): Unit = {
+    if (appendInput) throw new SecurityException("Append is not an ordinary read")
+    acceptedRead = Some(DeltaRangerExecutionContext.forRead(receipt, session, recipe))
+  }
+
+  def readContext: Option[DeltaRangerExecutionContext.Context] = acceptedRead
+
+  def acceptedReadIndex(index: FileIndex): Boolean = acceptedRead.exists { context =>
+    val belongs = context.logicalPlan().exists {
+      case relation: LogicalRelation =>
+        relation.relation match {
+          case fs: HadoopFsRelation => fs.location eq index
+          case _                    => false
+        }
+      case _ => false
+    }
+    if (!belongs) throw new SecurityException("Index is outside the accepted read recipe")
+    true
+  }
 
   def issued(index: TahoeFileIndex, original: TahoeLogFileIndex): Unit = {
     occurrences(original)
@@ -75,6 +98,12 @@ private[ranger] final class DeltaRangerNativeScans private (
     if (mapped.isEmpty) {
       if (emptyBinding.isEmpty)
         throw new SecurityException("Unqualified empty native preparation")
+    } else if (session.sessionState.conf.adaptiveExecutionEnabled && !appendInput) {
+      // The receipt was verified before stock optimization. Pruned occurrences keep their
+      // original action demands even when no physical scan survives for that occurrence.
+      val surviving = mapped.map(_.obligation)
+      if (!surviving.toSet.subsetOf(obligations.toSet) || surviving.distinct.size != mapped.size)
+        throw new SecurityException("Invalid surviving native occurrences")
     } else if (
       mapped.map(_.obligation).toSet != obligations.toSet || mapped.size != obligations.size
     )
@@ -96,7 +125,9 @@ private[ranger] final class DeltaRangerNativeScans private (
   }
   override def bindings(): java.util.List[DeltaRangerRegistrationBindings.BoundRegistrationScan] =
     obligations.map(_.binding).asJava
-  override def requireLive(): Unit = {
+  override def usesCapturedRead(): Boolean = acceptedRead.nonEmpty
+
+  override def requireLive(): Unit = if (!usesCapturedRead()) {
     source.foreach(_.requireLive())
     obligations.foreach(_.binding.requireLive())
   }
@@ -239,6 +270,20 @@ private[ranger] object DeltaRangerNativeScans {
     def recoverExecutable(session: SparkSession): LogicalPlan =
       executable.replay(session, plan => verify(plan, session))
 
+    def readRecipe(session: SparkSession): LogicalPlan = {
+      val recipe = recoverExecutable(session)
+      DeltaRangerNativeScans.attach(recipe, this)
+      recipe
+    }
+
+    def verifyReadRecipe(recipe: LogicalPlan, session: SparkSession): Unit = {
+      if (
+        DeltaRangerNativeProvenance.binding(recipe) !=
+          DeltaRangerNativeProvenance.binding(recoverExecutable(session))
+      )
+        throw new SecurityException("Read recipe changed")
+    }
+
     def verifyExecutable(plan: LogicalPlan, session: SparkSession): LogicalPlan = {
       verify(plan, session)
       executable.verify(plan, session)
@@ -349,6 +394,10 @@ private[ranger] object DeltaRangerPreparedIndex {
         !preparation.succeeded() || occurrences != owner.occurrences(original)
       )
         throw new SecurityException("Native prepared continuation does not bind this index")
+      // A changed stock filter may make Delta reselect files through native metadata queries.
+      // Preserve that typed native scope, while its owner uses the accepted recipe instead of
+      // mutable caller/engine checks after the outer action has accepted this read.
+      owner.acceptedReadIndex(index)
       preparation.requireEvidence(owner.session)
       owner.invoke(index, partitions, data) { operation =>
         operation.captureRetained(original, scan.scannedSnapshot, preparation)
@@ -440,6 +489,7 @@ private[ranger] object DeltaRangerLogIndex {
         !(index.deltaLog eq original.deltaLog)
       )
         throw new SecurityException("Native log continuation does not bind this index")
+      owner.acceptedReadIndex(index)
       preparation.requireEvidence(owner.session)
       val active = DeltaRangerNativeOperation.current()
       if (active != null) {

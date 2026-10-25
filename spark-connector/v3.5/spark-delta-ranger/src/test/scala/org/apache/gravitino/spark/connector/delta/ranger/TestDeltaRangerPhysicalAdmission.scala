@@ -895,14 +895,12 @@ class TestDeltaRangerPhysicalAdmission {
       spark.listenerManager.register(listener)
       try {
         Seq("a", "b").foreach { catalog =>
-          val denied = assertThrows(
-            classOf[SecurityException],
-            () => {
-              spark.sql(s"SELECT secret FROM $catalog.db.t").queryExecution.optimizedPlan
-              ()
-            }
+          val optimized =
+            spark.sql(s"SELECT secret FROM $catalog.db.t").queryExecution.optimizedPlan
+          assertEquals(
+            Set(catalog),
+            DeltaRangerNativeScans.prepared(optimized).owner.obligations.map(_.scan.catalog).toSet
           )
-          assertTrue(denied.getMessage.contains("Unsupported user AQE"), denied.getMessage)
         }
         assertTrue(
           completed.await(10, TimeUnit.SECONDS),
@@ -992,17 +990,12 @@ class TestDeltaRangerPhysicalAdmission {
   }
 
   @Test
-  def enabledNativeAqeSurvivesBeforeSpecificUserAqeDenial(): Unit =
+  def enabledAqeAdmitsFreshReadWithoutMutatingConfiguration(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
       spark.conf.set("spark.sql.adaptive.enabled", "true")
-      val failure = assertThrows(
-        classOf[SecurityException],
-        () => {
-          spark.sql("SELECT secret FROM a.db.t").queryExecution.optimizedPlan
-          ()
-        }
-      )
-      assertTrue(failure.getMessage.contains("Unsupported user AQE"), failure.getMessage)
+      val frame = spark.sql("SELECT secret FROM a.db.t WHERE id=1")
+      assertEquals(Vector(Row("a-one-masked")), frame.collect().toVector)
+      assertTrue(frame.queryExecution.executedPlan.isInstanceOf[DeltaRangerCollectGuardExec])
       assertEquals("true", spark.conf.get("spark.sql.adaptive.enabled"))
     }
 

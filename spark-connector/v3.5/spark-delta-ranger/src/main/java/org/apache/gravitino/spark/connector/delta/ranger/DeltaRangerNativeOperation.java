@@ -86,6 +86,15 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
 
     void requireLive();
 
+    /**
+     * Whether this ordinary read already accepted its immutable action context.
+     *
+     * @return true only for callbacks belonging to an accepted ordinary read
+     */
+    default boolean usesCapturedRead() {
+      return false;
+    }
+
     /** Freezes the exact cached getter return for later scan continuation comparisons. */
     default Predicate<LogicalRDD> freezeCache(LogicalRDD actual) {
       throw denied();
@@ -636,7 +645,9 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       retainedOwner.requireRetained();
     } else if (scanOwner != null) {
       scanOwner.requireLive();
-      scanOwner.bindings().forEach(BoundRegistrationScan::requireLive);
+      if (!scanOwner.usesCapturedRead()) {
+        scanOwner.bindings().forEach(BoundRegistrationScan::requireLive);
+      }
     } else {
       Objects.requireNonNull(loadOwner).requireLive();
       Objects.requireNonNull(reader).requireLive(Objects.requireNonNull(before));
