@@ -217,6 +217,7 @@ private[ranger] final case class DeltaRangerMergeCommand private (
           )
           sourceAttempt.returned(getMergeSource.df.queryExecution.analyzed, materializedSourceRDD)
         }
+        owned.requireTransaction(transaction)
         nativePhase = new DeltaRangerMergeNative(
           owned,
           transaction,
@@ -243,6 +244,7 @@ private[ranger] final case class DeltaRangerMergeCommand private (
           )
         )
           DeltaRangerMergeCommand.denied("unsupported native rewrite branch")
+        owned.requireTransaction(transaction)
         writePhase = new DeltaRangerMergeWrite(
           owned,
           transaction,

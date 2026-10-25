@@ -149,7 +149,8 @@ class TestDeltaRangerInstalledMerge {
       test: (SparkSession, RangerBasePlugin) => Unit,
       aliasTarget: Boolean = false,
       rowTracking: Boolean = false,
-      prepareTarget: SparkSession => Unit = _ => ()
+      prepareTarget: SparkSession => Unit = _ => (),
+      startupOptions: Map[String, String] = Map.empty
   ): Unit = {
     val transport = new TestDeltaRangerNativeSelect.Fixture
     val nativePlugin = new RangerBasePlugin(transport.plugin.getConfig)
@@ -198,6 +199,7 @@ class TestDeltaRangerInstalledMerge {
           test(spark, nativePlugin)
         },
         Some(NativeSelectFixture.extension(transport)),
+        startupOptions = startupOptions,
         beforeExtension = spark => {
           setup(spark)
           prepareTarget(spark)

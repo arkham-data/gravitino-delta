@@ -50,6 +50,13 @@ private[ranger] object DeltaRangerMergeSource {
     private val thread = Thread.currentThread()
     private val structure = new DeltaRangerMetadataStructure("Delta MERGE checkpoint rejected: ")
     import structure.{field, lambda}
+    private val adaptive = spark.sessionState.conf.adaptiveExecutionEnabled
+    private lazy val recipe = receipt.cdf.mergeRecipe(receipt.materializedColumns)
+    private var accepted: DeltaRangerExecutionContext.Context = null
+    def requireRecipe(candidate: LogicalPlan): Unit = {
+      requireConstructing()
+      if (candidate ne recipe) denied("foreign source recipe")
+    }
     private val expected = Project(receipt.materializedColumns, receipt.cdf.carrier)
     private var closed = false
     private var entered = false
@@ -79,8 +86,17 @@ private[ranger] object DeltaRangerMergeSource {
       if (entered || active.get() != null) denied("repeated native materialization")
       entered = true
       active.set(this)
-      try { body; validate() }
-      finally active.remove()
+      try {
+        if (adaptive)
+          accepted = DeltaRangerExecutionContext.forMerge(
+            receipt,
+            this,
+            DeltaRangerExecutionContext.Source,
+            recipe
+          )
+        if (adaptive) receipt.cdf.acceptMerge(accepted)
+        body; validate()
+      } finally active.remove()
     }
     private def projection(plan: LogicalPlan): Boolean = plan match {
       case Project(columns, child) =>
@@ -156,6 +172,10 @@ private[ranger] object DeltaRangerMergeSource {
     def plan(candidate: Carrier): SparkPlan = {
       check(candidate)
       if (root != null) denied("source projection planned twice")
+      if (adaptive) {
+        root = SourceExec(DeltaRangerPhysicalPlanning.captured(spark, accepted))(this)
+        return root
+      }
       val cdf = receipt.cdf.plan(receipt.cdf.carrier)
       // Issue the final recipe without an exact identity projection. Spark removes that
       // projection during physical preparation; freezing it would reject the native successor.
@@ -176,6 +196,10 @@ private[ranger] object DeltaRangerMergeSource {
     }
     def verify(candidate: SourceExec): Unit = {
       requireConstructing()
+      if (adaptive) {
+        if ((candidate ne root) || accepted == null) denied("foreign source execution")
+        accepted.logicalPlan(); return
+      }
       if (
         (candidate ne root) || physical == null ||
         DeltaRangerPhysicalProvenance.binding(candidate.child) != physical
@@ -184,19 +208,19 @@ private[ranger] object DeltaRangerMergeSource {
     def before(candidate: SourceExec): Unit = {
       verify(candidate)
       if (prepared || installed) denied("source preparation repeated")
-      receipt.cdf.beforeTransitions(producer(candidate.child))
+      if (!adaptive) receipt.cdf.beforeTransitions(producer(candidate.child))
       prepared = true
     }
     def after(candidate: SourceExec): Unit = {
       verify(candidate)
       if (!prepared || installed) denied("source installation repeated")
-      receipt.cdf.afterTransitions(producer(candidate.child))
+      if (!adaptive) receipt.cdf.afterTransitions(producer(candidate.child))
       installed = true
     }
     def replace(previous: SourceExec, child: SparkPlan): SourceExec = {
       verify(previous)
       if (child eq previous.child) return previous
-      if (started || DeltaRangerPhysicalProvenance.binding(child) != physical)
+      if (started || (!adaptive && DeltaRangerPhysicalProvenance.binding(child) != physical))
         denied("changed source transition")
       root = SourceExec(child)(this)
       root

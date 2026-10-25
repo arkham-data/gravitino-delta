@@ -44,7 +44,6 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   import DeltaRangerMergeCommand.denied
   if (
     original.withSchemaEvolution || original.notMatchedBySourceClauses.nonEmpty ||
-    spark.sessionState.conf.adaptiveExecutionEnabled ||
     spark.conf.get("spark.databricks.delta.schema.autoMerge.enabled", "false").toBoolean
   )
     denied("unsupported merge profile")

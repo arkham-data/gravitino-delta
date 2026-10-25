@@ -41,6 +41,37 @@ private[ranger] object DeltaRangerExecutionContext {
     new ReadContext(recipe.clone())
   }
 
+  sealed trait MergePhase
+  case object Source extends MergePhase
+  case object TouchedFiles extends MergePhase
+  case object Write extends MergePhase
+
+  def forCdf(
+      receipt: DeltaRangerCdfReadReceipt,
+      spark: SparkSession,
+      recipe: LogicalPlan
+  ): Context = {
+    receipt.requireRecipe(recipe)
+    receipt.validateAction(spark)
+    new ReadContext(recipe.clone())
+  }
+
+  def forMerge(
+      receipt: DeltaRangerMergeReceipt,
+      attempt: DeltaRangerMergeSource.Attempt,
+      phase: MergePhase,
+      recipe: LogicalPlan
+  ): Context = {
+    receipt.requireSourceAttempt(attempt)
+    phase match {
+      case Source       => attempt.requireRecipe(recipe)
+      case TouchedFiles => DeltaRangerMergeNative.requireRecipe(attempt, recipe)
+      case Write        => DeltaRangerMergeWrite.requireRecipe(attempt, recipe)
+    }
+    receipt.validate()
+    new ReadContext(recipe.clone())
+  }
+
   private final class ReadContext(private val recipe: LogicalPlan) extends Context {
     override def logicalPlan(): LogicalPlan = recipe.clone()
   }

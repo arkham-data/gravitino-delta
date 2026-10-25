@@ -243,7 +243,6 @@ private[ranger] object DeltaRangerCdfRead {
     DeltaRangerCdfReadScans.normalize(plan, spark).foreach(result => return result)
     pending(plan, spark)
       .map { source =>
-        if (spark.sessionState.conf.adaptiveExecutionEnabled) denied("CDF AQE is not qualified")
         if (spark.sharedState.cacheManager.lookupCachedData(plan).nonEmpty)
           denied("CDF cache substitution")
         DeltaRangerPhysicalPlanning.qualify(spark)

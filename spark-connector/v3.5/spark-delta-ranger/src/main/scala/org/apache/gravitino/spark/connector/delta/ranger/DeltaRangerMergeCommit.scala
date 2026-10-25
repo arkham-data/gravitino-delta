@@ -135,6 +135,7 @@ private[ranger] final class DeltaRangerMergeCommit(
     try {
       operation = DeltaRangerNativeOperation.commit(this)
       intent.requireArguments(actions, nativeOperation, tags)
+      requireLive()
       invoked = true
       val result = transaction.commitIfNeeded(actions, nativeOperation, tags = tags)
       nativeResult = Some(result)

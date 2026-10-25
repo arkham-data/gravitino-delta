@@ -69,6 +69,13 @@ private[ranger] final class DeltaRangerMergeWrite(
     val deduplicate: DeduplicateCDFDeletes
 ) extends DeltaRangerCdfReadScans.MatchOwner {
   import DeltaRangerMergeCommand.denied
+  private val adaptive = receipt.spark.sessionState.conf.adaptiveExecutionEnabled
+  private var accepted: DeltaRangerExecutionContext.Context = null
+  private var acceptedRecipe: LogicalPlan = null
+  def requireRecipe(attempt: DeltaRangerMergeSource.Attempt, recipe: LogicalPlan): Unit = {
+    requireLive()
+    if ((attempt ne source) || (recipe ne acceptedRecipe)) denied("foreign native phase recipe")
+  }
   private val thread = Thread.currentThread()
   private val structure = new DeltaRangerMetadataStructure("Delta MERGE write recipe rejected: ")
   private val joinType = if (matchedOnly) RightOuter else FullOuter
@@ -108,7 +115,8 @@ private[ranger] final class DeltaRangerMergeWrite(
       closed || (Thread.currentThread() ne thread) ||
       (DeltaRangerMergeWrite.active.get() ne this)
     ) denied("expired write phase")
-    receipt.requireRetainedTransaction(transaction)
+    if (accepted == null) receipt.requireRetainedTransaction(transaction)
+    else accepted.logicalPlan()
     if (!source.ownsRetained(sourcePlan)) denied("changed write checkpoint")
     if (index != null && index.addFiles.map(_.json).toVector != manifest)
       denied("changed native rewrite manifest")
@@ -427,9 +435,21 @@ private[ranger] final class DeltaRangerMergeWrite(
         }
       }
     if (replacements != 1) denied("writer target coverage changed")
-    // The owned writer bypasses the general optimizer. Lower only the native CDC delete
-    // deduplication with Spark's own rule before planning; never copy its row algorithm.
+    // Lower native CDC delete deduplication with Spark's rule. The captured route also uses
+    // the stock logical optimizer and adaptive preparations; the legacy route keeps its seal.
     val executable = if (deduplicate.enabled) ReplaceDeduplicateWithAggregate(logical) else logical
+    if (adaptive) {
+      acceptedRecipe = executable
+      accepted = DeltaRangerExecutionContext.forMerge(
+        receipt,
+        source,
+        DeltaRangerExecutionContext.Write,
+        acceptedRecipe
+      )
+      val child = DeltaRangerPhysicalPlanning.captured(receipt.spark, accepted)
+      writerRoot = DeltaRangerMergeWrite.Exec(child)(this)
+      return writerRoot
+    }
     val child = DeltaRangerPhysicalPlanning.lower(receipt.spark, executable)
     physicalBinding = DeltaRangerPhysicalProvenance.binding(child)
     physicalShapes += shape(child)
@@ -438,11 +458,15 @@ private[ranger] final class DeltaRangerMergeWrite(
         .ApplyColumnarRulesAndInsertTransitions(Nil, outputsColumnar = false)(child.clone())
     )
     physicalShapes += shape(DeltaRangerPhysicalPlanning.tail(receipt.spark, executable, child))
-    prepareScans(child)
+    if (!adaptive) prepareScans(child)
     writerRoot = DeltaRangerMergeWrite.Exec(child)(this)
     writerRoot
   }
   def verify(candidate: DeltaRangerMergeWrite.Exec): Unit = {
+    if (adaptive && accepted != null) {
+      if (closed) denied("expired native phase execution")
+      accepted.logicalPlan(); return
+    }
     check(writerCarrier)
     if (
       (candidate ne writerRoot) || physicalBinding == null || !physicalShapes(
@@ -459,18 +483,19 @@ private[ranger] final class DeltaRangerMergeWrite(
     verify(previous)
     if (previous.child eq child) return previous
     if (
-      started || !physicalShapes(shape(child)) || DeltaRangerPhysicalProvenance.binding(
-        child
-      ) != physicalBinding
+      started || (!adaptive && (!physicalShapes(shape(child)) || DeltaRangerPhysicalProvenance
+        .binding(
+          child
+        ) != physicalBinding))
     )
       denied("writer transition changed")
-    prepareScans(child)
+    if (!adaptive) prepareScans(child)
     writerRoot = DeltaRangerMergeWrite.Exec(child)(this)
     writerRoot
   }
   def execute(candidate: DeltaRangerMergeWrite.Exec): org.apache.spark.rdd.RDD[InternalRow] = {
     verify(candidate)
-    receipt.requireTransaction(transaction)
+    if (!adaptive) receipt.requireTransaction(transaction)
     prepareScans(candidate.child)
     started = true
     val result = candidate.child.execute()
@@ -495,6 +520,19 @@ private[ranger] final class DeltaRangerMergeWrite(
       partitions: Seq[Expression],
       data: Seq[Expression]
   ): Seq[AddFile] = {
+    if (accepted != null) {
+      if (closed || (candidate ne wrappedIndex) || index.addFiles.map(_.json).toVector != manifest)
+        denied("expired captured writer manifest")
+      return DeltaRangerCdfReadScans.capturedMatching(
+        accepted,
+        receipt.target,
+        candidate,
+        index,
+        files.toVector,
+        partitions,
+        receipt.spark
+      ) { index.matchingFiles(partitions, data) }
+    }
     requireLive()
     if (!writing || (candidate ne wrappedIndex) || matching != null)
       denied("foreign writer manifest")
@@ -512,6 +550,11 @@ private[ranger] final class DeltaRangerMergeWrite(
   def close(): Unit = { closed = true; DeltaRangerMergeWrite.active.remove() }
 }
 private[ranger] object DeltaRangerMergeWrite {
+  def requireRecipe(attempt: DeltaRangerMergeSource.Attempt, recipe: LogicalPlan): Unit =
+    Option(active.get())
+      .getOrElse(DeltaRangerMergeCommand.denied("inactive native phase"))
+      .requireRecipe(attempt, recipe)
+
   private final case class ConstraintRecipe(expression: Expression) extends LeafNode {
     override def output: Seq[Attribute] = Nil
   }

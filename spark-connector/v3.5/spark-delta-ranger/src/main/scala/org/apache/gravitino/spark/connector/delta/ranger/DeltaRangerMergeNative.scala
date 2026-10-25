@@ -56,6 +56,13 @@ private[ranger] final class DeltaRangerMergeNative(
 ) extends DeltaRangerNativeOperation.ScanOwner
     with DeltaRangerCdfReadScans.MatchOwner {
   import DeltaRangerMergeCommand.denied
+  private val adaptive = receipt.spark.sessionState.conf.adaptiveExecutionEnabled
+  private var accepted: DeltaRangerExecutionContext.Context = null
+  private var acceptedRecipe: LogicalPlan = null
+  def requireRecipe(attempt: DeltaRangerMergeSource.Attempt, recipe: LogicalPlan): Unit = {
+    requireLive()
+    if ((attempt ne source) || (recipe ne acceptedRecipe)) denied("foreign native phase recipe")
+  }
   private val thread = Thread.currentThread()
   if (DeltaRangerMergeNative.active.get() != null) denied("nested native selection")
   private val structure = new DeltaRangerMetadataStructure("Delta MERGE native helper rejected: ")
@@ -91,7 +98,8 @@ private[ranger] final class DeltaRangerMergeNative(
     if (
       closed || (Thread.currentThread() ne thread) || (DeltaRangerMergeNative.active.get() ne this)
     ) denied("expired native selection")
-    receipt.requireRetainedTransaction(transaction)
+    if (accepted == null) receipt.requireRetainedTransaction(transaction)
+    else accepted.logicalPlan()
   }
   def sourceMetric(expression: Expression): Unit = {
     requireLive()
@@ -268,6 +276,18 @@ private[ranger] final class DeltaRangerMergeNative(
         }
       }
     if (replacements != 1) denied("metric target coverage changed")
+    if (adaptive) {
+      acceptedRecipe = logical
+      accepted = DeltaRangerExecutionContext.forMerge(
+        receipt,
+        source,
+        DeltaRangerExecutionContext.TouchedFiles,
+        acceptedRecipe
+      )
+      val child = DeltaRangerPhysicalPlanning.captured(receipt.spark, accepted)
+      metricRoot = DeltaRangerMergeNative.Exec(child)(this)
+      return metricRoot
+    }
     val child = DeltaRangerPhysicalPlanning.lower(receipt.spark, logical)
     metricPhysical = DeltaRangerPhysicalProvenance.binding(child)
     metricShapes += shape(child)
@@ -280,6 +300,10 @@ private[ranger] final class DeltaRangerMergeNative(
     metricRoot
   }
   def verify(candidate: DeltaRangerMergeNative.Exec): Unit = {
+    if (adaptive && accepted != null) {
+      if (closed) denied("expired native phase execution")
+      accepted.logicalPlan(); return
+    }
     check(metricCarrier)
     if (
       (candidate ne metricRoot) || metricPhysical == null ||
@@ -295,8 +319,8 @@ private[ranger] final class DeltaRangerMergeNative(
     verify(previous)
     if (child eq previous.child) return previous
     if (
-      metricStarted || !metricShapes(shape(child)) ||
-      DeltaRangerPhysicalProvenance.binding(child) != metricPhysical
+      metricStarted || (!adaptive && (!metricShapes(shape(child)) ||
+        DeltaRangerPhysicalProvenance.binding(child) != metricPhysical))
     )
       denied("metric transition changed")
     metricRoot = DeltaRangerMergeNative.Exec(child)(this)
@@ -305,7 +329,7 @@ private[ranger] final class DeltaRangerMergeNative(
   def begin(candidate: DeltaRangerMergeNative.Exec): Unit = {
     verify(candidate)
     if (metricCollected) denied("metric action repeated")
-    receipt.requireTransaction(transaction)
+    if (!adaptive) receipt.requireTransaction(transaction)
     // Resolve lazy file-list metadata under the issuing driver before Spark starts broadcast
     // workers. This constructs executor RDDs; it does not collect target or source payload here.
     DeltaRangerPhysicalProvenance.nodes(candidate.child).foreach {
@@ -325,7 +349,7 @@ private[ranger] final class DeltaRangerMergeNative(
       rows.head.getLong(0) < 0 || rows.head.getLong(1) < 0
     )
       denied("invalid native metric result")
-    receipt.requireTransaction(transaction)
+    if (!adaptive) receipt.requireTransaction(transaction)
     metricCollected = true
   }
   override def requireHelper(candidate: DeltaRangerCdfReadScans.Match): Unit = {
@@ -337,6 +361,25 @@ private[ranger] final class DeltaRangerMergeNative(
       partitions: Seq[Expression],
       data: Seq[Expression]
   ): Seq[AddFile] = {
+    if (accepted != null) {
+      if (
+        closed || (index ne wrappedIndex) || targetIndex.addFiles
+          .map(_.json)
+          .toVector != targetFiles
+      )
+        denied("expired captured target manifest")
+      return DeltaRangerCdfReadScans.capturedMatching(
+        accepted,
+        receipt.target,
+        index,
+        targetIndex,
+        targetIndex.addFiles.toVector,
+        partitions,
+        receipt.spark
+      ) {
+        targetIndex.matchingFiles(partitions, data)
+      }
+    }
     requireLive()
     if (
       (index ne wrappedIndex) || matching != null ||
@@ -411,6 +454,11 @@ private[ranger] final class DeltaRangerMergeNative(
 }
 
 private[ranger] object DeltaRangerMergeNative {
+  def requireRecipe(attempt: DeltaRangerMergeSource.Attempt, recipe: LogicalPlan): Unit =
+    Option(active.get())
+      .getOrElse(DeltaRangerMergeCommand.denied("inactive native phase"))
+      .requireRecipe(attempt, recipe)
+
   final case class Carrier(override val output: Seq[Attribute])(
       @transient private val authority: DeltaRangerMergeNative
   ) extends LeafNode {

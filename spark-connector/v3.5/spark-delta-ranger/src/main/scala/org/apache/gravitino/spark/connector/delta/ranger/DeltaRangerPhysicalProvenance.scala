@@ -149,6 +149,23 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     }
   }
 
+  /** Captured native phase: the owner checks current authority before entering Spark. */
+  final class CapturedTicket(val context: DeltaRangerExecutionContext.Context, spark: SparkSession)
+      extends Ticket {
+    override def requireSession(session: SparkSession): Unit =
+      if (session ne spark) denied("captured planning session changed")
+    override def verify(plan: SparkPlan): Unit = { context.logicalPlan(); () }
+  }
+  private val capturedTag = TreeNodeTag[Reference]("gravitino.delta.ranger.captured-recipe")
+  def captureRecipe(
+      plan: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan,
+      context: DeltaRangerExecutionContext.Context,
+      spark: SparkSession
+  ): Unit = {
+    val reference = new Reference(new CapturedTicket(context, spark))
+    plan.foreach(_.setTagValue(capturedTag, reference))
+  }
+
   final class AppendTicket(private val spark: SparkSession) extends Ticket {
     override def requireSession(session: SparkSession): Unit =
       if (!(session eq spark)) denied("append planning session changed")
@@ -170,6 +187,10 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       private val raw: SparkPlan,
       private val native: DeltaRangerPhysicalPlanning.NativeWitness
   ) extends Ticket {
+    private var mergeBoundaryInstalled = false
+    def installMergeBoundary(): Boolean = synchronized {
+      if (mergeBoundaryInstalled) false else { mergeBoundaryInstalled = true; true }
+    }
     private val expectedBinding = binding(expected)
     private val rawBinding = binding(raw)
     private val subtrees = nodes(expected).map(binding).toSet
@@ -237,6 +258,19 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         guard.setTagValue(tag, new Reference(ticket))
         return guard
       case _ =>
+    }
+    val captured = nodes(plan)
+      .flatMap(node =>
+        node.getTagValue(tag).map(_.get).collect { case ticket: CapturedTicket => ticket }.toSeq ++
+          node.logicalLink.toSeq.flatMap(_.getTagValue(capturedTag).map(_.get))
+      )
+      .distinct
+    if (captured.nonEmpty) {
+      if (captured.size != 1) denied("mixed captured recipes")
+      captured.head.requireSession(spark)
+      captured.head.verify(plan)
+      nodes(plan).foreach(_.setTagValue(tag, new Reference(captured.head)))
+      return plan
     }
     val inherited = nodes(plan).flatMap(_.getTagValue(tag).map(_.get)).distinct
     if (inherited.nonEmpty) {
@@ -306,11 +340,16 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     ticket.requireSession(spark)
     ticket.verify(plan)
     ticket match {
+      case _: CapturedTicket       => plan
       case read: TrustedReadTicket => read.finish(plan)
       case user: UserTicket =>
         user.prepareInputs(plan)
         DeltaRangerCollectGuardExec(plan)(user)
       case native: NativeTicket =>
+        if (
+          spark.sessionState.conf.adaptiveExecutionEnabled &&
+          DeltaRangerMergeCommit.current.nonEmpty && !native.installMergeBoundary()
+        ) return plan
         DeltaRangerRawMetadata.current.foreach { metadata =>
           return DeltaRangerRawMetadataGuardExec(plan)(new RawMetadataContext(native, metadata))
         }

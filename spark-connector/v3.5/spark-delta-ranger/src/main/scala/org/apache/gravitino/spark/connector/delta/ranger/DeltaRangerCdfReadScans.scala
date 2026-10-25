@@ -48,6 +48,8 @@ private[ranger] final class DeltaRangerCdfReadScans private[ranger] (
 ) extends DeltaRangerNativeOperation.CdfReadOwner
     with DeltaRangerCdfReadScans.MatchOwner {
   import DeltaRangerCdfRead.denied
+  private var accepted: DeltaRangerExecutionContext.Context = null
+  def accept(context: DeltaRangerExecutionContext.Context): Unit = { accepted = context }
   private val settings = spark.sessionState.conf.getAllConfs
   private val thread = Thread.currentThread()
   private val stockEmptyClass =
@@ -323,12 +325,26 @@ private[ranger] final class DeltaRangerCdfReadScans private[ranger] (
   )(
       body: => Seq[org.apache.spark.sql.delta.actions.AddFile]
   ): Seq[org.apache.spark.sql.delta.actions.AddFile] = {
+    if (accepted != null) {
+      if (!indices.containsKey(index) || (wrappers.get(index) ne delegate))
+        denied("foreign captured CDF index")
+      return DeltaRangerCdfReadScans.capturedMatching(
+        accepted,
+        interval.binding.anchor(),
+        delegate,
+        index,
+        selected.get(index),
+        partitions,
+        spark
+      )(body)
+    }
     if (
       running || matching != null || !indices
         .containsKey(index) || (wrappers.get(index) ne delegate)
     )
       denied("foreign native file matching")
-    interval.binding.validateCurrent(spark)
+    if (accepted == null) interval.binding.validateCurrent(spark)
+    else accepted.logicalPlan()
     validateFiles()
     partitions.foreach(DeltaRangerPlanAdmission.expression)
     matching = index
@@ -398,6 +414,7 @@ private[ranger] final class DeltaRangerCdfReadScans private[ranger] (
   def execute(
       plan: SparkPlan
   ): org.apache.spark.rdd.RDD[org.apache.spark.sql.catalyst.InternalRow] = {
+    if (accepted != null) { accepted.logicalPlan(); return plan.execute() }
     verify(plan)
     if (executed == null) {
       executed = plan.execute()
@@ -407,6 +424,7 @@ private[ranger] final class DeltaRangerCdfReadScans private[ranger] (
     executed
   }
   def verify(plan: SparkPlan): Unit = {
+    if (accepted != null) { accepted.logicalPlan(); return }
     if (
       physicalBinding == null || physicalBinding != DeltaRangerPhysicalProvenance.binding(
         plan
@@ -427,6 +445,76 @@ private[ranger] final class DeltaRangerCdfReadScans private[ranger] (
 
 private[ranger] object DeltaRangerCdfReadScans {
 
+  /** One native metadata callback consumes its accepted recipe without refreshing policy. */
+  def capturedMatching(
+      context: DeltaRangerExecutionContext.Context,
+      binding: BoundRegistrationScan,
+      delegate: TahoeFileIndexWithSnapshotDescriptor,
+      index: TahoeFileIndexWithSnapshotDescriptor,
+      files: Vector[org.apache.spark.sql.delta.actions.AddFile],
+      partitions: Seq[org.apache.spark.sql.catalyst.expressions.Expression],
+      spark: SparkSession
+  )(
+      body: => Seq[org.apache.spark.sql.delta.actions.AddFile]
+  ): Seq[org.apache.spark.sql.delta.actions.AddFile] = {
+    val owns = context.logicalPlan().exists {
+      case relation: LogicalRelation =>
+        relation.relation match {
+          case fs: HadoopFsRelation => fs.location eq delegate
+          case _                    => false
+        }
+      case _ => false
+    }
+    if (!owns) DeltaRangerCdfRead.denied("index outside accepted phase recipe")
+    partitions.foreach(DeltaRangerPlanAdmission.expression)
+    new CapturedMatch(context, binding, index, files, partitions, spark).run(body)
+  }
+
+  private final class CapturedMatch(
+      context: DeltaRangerExecutionContext.Context,
+      binding: BoundRegistrationScan,
+      index: TahoeFileIndexWithSnapshotDescriptor,
+      files: Vector[org.apache.spark.sql.delta.actions.AddFile],
+      partitions: Seq[org.apache.spark.sql.catalyst.expressions.Expression],
+      spark: SparkSession
+  ) extends DeltaRangerNativeOperation.CdfReadOwner
+      with MatchOwner {
+    private val thread = Thread.currentThread()
+    private var closed = false
+    private val helper = new Match(this, index, files, partitions, spark)
+    override def session(): SparkSession = spark
+    override def bindings(): JList[BoundRegistrationScan] = Collections.singletonList(binding)
+    override def ownsHistoryFile(path: org.apache.hadoop.fs.Path): Boolean = false
+    override def usesCapturedCdf(): Boolean = true
+    override def requireLive(): Unit = {
+      if (closed || (Thread.currentThread() ne thread))
+        DeltaRangerCdfRead.denied("expired captured manifest callback")
+      context.logicalPlan()
+    }
+    override def requireHelper(candidate: Match): Unit = {
+      requireLive()
+      if (candidate ne helper) DeltaRangerCdfRead.denied("foreign captured manifest helper")
+    }
+    def analysis(plan: LogicalPlan): Boolean = { requireLive(); helper.analysis(plan) }
+    def normalize(plan: LogicalPlan): Option[LogicalPlan] = {
+      requireLive(); helper.normalize(plan)
+    }
+    def run(
+        body: => Seq[org.apache.spark.sql.delta.actions.AddFile]
+    ): Seq[org.apache.spark.sql.delta.actions.AddFile] = {
+      val operation = DeltaRangerNativeOperation.cdfRead(this)
+      try {
+        val result = body
+        helper.requireReturned(result)
+        operation.succeed()
+        result
+      } finally {
+        try operation.close()
+        finally closed = true
+      }
+    }
+  }
+
   trait MatchOwner {
     def requireHelper(candidate: Match): Unit
   }
@@ -441,7 +529,8 @@ private[ranger] object DeltaRangerCdfReadScans {
   ) {
     import DeltaRangerCdfRead.denied
     owner match {
-      case _: DeltaRangerCdfReadScans | _: DeltaRangerMergeNative | _: DeltaRangerMergeWrite =>
+      case _: DeltaRangerCdfReadScans | _: DeltaRangerMergeNative | _: DeltaRangerMergeWrite |
+          _: CapturedMatch =>
       case _ => denied("unrecognized manifest owner")
     }
     private val structure = new DeltaRangerMetadataStructure("Delta manifest decoder rejected: ")
@@ -618,6 +707,7 @@ private[ranger] object DeltaRangerCdfReadScans {
     else
       operation.cdfReadOwner() match {
         case owner: DeltaRangerCdfReadScans if owner.session() eq spark => owner.helperCarrier(plan)
+        case owner: CapturedMatch if owner.session() eq spark           => owner.normalize(plan)
         case _                                                          => None
       }
   }
@@ -698,6 +788,7 @@ private[ranger] object DeltaRangerCdfReadScans {
     else
       operation.cdfReadOwner() match {
         case owner: DeltaRangerCdfReadScans if owner.session() eq spark => owner.analysis(plan)
+        case owner: CapturedMatch if owner.session() eq spark           => owner.analysis(plan)
         case _                                                          => false
       }
   }

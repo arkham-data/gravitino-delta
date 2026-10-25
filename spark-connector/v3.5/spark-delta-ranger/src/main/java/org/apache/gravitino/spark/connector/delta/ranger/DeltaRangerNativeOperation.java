@@ -111,6 +111,15 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
   interface CdfReadOwner extends ScanOwner {
     /** Restricts history reconstruction to the explicitly entered capture phase. */
     boolean ownsHistoryFile(Path path);
+
+    /**
+     * Whether this bounded manifest callback consumes an already accepted CDF or MERGE recipe.
+     *
+     * @return true only for the private captured manifest callback implementation
+     */
+    default boolean usesCapturedCdf() {
+      return false;
+    }
   }
 
   /** Scalar transaction metadata authority; only final bound owner implementations are admitted. */
@@ -645,7 +654,8 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       retainedOwner.requireRetained();
     } else if (scanOwner != null) {
       scanOwner.requireLive();
-      if (!scanOwner.usesCapturedRead()) {
+      if (!scanOwner.usesCapturedRead()
+          && !(scanOwner instanceof CdfReadOwner && ((CdfReadOwner) scanOwner).usesCapturedCdf())) {
         scanOwner.bindings().forEach(BoundRegistrationScan::requireLive);
       }
     } else {

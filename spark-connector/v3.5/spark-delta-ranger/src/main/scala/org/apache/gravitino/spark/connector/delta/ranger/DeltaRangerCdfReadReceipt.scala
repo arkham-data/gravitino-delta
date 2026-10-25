@@ -97,6 +97,23 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     owner.requireSource(this)
     mergeOwner = owner
   }
+  private val adaptive = spark.sessionState.conf.adaptiveExecutionEnabled
+  private lazy val ownedRecipe = scans.prepare(governed)
+  private var accepted: DeltaRangerExecutionContext.Context = null
+  def requireRecipe(recipe: LogicalPlan): Unit =
+    if (recipe ne ownedRecipe) denied("foreign CDF execution recipe")
+  def mergeRecipe(
+      columns: Seq[org.apache.spark.sql.catalyst.expressions.NamedExpression]
+  ): LogicalPlan =
+    Project(columns, ownedRecipe)
+  def acceptMerge(context: DeltaRangerExecutionContext.Context): Unit = {
+    requireMergeExecution()
+    scans.accept(context)
+  }
+  private def beginCaptured(): Unit = {
+    accepted = DeltaRangerExecutionContext.forCdf(this, spark, ownedRecipe)
+    scans.accept(accepted)
+  }
   private var physical: SparkPlan = null
   private var compiledChild: SparkPlan = null
   private var mergeExecutionOpen = false
@@ -164,10 +181,15 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     validateAction(spark)
     if (physical != null) denied("CDF physical compilation repeated")
     if (compiledChild == null) {
-      val owned = scans.prepare(governed)
-      compiledChild = DeltaRangerPhysicalPlanning.lower(spark, owned)
-      scans.seal(compiledChild)
-      scans.tail(DeltaRangerPhysicalPlanning.tail(spark, owned, compiledChild))
+      val owned = ownedRecipe
+      if (adaptive) {
+        beginCaptured()
+        compiledChild = DeltaRangerPhysicalPlanning.captured(spark, accepted)
+      } else {
+        compiledChild = DeltaRangerPhysicalPlanning.lower(spark, owned)
+        scans.seal(compiledChild)
+        scans.tail(DeltaRangerPhysicalPlanning.tail(spark, owned, compiledChild))
+      }
     }
     scans.verify(compiledChild)
     physical = DeltaRangerCdfProducer(compiledChild)(this)
@@ -210,10 +232,13 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     scans.execute(child)
   }
   override def validateCollection(child: SparkPlan): Unit = {
-    scans.verify(child); validateAction(spark); scans.verify(child)
+    if (adaptive) beginCaptured()
+    else { scans.verify(child); validateAction(spark); scans.verify(child) }
   }
   override def validateExecution(child: SparkPlan): Unit = {
-    scans.verify(child); validateAction(spark); scans.verify(child)
+    if (adaptive) {
+      if (accepted == null) denied("CDF action not accepted"); accepted.logicalPlan()
+    } else { scans.verify(child); validateAction(spark); scans.verify(child) }
   }
   private def requireContext(): Unit = {
     if (mergeOwner != null) mergeOwner.requireSource(this)

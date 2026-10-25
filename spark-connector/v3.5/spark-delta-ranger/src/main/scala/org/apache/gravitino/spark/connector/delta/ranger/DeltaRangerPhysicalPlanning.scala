@@ -161,6 +161,14 @@ private[ranger] object DeltaRangerPhysicalPlanning {
   ): SparkPlan =
     QueryExecution.createSparkPlan(spark, planner(spark), logical)
 
+  /** Stock preparation of an already authorized native phase recipe. */
+  def captured(spark: SparkSession, context: DeltaRangerExecutionContext.Context): SparkPlan = {
+    qualify(spark)
+    val recipe = new LogicalWitness(context.logicalPlan(), spark).replay(spark, _ => ())
+    DeltaRangerPhysicalProvenance.captureRecipe(recipe, context, spark)
+    new PhysicalPrefix(spark, recipe).applyCaptured(raw(spark, recipe))
+  }
+
   def lower(spark: SparkSession, logical: LogicalPlan): SparkPlan =
     new PhysicalPrefix(spark, logical).applyTo(raw(spark, logical))
 
@@ -184,6 +192,11 @@ private[ranger] object DeltaRangerPhysicalPlanning {
 
   private final class PhysicalPrefix(spark: SparkSession, logical: LogicalPlan)
       extends QueryExecution(spark, logical) {
+    def applyCaptured(plan: SparkPlan): SparkPlan =
+      super.preparations
+        .takeWhile(_.getClass != classOf[ApplyColumnarRulesAndInsertTransitions])
+        .foldLeft(plan)((current, rule) => rule(current))
+
     def applyTail(plan: SparkPlan): SparkPlan = {
       val tail =
         super.preparations.dropWhile(_.getClass != classOf[ApplyColumnarRulesAndInsertTransitions])
