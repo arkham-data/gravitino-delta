@@ -24,8 +24,10 @@ qualification. Existing supported behavior and rejection boundaries remain intac
 
 Follow-on direction: the user replied Proceed to the recommended real-AQE-first
 sequence. The [bounded AQE design](superpowers/specs/2026-10-25-delta-governed-aqe-design.md)
-now specifies that proposal and awaits approval of its detailed profile. The
-assessment-time open scope choices below are retained as historical findings.
+was approved on 2026-10-25 with catalog-demo explicitly deferred. The user will
+verify which operations remain missing before follow-on scope is selected. The
+assessment-time recommendations and open choices below are historical findings,
+not authorization to begin integration or additional ordinary-read work.
 
 ## Recommendation
 

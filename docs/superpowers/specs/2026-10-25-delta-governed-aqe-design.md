@@ -17,10 +17,11 @@
 
 # Governed adaptive execution for named Delta reads and MERGE
 
-Status: proposed design, awaiting user approval. On 2026-10-25 the user selected
-the recommended direction—real governed AQE before additional demo read operations—
-by replying Proceed to the completed [assessment](../../delta-spark-execution-assessment.md).
-That selects the direction, not approval of the detailed profile below.
+Status: approved on 2026-10-25 with catalog-demo integration explicitly deferred.
+The user approved this design with: "Agreed, except catalog-demo yet. I'll verify
+which operations are still missing". The user will supply the remaining-operation
+assessment; this approval does not schedule integration or approve additional
+logical operations. See the earlier [assessment](../../delta-spark-execution-assessment.md).
 Baseline: `8bec415b9`; completed DataFrame product: `5a2e3676c`.
 
 ## Intent and completion boundary
@@ -33,9 +34,10 @@ qualified physical profile.
 
 Success requires final adaptive payload plans and owned completed stages, not only
 `AQE=true`, metadata-only AQE, or correct rows from manually nonadaptive execution.
-The initial profile is deliberately bounded. This milestone is followed by a
-separate ordinary-read grammar milestone for the demo's count/distinct/order/display
-operations, then separate catalog-demo integration. It does not close those tasks.
+The initial profile is deliberately bounded. Additional ordinary-read operations
+require a separate scope informed by the user's remaining-operation assessment.
+Catalog-demo integration stays deferred until the user resumes it. This milestone
+does not close or automatically start either follow-on effort.
 
 Keep Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2, Ranger 2.8.0, Java 17, Scala 2.12.21
 and S3-compatible storage (MinIO locally). No Gravitino core/API/server/client
@@ -55,8 +57,8 @@ limits and the platform's one-writing-job-per-dataset constraint.
 - Expanding CDF source transformations first is deferred: no concrete production
   transformation request superseded the existing single bounded-source contract.
 
-The initial physical subset and explicit settings below are the designer's
-proposal for review. They are not previously agreed user requirements.
+The initial physical subset and explicit settings below were designer proposals
+approved with this design; they were not original user requirements.
 
 ## Included and excluded behavior
 
@@ -292,8 +294,9 @@ Required acceptance:
   exits, identity separation, registration persistence/restart and exact artifact
   bindings. Live fixtures must include adaptive payload/coalescing witnesses, not
   only the small demo's row counts. Separate executors remain a later milestone.
-- Targeted AQE=false regressions for changed shared seams. No companion-authored conf mutation
-  on success or failure, measured after stock session/analyzer initialization. Unsupported logical grammar stays rejected. Checker tests
+- Targeted AQE=false regressions for changed shared seams. No companion-authored
+  conf mutation on success or failure, measured after stock session/analyzer
+  initialization. Unsupported logical grammar stays rejected. Checker tests
   must reject a false AQE label, metadata-only witness, stale/foreign/missing stage
   record, wrong configuration/origin, changed exact bags or missing original exit.
 
@@ -302,18 +305,20 @@ until this acceptance is complete and independently reviewed.
 
 ## Follow-on work and choices
 
-After this milestone, design the smallest ordinary-read additions needed by the
-selected demo consumer: count, distinct, sorting/display bounds and safe relation
-reuse/temp-view semantics. This does not automatically include grouped analytics,
-windowed deduplication or broad CDF transformations. Exact production ELT source
+After this milestone, use the user's remaining-operation assessment to scope any
+ordinary-read additions. Count, distinct, sorting/display bounds and safe relation
+reuse/temp-view semantics are assessment findings, not an approved implementation
+backlog. This does not automatically include grouped analytics, windowed
+deduplication or broad CDF transformations. Exact production ELT source
 transformations remain a separate open requirement, not a blocker for this design.
 
-Catalog-demo integration remains separate: actual Ranger 2.8.0, named engine-side
+Catalog-demo integration remains deferred until the user resumes it: actual Ranger
+2.8.0, named engine-side
 execution instead of path/Python wrappers, existing policy subqueries, bootstrap
 ownership, shared-session identity, separate executors, storage access and durable
 journal placement. No existing demo files/services/policies are changed here.
 
-Reviewable designer choices: coalescing-first explicit opt-in profile; owned empty
+Approved designer choices: coalescing-first explicit opt-in profile; owned empty
 stage handling; no default full-AQE claim; complete existing MERGE lifecycle before
-closing AQE support; ordinary logical additions and deployment follow separately.
-The next artifact after approval is an implementation plan, not product code.
+closing AQE support. Ordinary logical additions await separate scoping; deployment
+is deferred. The next artifact is the implementation plan, not product code.
