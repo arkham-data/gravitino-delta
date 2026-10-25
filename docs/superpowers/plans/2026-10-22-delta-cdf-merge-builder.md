@@ -1,8 +1,14 @@
-# Companion named DataFrame MERGE builder — deferred plan
+# Companion named DataFrame MERGE builder — critical prerequisite
 
-Status: deferred by user choice on 2026-10-22. Do not execute during the current
-named SQL MERGE milestone or count it as supported. This follow-up needs a reviewed
+Status: promoted by the user on 2026-10-25 to the next critical priority and a
+prerequisite for catalog-demo integration. The named SQL and partitioned MERGE
+milestones are complete. This API is not yet supported; the next step is a reviewed
 API design and implementation-ready task breakdown before code changes.
+
+The proposed [DataFrame API design](../specs/2026-10-25-delta-dataframe-merge-design.md)
+defines strings and Columns, the shared SQL command path, Python packaging and
+qualification. It is pending user approval; this outline is not yet the executable
+implementation plan.
 
 ## Outcome and constraints
 
@@ -24,7 +30,7 @@ clauses before preprocessing; it cannot reconstruct that distinction afterward.
 
 ## Planned sequence
 
-1. After the SQL integration contract is qualified, design the companion named
+1. Build on the qualified SQL integration contract to design the companion named
    factory/builder, supported languages, clause grammar and exact registration
    binding. Specify how original expressions and command ownership are retained.
 2. Prove installed named creation and original-assignment capture before native
@@ -36,8 +42,27 @@ clauses before preprocessing; it cannot reconstruct that distinction afterward.
    same-table writeback, retries and publication failure.
 4. Qualify four pinned runtime pairs with actual Ranger 2.8.0/MinIO and independent
    review. Publish the companion API and limits without claiming stock
-   DeltaTable.forName compatibility. Coordinate separate-worker deployment with
-   the deferred demo plan.
+   DeltaTable.forName compatibility. Completing this qualification is a required
+   entry gate for the [catalog-demo deployment plan](2026-10-22-delta-cdf-merge-demo.md),
+   whose application must exercise the DataFrame API from PySpark. This plan ends
+   with API qualification; catalog-demo integration is a separate plan.
+
+## Dependency on catalog-demo
+
+The demo must consume the qualified DataFrame API, including distinct-target and
+same-table writeback to partitioned targets, with the existing Ranger policy and
+checkpoint semantics. Named SQL remains the behavioral reference. A SQL-only demo
+does not satisfy this integration milestone. Separate-worker qualification remains
+part of the demo plan after the API's local four-pair qualification.
+
+Before activating that separate integration plan, assess whether the intended
+pipelines require broader Spark execution: AQE, joins, aggregations, windows,
+caching or expressions beyond the qualified grammar. These are candidate
+prerequisites, not supported features or an automatic expansion of this API
+milestone. Any required expansion needs its own scoped plan and qualification.
+Completing the DataFrame API alone does not establish readiness for integration.
+The current catalog-demo session explicitly enables AQE, so that mismatch already
+needs a separate scope decision before integration; this API does not change it.
 
 ## Evidence and dependencies
 

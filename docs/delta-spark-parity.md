@@ -35,9 +35,9 @@ must not be admitted because their schema resembles a qualified relation.
 | Schema evolution | Unsupported | Native schema evolution with registration/publication and policy demand correctness |
 | Row tracking and deletion vectors | Unsupported write profiles | Exact native feature semantics and owned action/reconstruction evidence |
 | Broader source grammar/clauses | One bounded CDF source with finite scalar grammar | Defined joins/windows/aggregates and NOT MATCHED BY SOURCE semantics; no admission by schema equivalence |
-| Named DataFrame builder | Deferred | Preserve original assignments, canonical named resolution and Python/JVM behavior; stock DeltaTable.forName is not qualified |
+| Named DataFrame builder | Next critical priority; required before catalog-demo integration | Preserve original assignments, canonical named resolution and Python/JVM behavior; qualify all four pairs before deployment; stock DeltaTable.forName is not qualified |
 | Spark Connect | Not qualified | Remote-session identity/authorization and supported frontend behavior |
-| Separate workers/deployment | Deferred catalog-demo plan | Deployed authentication, executor boundaries, journal durability/placement, registration and artifact verification |
+| Separate workers/deployment | Separate plan; deferred pending DataFrame API qualification and assessment of broader Spark execution prerequisites | Qualify any execution capabilities required by the intended pipelines before integration; exercise the qualified PySpark DataFrame API with deployed authentication, executor boundaries, journal durability/placement, registration and artifact verification |
 | Native strict source-count check | Known stock-equivalent constant-key full-outer nested-loop shape | Retain strict check and both stock/governed oracle; evaluate compatible upstream correction without suppressing validation |
 | Ordinary projected SELECT with explicit BIGINT arithmetic key mask | Locally qualified on all four pinned pairs in a separate follow-up | `id + CAST(100 AS BIGINT)` returns masked values once, including admitted aliases/predicates alongside row filters; exact receipt binding and untyped-arithmetic rejection retained |
 
