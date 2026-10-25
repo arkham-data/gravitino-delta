@@ -215,12 +215,30 @@ def artifact_fixture(result):
         path=temporary/filename;body=('class '+name).encode()
         with zipfile.ZipFile(path,'w') as jar:jar.writestr(name.replace('.','/')+'.class',body)
         jars[str(path)]=file_ref(path)['sha256'];providers[name]=str(path);classes[name]=hashlib.sha256(body).hexdigest();(home/'jars'/filename).symlink_to(path)
+    dataframe=result.get('frontend','sql')=='dataframe'
+    if dataframe:
+        for name in ['GravitinoDeltaTable','GravitinoDeltaTable$','GravitinoDeltaMergeBuilder']:
+            full='org.apache.gravitino.spark.connector.delta.ranger.'+name;body=('class '+full).encode();path=temporary/'companion.jar'
+            with zipfile.ZipFile(path,'a') as jar:jar.writestr(full.replace('.','/')+'.class',body)
+            providers[full]=str(path);classes[full]=hashlib.sha256(body).hexdigest()
+        jars[str(path)]=file_ref(path)['sha256']
     sources=['delta/acceptance/'+n for n in ['cdf_merge_live.py','cdf_merge_live_checks.py','cdf_merge_native.py','cdf_merge_pyspark.py']]+['spark-connector/v3.5/spark-delta-ranger/src/'+path for path in ['test/scala/org/apache/gravitino/spark/connector/delta/ranger/DeltaRangerLiveCdfMerge.scala','main/scala/org/apache/gravitino/spark/connector/delta/ranger/DeltaRangerMergeCommand.scala']]
+    if dataframe:sources+=['delta/acceptance/cdf_merge_dataframe_pyspark.py','delta/acceptance/cdf_read_live_package.py','delta/acceptance/cdf_live_package.py']+[str(p.relative_to(root)) for p in (root/'spark-connector/v3.5/spark-delta-ranger/python/gravitino_delta').glob('*.py')]
     inputs={p:file_ref(root/p)['sha256'] for p in sources}
     manifest={'spark':'3.5.4','delta':'3.3.0','sparkHome':str(home),'app':str(temporary/'cdf-merge-live.jar'),'changedRuntime':str(temporary/'companion.jar'),'sourceInputs':inputs,'sourceInputDigest':canonical(inputs),'providers':providers,'providerClasses':classes,'jarHashes':jars,'runtimeJarLinks':{str(home/'jars'/Path(p).name):p for p in jars},'thinClasses':{names[-1][1].replace('.','/')+'.class':classes[names[-1][1]]}}
+    if dataframe:
+        from cdf_read_live_package import python_sources,archive_entries
+        python_zip=temporary/'gravitino-delta-python-fixture.zip'
+        with zipfile.ZipFile(python_zip,'w') as archive:
+            for path in python_sources(inputs):archive.write(root/path,path.split('/python/')[1])
+        manifest.update(pythonApiVersion=1,pythonZip=str(python_zip),pythonZipSha256=file_ref(python_zip)['sha256'],pythonSourceInputs=python_sources(inputs),pythonZipMembers=archive_entries(python_zip))
+    if dataframe:
+        before=save(temporary/'source-before.json',{'files':inputs});after=save(temporary/'source-after.json',{'files':inputs});exit_path=save(temporary/'build-exit.json',{'exitCode':0})
+        receipt=save(temporary/'build-receipt.json',{'before':str(before),'after':str(after),'exit':str(exit_path),'appBuildArtifact':manifest['app'],'artifacts':{p:file_ref(p)['sha256'] for p in [manifest['app'],manifest['changedRuntime'],manifest['pythonZip']]}})
+        manifest.update(freshBuildReceipt=str(receipt),freshBuildReceiptSha256=file_ref(receipt)['sha256'])
     manifest_path=save(temporary/'manifest.json',manifest)
     result['origins']={name:{'jar':providers[name],'sha256':jars[providers[name]]} for _,name in names[:3]}
-    result['binding']={'source':canonical(inputs),'manifest':file_ref(manifest_path)['sha256'],'app':jars[manifest['app']],'companion':jars[manifest['changedRuntime']],'python':inputs['delta/acceptance/cdf_merge_pyspark.py']}
+    result['binding']={'source':canonical(inputs),'manifest':file_ref(manifest_path)['sha256'],'app':jars[manifest['app']],'companion':jars[manifest['changedRuntime']],'python':inputs['delta/acceptance/'+('cdf_merge_dataframe_pyspark.py' if dataframe else 'cdf_merge_pyspark.py')],**({'pythonZip':manifest['pythonZipSha256']} if dataframe else {})}
     partitioned=result.get('profile')=='partitioned'
     plan={'partitioned':partitioned,'catalog':'c','database':'d','nonce':'fixture','nativeInitial':{'tables':result['nativeInitial']},'subject':'a','metadataPrincipal':'m','serviceAdmin':'s'}
     ranger=save(cell/'deployed-ranger/association.json',{'deployedRangerVersion':'2.8.0'});plan['deployedRangerEvidenceSha256']=file_ref(ranger)['sha256'];save(cell/'fixture/state.private.json',plan)
@@ -228,25 +246,34 @@ def artifact_fixture(result):
     save(cell/'fixture/native/ready.json',native);save(cell/'fixture/native/process/command.json',{'identity':'s','argv':[str(home/'bin/spark-submit'),str(root/'delta/acceptance/cdf_merge_native.py'),str(cell/'fixture/native/inputs.private.json')]});save(cell/'fixture/native/process/exit.json',{'exitCode':0,'terminated':False})
     save(cell/('python' if partitioned else 'scala')/'app-evidence/source-governed.json',result['sourceGoverned'])
     for kind in (['python'] if partitioned else ['python','scala']):
-        directory=cell/kind;app=directory/'app-evidence';selected=steps(plan,kind=='python')
-        request={'packageManifest':str(manifest_path),'expectedSparkVersion':'3.5.4','expectedDeltaVersion':'3.3.0','subject':'a','metadataPrincipal':'m','steps':selected,'sparkConfigurationFile':str(directory/'request/spark.properties')}
+        directory=cell/kind;app=directory/'app-evidence';selected=steps(plan,kind=='python','dataframe' if dataframe else 'sql')
+        request={'frontend':'dataframe' if dataframe else 'sql','packageManifest':str(manifest_path),'expectedSparkVersion':'3.5.4','expectedDeltaVersion':'3.3.0','subject':'a','metadataPrincipal':'m','steps':selected,'sparkConfigurationFile':str(directory/'request/spark.properties')}
         request_path=save(directory/'request/request.private.json',request)
         argv=[str(home/'bin/spark-submit'),'--properties-file',request['sparkConfigurationFile']]
         if kind=='scala':argv+=['--class','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdfMerge']
-        argv+=[str(root/'delta/acceptance/cdf_merge_pyspark.py') if kind=='python' else manifest['app'],str(request_path)]
+        if dataframe:argv+=['--py-files',manifest['pythonZip']]
+        argv+=[str(root/('delta/acceptance/cdf_merge_dataframe_pyspark.py' if dataframe else 'delta/acceptance/cdf_merge_pyspark.py')) if kind=='python' else manifest['app'],str(request_path)]
         save(directory/'process/command.json',{'identity':'a','argv':argv});save(directory/'process/exit.json',{'exitCode':0,'terminated':False})
         save(app/'origins.json',{n:{'jar':p,'jarSha256':jars[p],'classSha256':classes[n]} for n,p in providers.items()})
         save(app/'observed.json',{'subject':'a','ugi':'a','spark':'3.5.4','java':'17','scala':'2.12.21'});save(app/'metadata-identity-final.json',{'principal':'m','successfulTargetGet':True})
         for step in selected:
-            result['stages'][step['name']]['sql']=step['sql']
+            if dataframe:
+                result['stages'][step['name']].pop('sql')
+                result['stages'][step['name']]['operation']=step['operation']
+            else:result['stages'][step['name']]['sql']=step['sql']
             if partitioned:
                 stage=result['stages'][step['name']]
                 for field,path,data in [('nativeBefore',cell/'fixture/native'/(step['name']+'-before.json'),stage['before']),('nativeAfter',cell/'fixture/native'/(step['name']+'-after.json'),stage['after']),('consumerBefore',app/(step['name']+'-checkpoint-before.json'),{'sourceId':step['sourceId'],'end':stage['checkpointBefore']}),('consumerAfter',app/(step['name']+'-checkpoint-after.json'),{'sourceId':step['sourceId'],'end':stage['checkpointAfter']})]:
                     stage[field]=file_ref(save(path,data))
             save(app/(step['name']+'-identity.json'),{'subject':'a','ugi':'a','thread':'query-thread'});save(directory/(step['name']+'-result.json'),result['stages'][step['name']])
-        if kind=='python':save(app/'python-observed.json',{'frontend':'classic-pyspark','pysparkVersion':'3.5.4','python':'3.11','queries':[s['sql'] for s in selected]})
+        if dataframe:
+            frontend={'frontend':'classic-pyspark-dataframe','pysparkVersion':'3.5.4','python':'3.11','apiVersion':1,'operations':[s['operation'] for s in selected],
+                'modules':{name:{'file':manifest['pythonZip']+'/'+member,'archive':manifest['pythonZip'],'sha256':manifest['pythonZipMembers'][member]} for name,member in [('gravitino_delta','gravitino_delta/__init__.py'),('gravitino_delta.tables','gravitino_delta/tables.py')]},
+                'queryIdentities':{s['name']:{'subject':'a','ugi':'a','thread':'query-thread'} for s in selected}}
+            save(app/'python-observed.json',frontend)
+        elif kind=='python':save(app/'python-observed.json',{'frontend':'classic-pyspark','pysparkVersion':'3.5.4','python':'3.11','queries':[s['sql'] for s in selected]})
     save(temporary/'inputs.private.json',{'testFixture':True})
-    outer=cell.parent/(cell.name+'-outer');save(outer/'command.json',{'argv':['python',str(root/'delta/acceptance/cdf_merge_live.py'),'--child','--runtime',str(manifest_path),'--inputs',str(temporary/'inputs.private.json'),'--out',str(cell)]+(['--partitioned'] if partitioned else [])});save(outer/'exit.json',{'exitCode':0,'terminated':False})
+    outer=cell.parent/(cell.name+'-outer');save(outer/'command.json',{'argv':['python',str(root/'delta/acceptance/cdf_merge_live.py'),'--child','--runtime',str(manifest_path),'--inputs',str(temporary/'inputs.private.json'),'--out',str(cell)]+(['--partitioned'] if partitioned else [])+(['--frontend','dataframe'] if dataframe else [])});save(outer/'exit.json',{'exitCode':0,'terminated':False})
     registration={}
     for name,value in result['registration']['persisted'].items():
         registration[name]={'properties':{RECEIPT+key:str(value[field]) for key,field in [('id','id'),('generation','generation'),('token','token'),('nativeId','uuid'),('nativeVersion','nativeVersion')]}}

@@ -279,7 +279,7 @@ def merge_sql(plan,target,source='source',start=1,end=1,ambiguous=False):
     return sql
 
 
-def steps(plan,python=False):
+def steps(plan,python=False,frontend="sql"):
     specs=[('python','python_target','source',1,1),('pythonDenied','python_target','source',1,1)] if python else [
         ('distinct','target','source',1,1),('duplicate','target','source',1,1),('empty','target','source',2,2),
         ('ambiguous','ambiguous_target','source',0,0),('missing','target','incomplete',1,1),('columnDenied','target','source',1,1),
@@ -290,8 +290,14 @@ def steps(plan,python=False):
         specs=[('distinct','target','source',1,1),('columnDenied','target','source',1,1),('selectDenied','target','source',1,1),('modifyDenied','target','source',1,1),('same','same','same',1,1)]
     result=[]
     for name,target,source,start,end in specs:
-        step={'name':name,'target':target,'source':source,'end':end,'sourceId':plan['nativeInitial']['tables'][source]['id'],'sql':merge_sql(plan,target,source,start,end,name=='ambiguous')}
+        step={'name':name,'target':target,'source':source,'end':end,'sourceId':plan['nativeInitial']['tables'][source]['id']}
         if name in ['distinct','duplicate'] and not plan.get('partitioned'):step['txnAppId']='merge-'+plan['nonce']
+        if frontend=='dataframe':
+            assert python and plan.get('partitioned'), 'DataFrame smoke requires the partitioned Python profile'
+            prefix=plan['catalog']+'.'+plan['database']+'.'
+            step['operation']={'source':prefix+source,'target':prefix+target,'start':start,'end':end,
+                'clauseProfile':'partitioned-cdf','expressionMode':'columns-mixed' if name=='same' else 'strings'}
+        else:step['sql']=merge_sql(plan,target,source,start,end,name=='ambiguous')
         result.append(step)
     return result
 
@@ -308,14 +314,15 @@ def registration(plan,output):
     save(output/'tables.private.json',rows);return rows
 
 
-def application(plan,runtime,output,observer,python=False):
+def application(plan,runtime,output,observer,python=False,frontend="sql"):
     output.mkdir(mode=0o700);initial=state_snapshot(plan,output/'initial')
-    request=prepare_request(plan,runtime,initial,output/'request');request.update(output=str(output/'app-evidence'),steps=steps(plan,python),partitioned=plan.get('partitioned',False))
+    request=prepare_request(plan,runtime,initial,output/'request');request.update(output=str(output/'app-evidence'),steps=steps(plan,python,frontend),partitioned=plan.get('partitioned',False),frontend=frontend)
     save(output/'request/request.private.json',request)
     env=clean_environment(plan);env.update(SPARK_HOME=runtime['sparkHome'],PYSPARK_PYTHON=plan['python'],SPARK_USER=plan['subject'],HADOOP_USER_NAME=plan['subject'])
     selected=[p for p in runtime['jarHashes'] if Path(p).name in runtime['addedJarNames']]
     argv=[runtime['sparkHome']+'/bin/spark-submit','--driver-memory','4g','--master','local[2]','--properties-file',request['sparkConfigurationFile'],'--driver-class-path',request['driverSecurityDirectory'],'--jars',','.join(selected)]
-    argv+=([str(ROOT/'delta/acceptance/cdf_merge_pyspark.py')] if python else ['--class','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdfMerge',runtime['app']])
+    if frontend=='dataframe':argv+=['--py-files',runtime['pythonZip']]
+    argv+=([str(ROOT/('delta/acceptance/cdf_merge_dataframe_pyspark.py' if frontend=='dataframe' else 'delta/acceptance/cdf_merge_pyspark.py'))] if python else ['--class','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdfMerge',runtime['app']])
     argv+=[str(output/'request/request.private.json')]
     process,log=start_process(argv,env,output/'process');observations={};transition_evidence={}
     control=Path(request['controlDirectory']);app=output/'app-evidence';current_state=initial;current_witness='initial'
@@ -357,7 +364,7 @@ def application(plan,runtime,output,observer,python=False):
             outcome=read(app/(name+'-outcome.json'))
             cp_before=read(app/(name+'-checkpoint-before.json'));cp_after=read(app/(name+'-checkpoint-after.json'))
             assert cp_before['sourceId']==cp_after['sourceId']==step['sourceId']
-            value={'before':before,'after':after,'cdc':after['cdc'],'checkpointBefore':cp_before['end'],'checkpointAfter':cp_after['end'],'sql':step['sql'],'sourceBefore':source_before,'sourceAfter':source_digest(plan,step['source']),**outcome}
+            value={'before':before,'after':after,'cdc':after['cdc'],'checkpointBefore':cp_before['end'],'checkpointAfter':cp_after['end'],**({'operation':step['operation']} if frontend=='dataframe' else {'sql':step['sql']}),'sourceBefore':source_before,'sourceAfter':source_digest(plan,step['source']),**outcome}
             if plan.get('partitioned'):
                 value['nativeBefore']=file_ref(native_before);value['nativeAfter']=file_ref(observer.output/(str(observer.cursor-1)+'-result.json'))
                 value['consumerBefore']=file_ref(app/(name+'-checkpoint-before.json'));value['consumerAfter']=file_ref(app/(name+'-checkpoint-after.json'))
@@ -385,7 +392,8 @@ def application(plan,runtime,output,observer,python=False):
         if not (output/'process/exit.json').exists():finish_process(process,log,output/'process',process.poll() is None)
 
 
-def run_cell(runtime_path,inputs_path,output,partitioned=False):
+def run_cell(runtime_path,inputs_path,output,partitioned=False,frontend="sql"):
+    assert frontend in ["sql","dataframe"] and (frontend!="dataframe" or partitioned)
     output.mkdir(mode=0o700);runtime=read(runtime_path);runtime['manifestPath']=str(runtime_path);inputs=read(inputs_path)
     from cdf_read_live_package import verify_runtime
     verify_runtime(runtime);handles={}
@@ -394,7 +402,7 @@ def run_cell(runtime_path,inputs_path,output,partitioned=False):
         plan,server,callbacks=provision(runtime,inputs,output/'fixture',association,handles,partitioned)
         plan['grants']={t['name']:([] if t['name'] in ['source','same','incomplete'] else ['SELECT_TABLE']) for t in plan['tables']}
         observer=handles['observer']
-        py,_,py_observed,py_exit=application(plan,runtime,output/'python',observer,True)
+        py,_,py_observed,py_exit=application(plan,runtime,output/'python',observer,True,frontend)
         if partitioned:scala={};transitions={};observed=py_observed;child_exit=py_exit
         else:scala,transitions,observed,child_exit=application(plan,runtime,output/'scala',observer)
         before=registration(plan,output/'registration-before-restart');server.stop()
@@ -412,10 +420,10 @@ def run_cell(runtime_path,inputs_path,output,partitioned=False):
         server.start();plan['gravitinoUrl']=server.uri;after=registration(plan,output/'registration-after-restart');assert before==after
         server.stop();assert columns==server.column_snapshot('merge-restart')
         native_exit=observer.close();assert native_exit==0;handles.pop('observer')
-        result={'profile':'partitioned' if partitioned else 'legacy',**{k:observed[k] for k in ['spark','java','scala']},'delta':runtime['delta'],'ranger':read(association)['deployedRangerVersion'],
+        result={'profile':'partitioned' if partitioned else 'legacy','frontend':frontend,**{k:observed[k] for k in ['spark','java','scala']},'delta':runtime['delta'],'ranger':read(association)['deployedRangerVersion'],
             'exits':({'outer':0,'native':native_exit,'python':py_exit} if partitioned else {'outer':0,'child':child_exit,'python':py_exit}),'identities':{'setup':plan['serviceAdmin'],'metadata':plan['metadataPrincipal'],'application':plan['subject']},
             'origins':{k:{'jar':v['origin'],'sha256':v['sha256']} for k,v in plan['nativeInitial']['origins'].items()},
-            'binding':{'source':runtime['sourceInputDigest'],'manifest':sha(runtime_path),'companion':sha(runtime['changedRuntime']),'app':sha(runtime['app']),'python':sha(ROOT/'delta/acceptance/cdf_merge_pyspark.py')},
+            'binding':{'source':runtime['sourceInputDigest'],'manifest':sha(runtime_path),'companion':sha(runtime['changedRuntime']),'app':sha(runtime['app']),'python':sha(ROOT/('delta/acceptance/cdf_merge_dataframe_pyspark.py' if frontend=='dataframe' else 'delta/acceptance/cdf_merge_pyspark.py')),**({'pythonZip':runtime['pythonZipSha256']} if frontend=='dataframe' else {})},
             'nativeInitial':plan['nativeInitial']['tables'],'sourceNative':plan['nativeInitial']['sourceNative'],'sourceGoverned':read(output/('python' if partitioned else 'scala')/'app-evidence/source-governed.json'),
             'stages':dict(scala,**py),'transitions':transitions,'registration':{'beforeRestart':receipt_identity(before),'afterRestart':receipt_identity(after),'persisted':stored},'postHelper':None if partitioned else read(output/'scala/post-helper.json')}
         verify_runtime(runtime)
@@ -435,11 +443,11 @@ def run_cell(runtime_path,inputs_path,output,partitioned=False):
 def main():
     parser=argparse.ArgumentParser()
     for key in ['runtime','inputs','out']:parser.add_argument('--'+key,required=True)
-    parser.add_argument('--partitioned',action='store_true');parser.add_argument('--child',action='store_true');args=parser.parse_args();os.umask(0o077)
+    parser.add_argument('--frontend',choices=['sql','dataframe'],default='sql');parser.add_argument('--partitioned',action='store_true');parser.add_argument('--child',action='store_true');args=parser.parse_args();os.umask(0o077)
     runtime=Path(args.runtime).resolve();inputs=Path(args.inputs).resolve();output=Path(args.out).resolve()
-    if args.child:run_cell(runtime,inputs,output,args.partitioned);return
+    if args.child:run_cell(runtime,inputs,output,args.partitioned,args.frontend);return
     process_dir=output.parent/(output.name+'-outer')
-    argv=[sys.executable,__file__,'--child','--runtime',str(runtime),'--inputs',str(inputs),'--out',str(output)]
+    argv=[sys.executable,__file__,'--child','--runtime',str(runtime),'--inputs',str(inputs),'--out',str(output),'--frontend',args.frontend]
     if args.partitioned:argv.append('--partitioned')
     process,log=start_process(argv,dict(os.environ),process_dir)
     try:code=process.wait(timeout=2400)

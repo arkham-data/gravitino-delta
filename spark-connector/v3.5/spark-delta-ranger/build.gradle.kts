@@ -22,6 +22,20 @@ plugins {
   id("scala")
 }
 
+val deltaPythonZip by tasks.registering(Zip::class) {
+  description = "Package the classic PySpark facade for spark-submit --py-files"
+  archiveFileName.set("gravitino-delta-python-${project.version}.zip")
+  destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+  from("python") {
+    include("gravitino_delta/**/*.py")
+    exclude("**/__pycache__/**")
+  }
+  isPreserveFileTimestamps = false
+  isReproducibleFileOrder = true
+  includeEmptyDirs = false
+}
+tasks.named("assemble") { dependsOn(deltaPythonZip) }
+
 val deltaSparkVersion = providers.gradleProperty("deltaSparkVersion").getOrElse("3.5.4")
 val deltaVersion = providers.gradleProperty("deltaVersion").getOrElse("3.3.0")
 require(deltaSparkVersion in setOf("3.5.4", "3.5.6")) { "Unsupported deltaSparkVersion" }

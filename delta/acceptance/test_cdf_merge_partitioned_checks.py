@@ -61,7 +61,7 @@ class TestPartitionFiles(unittest.TestCase):
                 verify_partition_files(before,after,{'old','moved/= %'},{'old'},{'old','moved/= %'})
 
 
-def partition_fixture():
+def partition_fixture(frontend="sql"):
     """An independently spelled native result for the complete partition profile."""
     from test_cdf_merge_live_checks import artifact_fixture
     source=[[1,'changed','allowed','new','update_preimage',1],[1,'new','allowed','new','update_postimage',1],
@@ -99,7 +99,7 @@ def partition_fixture():
             'targetAccess':['select'] if name=='modifyDenied' else ['alter','select','update'],'policy':1,'downloadSha256':'b'*64}}
         history[table]=copy.deepcopy(after)
     registration={name:{'id':i+1,'generation':1,'token':'token-'+name,'uuid':snap['id'],'nativeVersion':snap['version']} for i,(name,snap) in enumerate(history.items())}
-    value={'profile':'partitioned','spark':'3.5.4','delta':'3.3.0','java':'17','scala':'2.12.21','ranger':'2.8.0','exits':{'outer':0,'native':0,'python':0},
+    value={'frontend':frontend,'profile':'partitioned','spark':'3.5.4','delta':'3.3.0','java':'17','scala':'2.12.21','ranger':'2.8.0','exits':{'outer':0,'native':0,'python':0},
            'identities':{'setup':'s','metadata':'m','application':'a'},'nativeInitial':initial,'sourceNative':source,
            'sourceGoverned':[[row[0]+100,'MASKED',row[2],'moved/= %',row[4],0] for row in source if row[2]=='allowed'],
            'stages':stages,'registration':{key:copy.deepcopy(registration) for key in ['beforeRestart','afterRestart','persisted']}}

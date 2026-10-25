@@ -48,8 +48,16 @@ WHEN NOT MATCHED AND s._change_type <> 'delete'
 
 Classic Python uses the same installed JVM session, catalog plugin and extensions.
 No source-row collection or Python reconstruction feeds the MERGE. The returned
-command metrics may be collected. Stock `DeltaTable.forName`, the DataFrame MERGE
-builder and Spark Connect are separate compatibility work.
+command metrics may be collected. Stock `DeltaTable.forName` and Spark Connect
+remain separate compatibility work.
+
+The companion `gravitino_delta.GravitinoDeltaTable` Python API is now implemented
+and packaged as a zip for `spark-submit --py-files`. Its actual DataFrame frontend
+passed five partitioned Ranger 2.8.0/MinIO phases on Spark 3.5.4/Delta 3.3.0,
+including strings, bound Columns, permission denials and same-table writeback.
+This is a narrower qualification than the SQL matrix below; broader API lifecycle
+coverage and the final four-pair matrix remain pending. See the [API design](superpowers/specs/2026-10-25-delta-dataframe-merge-design.md)
+and [implementation status](superpowers/plans/2026-10-25-delta-dataframe-merge.md).
 
 This example is an explicit consumer program. It is not a generic replica:
 filtering preimages may leave stale destination rows when source images cross a

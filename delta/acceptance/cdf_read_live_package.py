@@ -44,6 +44,31 @@ def archive_entries(path):
         return {name:hashlib.sha256(jar.read(name)).hexdigest() for name in names}
 
 
+def python_archive_entries(path):
+    """Hash production files; permit only the Zip task's optional package directory."""
+    entries=archive_entries(path)
+    assert {name for name in entries if name.endswith('/')}<={'gravitino_delta/'}
+    return {name:digest for name,digest in entries.items() if not name.endswith('/')}
+
+
+def python_sources(source):
+    """Complete production facade inputs, independently bound to the Python zip."""
+    return {p:d for p,d in source.items() if p.startswith(MODULE+'python/gravitino_delta/') and p.endswith('.py')}
+
+
+def verify_python_package(runtime):
+    """Reject changed archives, extra/missing members and wrong source/member bindings."""
+    assert runtime['pythonApiVersion']==1
+    assert sha(runtime['pythonZip'])==runtime['pythonZipSha256']
+    members=python_archive_entries(runtime['pythonZip'])
+    assert members==runtime['pythonZipMembers']
+    sources=python_sources(runtime['sourceInputs'])
+    assert sources and sources==runtime['pythonSourceInputs']
+    expected={p.removeprefix(MODULE+'python/'):d for p,d in sources.items()}
+    assert {'gravitino_delta/__init__.py','gravitino_delta/tables.py'}<=set(expected)
+    assert members==expected
+
+
 def companion_sources(source):
     """Complete changed-module production inputs, separate from thin-app test sources."""
     return {p:d for p,d in source.items() if p.startswith((MODULE,RUNTIME)) and
@@ -65,6 +90,7 @@ def verify_runtime(runtime):
     """Recheck immutable build receipts and every class/provider/origin before live use."""
     assert capture_sources(ROOT)==runtime['sourceInputs'],'Source moved after package capture'
     assert canonical_digest(runtime['sourceInputs'])==runtime['sourceInputDigest']
+    if runtime.get('pythonZip'):verify_python_package(runtime)
     assert all(sha(p)==d for p,d in runtime['jarHashes'].items())
     assert all(str(Path(p).resolve())==target for p,target in runtime['runtimeJarLinks'].items())
     assert all(sha(p)==d for p,d in runtime['sharedArtifacts'].items())
@@ -75,6 +101,7 @@ def verify_runtime(runtime):
     assert read(receipt['exit'])['exitCode']==0
     assert read(receipt['before'])['files']==read(receipt['after'])['files']==runtime['sourceInputs']
     assert all(sha(p)==d for p,d in receipt['artifacts'].items())
+    if runtime.get('pythonZip'):assert receipt['artifacts'][runtime['pythonZip']]==runtime['pythonZipSha256']
     assert classes(runtime['app'])==runtime['thinClasses']
     assert archive_entries(runtime['app'])==archive_entries(receipt['appBuildArtifact'])
     assert all(runtime['thinClasses'][name]==digest for name,digest in receipt['thinCompiledClasses'].items())
@@ -108,7 +135,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     assert shared and all(sha(p)==d for p,d in shared.items()),'Shared server artifact drift'
     save(output/'source-before.json',{'files':before,'digest':canonical_digest(before),'gitHead':subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip()})
     reuse_companion=can_reuse_companion(base,before,spark,delta)
-    tasks=[':spark-connector:spark-delta-ranger-3.5:'+profile['task']]
+    tasks=[':spark-connector:spark-delta-ranger-3.5:'+profile['task'],':spark-connector:spark-delta-ranger-3.5:deltaPythonZip']
     if not reuse_companion:tasks=[':spark-connector:spark-delta-ranger-3.5:clean']+tasks+[':spark-connector:spark-delta-ranger-runtime-3.5:shadowJar']
     argv=['./gradlew','-I',profile['init']]+tasks+[
         '-P'+profile['property']+'='+str(output/'app'),'-PdeltaSparkVersion='+spark,'-PdeltaVersion='+delta,
@@ -132,7 +159,9 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
         assert matches==[digest],'Thin JAR class does not match exactly one compiled output'
         thin_compiled[name]=digest
     save(output/'compiled-classes.json',compiled)
-    artifacts={str(p):sha(p) for p in [changed,built_app,output/'compiled-classes.json']}
+    python_zip=output/next((ROOT/MODULE/'build/distributions').glob('gravitino-delta-python-*.zip')).name
+    shutil.copyfile(ROOT/MODULE/'build/distributions'/python_zip.name,python_zip)
+    artifacts={str(p):sha(p) for p in [changed,built_app,python_zip,output/'compiled-classes.json']}
     if application=='merge':
         build_inputs=output/'app/cdf-merge-build-inputs.json'
         artifacts[str(build_inputs)]=sha(build_inputs)
@@ -165,7 +194,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     prefix='org/apache/gravitino/spark/connector/delta/ranger/'
     ranger_classes=classes(changed)
     names=[n for n in base['providers'] if not n.startswith(('org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveAppend','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLivePhasePin','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdf'))]
-    names+= [n[:-6].replace('/','.') for n in ranger_classes if n.startswith((prefix+'DeltaRangerCdf',prefix+'DeltaRangerMerge')) and '$anon' not in n and '$$' not in n]
+    names+= [n[:-6].replace('/','.') for n in ranger_classes if n.startswith((prefix+'DeltaRangerCdf',prefix+'DeltaRangerMerge',prefix+'GravitinoDeltaTable',prefix+'GravitinoDeltaMergeBuilder')) and '$anon' not in n and '$$' not in n]
     names+=[profile['class'].replace('/','.')+'$']
     providers=provider_inventory(jars,sorted(set(names)))
     for name,path in selected.items():
@@ -177,6 +206,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
         jarHashes={str(p.resolve()):sha(p) for p in jars},runtimeJarLinks={str(p):str(p.resolve()) for p in jars},addedJarNames=sorted(selected),
         providers=providers,providerClasses={n:inventories[p][n.replace('.','/')+'.class'] for n,p in providers.items()},
         thinClasses=classes(app),changedRuntimeClasses=ranger_classes,sourceInputs=before,sourceInputDigest=canonical_digest(before),
+        pythonApiVersion=1,pythonZip=str(python_zip),pythonZipSha256=sha(python_zip),pythonZipMembers=python_archive_entries(python_zip),pythonSourceInputs=python_sources(before),
         sharedComponentSources=shared_sources(before),sharedArtifacts=shared,sharedProductionManifest=str(base_path),sharedProductionManifestSha256=sha(base_path),
         freshBuildReceipt=str(output/'build-receipt.json'),freshBuildReceiptSha256=sha(output/'build-receipt.json'),
         stockSparkHome=str(stock),stockJarHashes={p.name:sha(p) for p in (stock/'jars').glob('*.jar')},

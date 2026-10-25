@@ -33,8 +33,30 @@ def digest(value):
     return isinstance(value,str) and len(value)==64 and set(value)<=set('0123456789abcdef')
 
 
+def verify_dataframe_frontend(frontend, request, manifest):
+    """Require a matching packaged import and actual public-API request/identity evidence."""
+    from cdf_read_live_package import verify_python_package
+    verify_python_package(manifest)
+    assert request['frontend']=='dataframe'
+    assert frontend['frontend']=='classic-pyspark-dataframe'
+    assert frontend['apiVersion']==manifest['pythonApiVersion']==1
+    assert frontend['pysparkVersion']==manifest['spark'] and frontend['python']
+    assert frontend['operations']==[step['operation'] for step in request['steps']]
+    expected={'gravitino_delta':'gravitino_delta/__init__.py','gravitino_delta.tables':'gravitino_delta/tables.py'}
+    assert set(frontend['modules'])==set(expected)
+    for module,member in expected.items():
+        assert frontend['modules'][module]=={'file':manifest['pythonZip']+'/'+member,'archive':manifest['pythonZip'],'sha256':manifest['pythonZipMembers'][member]}
+    prefix='org.apache.gravitino.spark.connector.delta.ranger.'
+    assert {prefix+name for name in ['GravitinoDeltaTable','GravitinoDeltaTable$','GravitinoDeltaMergeBuilder']}<=set(manifest['providers'])
+    assert set(frontend['queryIdentities'])=={s['name'] for s in request['steps']}
+    for value in frontend['queryIdentities'].values():
+        assert value['subject']==value['ugi']==request['subject'] and value['thread']
+
+
 def verify_semantics(result: dict) -> None:
     """Raise on incomplete pins, process provenance, policy evidence or native outcomes."""
+    assert result.get('frontend','sql') in ['sql','dataframe']
+    assert result.get('frontend','sql')!='dataframe' or result.get('profile')=='partitioned'
     assert result['spark'] in ['3.5.4','3.5.6'] and result['delta'] in ['3.3.0','3.3.2']
     assert (result['java'],result['scala'],result['ranger'])==('17','2.12.21','2.8.0')
     assert set(result['exits'])==({'outer','native','python'} if result.get('profile')=='partitioned' else {'outer','child','python'})
@@ -139,6 +161,10 @@ def runtime_source_paths(manifest):
     stems={Path(name).name.split('$')[0].removesuffix('.class') for name in manifest['thinClasses']}
     required={'delta/acceptance/'+name for name in ['cdf_merge_live.py','cdf_merge_live_checks.py','cdf_merge_native.py','cdf_merge_pyspark.py']}
     assert required<=set(manifest['sourceInputs'])
+    if manifest.get('pythonZip'):
+        required.update({'delta/acceptance/cdf_merge_dataframe_pyspark.py','delta/acceptance/cdf_read_live_package.py','delta/acceptance/cdf_live_package.py'})
+        required.update(manifest['pythonSourceInputs'])
+        assert required<=set(manifest['sourceInputs'])
     return {p for p in manifest['sourceInputs'] if '/src/main/' in p or p in required or ('/src/test/' in p and Path(p).stem in stems) or p.endswith(('.gradle','.gradle.kts'))}
 
 
@@ -182,7 +208,17 @@ def verify_evidence(result):
     assert set(proof['sources'])==runtime_source_paths(manifest)
     for path,ref in proof['sources'].items():
         assert file_ref(ref['path'])==ref and ref['sha256']==manifest['sourceInputs'][path],'Executed source differs: '+path
-    assert binding['python']==proof['sources']['delta/acceptance/cdf_merge_pyspark.py']['sha256']
+    dataframe=result.get('frontend','sql')=='dataframe'
+    python_entry='cdf_merge_dataframe_pyspark.py' if dataframe else 'cdf_merge_pyspark.py'
+    assert binding['python']==proof['sources']['delta/acceptance/'+python_entry]['sha256']
+    if dataframe:
+        assert binding['pythonZip']==manifest['pythonZipSha256']
+        receipt=read_ref({'path':manifest['freshBuildReceipt'],'sha256':manifest['freshBuildReceiptSha256']})
+        assert json.loads(Path(receipt['exit']).read_text())['exitCode']==0
+        assert json.loads(Path(receipt['before']).read_text())['files']==json.loads(Path(receipt['after']).read_text())['files']==manifest['sourceInputs']
+        for path in [manifest['pythonZip'],manifest['changedRuntime']]:
+            assert file_ref(path)['sha256']==receipt['artifacts'][path]
+        assert file_ref(manifest['app'])['sha256']==receipt['artifacts'][receipt['appBuildArtifact']]
     assert (manifest['spark'],manifest['delta'])==(result['spark'],result['delta'])
     for path,digest_value in manifest['jarHashes'].items():assert file_ref(path)['sha256']==digest_value,'Runtime artifact changed'
     for path,target in manifest['runtimeJarLinks'].items():assert str(Path(path).resolve())==target and target in manifest['jarHashes']
@@ -208,18 +244,28 @@ def verify_evidence(result):
             assert set(refs['identities'])=={s['name'] for s in request['steps']}
             for step in request['steps']:
                 identity=read_ref(refs['identities'][step['name']]);assert identity['subject']==identity['ugi']==result['identities']['application'] and identity['thread']
-                assert step['sql']==result['stages'][step['name']]['sql']
+                if dataframe:
+                    assert step['operation']==result['stages'][step['name']]['operation']
+                    frontend_identity=read_ref(proof['frontend'])['queryIdentities'][step['name']]
+                    assert frontend_identity==identity
+                else:assert step['sql']==result['stages'][step['name']]['sql']
             argv=command['argv'];assert argv[0]==manifest['sparkHome']+'/bin/spark-submit' and argv[-1]==refs['request']['path']
             assert argv[argv.index('--properties-file')+1]==request['sparkConfigurationFile']
-            assert argv[-2]==(str(Path(__file__).resolve().parent/'cdf_merge_pyspark.py') if kind=='python' else manifest['app'])
+            assert argv[-2]==(str(Path(__file__).resolve().parent/python_entry) if kind=='python' else manifest['app'])
+            if dataframe:
+                assert kind=='python' and argv[argv.index('--py-files')+1]==manifest['pythonZip']
+                assert request['frontend']=='dataframe'
+            else:assert request.get('frontend','sql')=='sql'
             if kind=='scala':assert argv[argv.index('--class')+1]=='org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdfMerge'
             assert exit_value['exitCode']==result['exits']['python' if kind=='python' else 'child']==0 and exit_value['terminated'] is False
     finally:
         for archive in archives.values():archive.close()
     assert set(proof['apps'])==({'python'} if result.get('profile')=='partitioned' else {'python','scala'})
     frontend=read_ref(proof['frontend']);python_request=read_ref(proof['apps']['python']['request'])
-    assert frontend['frontend']=='classic-pyspark' and frontend['pysparkVersion']==result['spark'] and frontend['python']
-    assert frontend['queries']==[step['sql'] for step in python_request['steps']]
+    if dataframe:verify_dataframe_frontend(frontend,python_request,manifest)
+    else:
+        assert frontend['frontend']=='classic-pyspark' and frontend['pysparkVersion']==result['spark'] and frontend['python']
+        assert frontend['queries']==[step['sql'] for step in python_request['steps']]
     outer=read_ref(proof['outerCommand'])['argv'];outer_exit=read_ref(proof['outerExit'])
     assert len(outer)>1
     assert outer[1]==str(Path(__file__).resolve().parent/'cdf_merge_live.py')
@@ -236,6 +282,8 @@ def verify_evidence(result):
     assert bag(read_ref(proof['sourceGoverned']))==bag(result['sourceGoverned'])
     assert set(proof['stages'])==set(result['stages'])
     for name,ref in proof['stages'].items():assert row_document(read_ref(ref))==row_document(result['stages'][name]),'Original stage differs: '+name
+    if dataframe:assert outer[outer.index('--frontend')+1]=='dataframe'
+    elif '--frontend' in outer:assert outer[outer.index('--frontend')+1]=='sql'
     if result.get('profile')=='partitioned':
         assert '--partitioned' in outer
         for name in result['stages']:
@@ -251,6 +299,12 @@ def verify_evidence(result):
             assert before['end']==result['stages'][name]['checkpointBefore'] and after['end']==result['stages'][name]['checkpointAfter']
     plan=read_ref(proof['plan']);assert {plan['subject'],plan['metadataPrincipal'],plan['serviceAdmin']}==set(result['identities'].values())
     assert result['identities']=={'application':plan['subject'],'metadata':plan['metadataPrincipal'],'setup':plan['serviceAdmin']}
+    if dataframe:
+        for step in python_request['steps']:
+            prefix=plan['catalog']+'.'+plan['database']+'.'
+            assert step['operation']['source']==prefix+step['source']
+            assert step['operation']['target']==prefix+step['target']
+            assert step['operation']['end']==step['end']==1
     ranger=read_ref(proof['ranger']);assert ranger['deployedRangerVersion']==result['ranger']=='2.8.0'
     assert plan['deployedRangerEvidenceSha256']==proof['ranger']['sha256']
     from cdf_merge_live import receipt_identity
@@ -339,7 +393,15 @@ def verify_partition_semantics(result):
             assert row_document({key:before[key]})==row_document({key:history[table][key]})
         assert before['id']==after['id'] and before['schema']==after['schema']
         assert stage['checkpointBefore']==0 and stage['checkpointAfter']==(1 if name in ['distinct','same'] else 0)
-        assert 'MERGE INTO ' in stage['sql'] and 'table_changes(' in stage['sql'] and 'part=s.part' in stage['sql']
+        if result.get('frontend','sql')=='dataframe':
+            operation=stage['operation']
+            assert set(operation)=={'source','target','start','end','clauseProfile','expressionMode'}
+            assert operation['start']==operation['end']==1 and operation['clauseProfile']=='partitioned-cdf'
+            assert operation['expressionMode']==('columns-mixed' if name=='same' else 'strings')
+            assert operation['source'].split('.')[-1]==('same' if name=='same' else 'source')
+            assert operation['target'].split('.')[-1]==table
+            assert 'sql' not in stage
+        else:assert 'MERGE INTO ' in stage['sql'] and 'table_changes(' in stage['sql'] and 'part=s.part' in stage['sql']
         assert digest(stage['sourceBefore']) and digest(stage['sourceAfter'])
         assert (stage['sourceBefore']!=stage['sourceAfter'])==(name=='same')
         authority=stage['authorization'];assert type(authority['policy']) is int and digest(authority['downloadSha256'])

@@ -26,7 +26,7 @@ import com.sun.net.httpserver.{HttpServer, HttpExchange}
 import java.util.concurrent.Executors
 import java.nio.file.{Files, Path, Paths}
 import java.security.MessageDigest
-import java.util.Properties
+import java.util.{Map => JavaMap, Properties}
 import java.util.concurrent.TimeUnit
 
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
@@ -38,7 +38,7 @@ import org.apache.spark.sql.SparkSession
 
 import scala.collection.JavaConverters._
 
-/** Installed live session shared by Scala and actual classic PySpark SQL. */
+/** Installed live session shared by Scala SQL and actual classic PySpark frontends. */
 final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
   private val json = new ObjectMapper()
   private val request = json.readTree(Files.readAllBytes(Paths.get(requestPath)))
@@ -175,6 +175,13 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
   /** The actual installed JVM session, shared with the classic PySpark frontend. */
   def session(): SparkSession = spark
 
+  /** Observe the current gateway query thread and application identity from Python. */
+  def queryIdentity(): JavaMap[String, String] = Map(
+    "subject" -> DeltaRangerQuerySubject.current(spark).user(),
+    "ugi" -> UserGroupInformation.getCurrentUser.getShortUserName,
+    "thread" -> Thread.currentThread.getName
+  ).asJava
+
   /** Begin a fresh consumer checkpoint and wait for the supervisor's native before-state. */
   def before(name: String): String = {
     val step = request.path("steps").elements().asScala.find(_.path("name").asText() == name).get
@@ -211,7 +218,7 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
     step.path("sql").asText()
   }
 
-  /** Persist consumer progress only after the submitted SQL has returned successfully. */
+  /** Persist consumer progress only after the submitted frontend has returned successfully. */
   def after(name: String, failure: Throwable): Unit = {
     val step = request.path("steps").elements().asScala.find(_.path("name").asText() == name).get
     val causes = Iterator.iterate(failure)(_.getCause).takeWhile(_ != null).toVector
