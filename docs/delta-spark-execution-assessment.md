@@ -45,6 +45,23 @@ incomplete. Existing product AQE rejection is intact; CDF/MERGE extension and th
 four-pair qualification have not begun. Revisiting ownership is necessary before
 continuing this plan. Catalog-demo remains deferred pending user direction.
 
+## Subsequent Iceberg baseline — 2026-10-25
+
+The [live Iceberg/Ranger AQE baseline](iceberg-spark-ranger-aqe-baseline.md)
+passed native Iceberg and the Gravitino Iceberg wrapper on both Spark 3.5.4 and
+3.5.6 with actual Ranger 2.8.0 and MinIO. The runs verified final adaptive payload
+stages/coalescing, exact masked/filtered join results, referenced-column denial
+and fresh-query revocation after policy refresh. Independent review approved the
+bounded evidence with no blocking findings; original results and version/artifact
+records are retained.
+
+The tested Iceberg/Kyuubi path uses normal query-planning authorization and trusted
+Spark execution, without the Delta proposal's exact-stage permits. This supplies
+the missing architectural comparator; it does not remove existing Delta guards or
+qualify Delta CDF/MERGE target-policy semantics. The wrapper test uses native-seeded
+tables, stock HadoopCatalog selected through the custom-backend option, and disabled
+Gravitino metadata authorization. It is not grants-to-Ranger propagation proof.
+
 ## Recommendation
 
 Qualify **real governed AQE in bounded stages**, then the ordinary read operations

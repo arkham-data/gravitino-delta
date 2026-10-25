@@ -38,6 +38,14 @@ an unsupported implementation. Reports: `task-1-report.md`,
 `task-1-feasibility-review.md`, `task-1/round-1/investigation.md`, and
 `task-1-round1-review.md` in this plan's evidence workspace.
 
+The subsequently authorized [Iceberg baseline](../../iceberg-spark-ranger-aqe-baseline.md)
+passed native and Gravitino-wrapper governed reads on both Spark pins with real
+Ranger 2.8.0/MinIO and actual adaptive payload stages. It tests the ordinary trusted
+Spark/Kyuubi boundary, without exact stage permits. This is a comparator for a
+revised design, not completion of this plan's existing Task 1 ownership contract.
+Independent review approved the bounded baseline evidence; Tasks 2–5 remain
+unstarted under the existing ownership design.
+
 ## Global Constraints
 
 - Keep Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2, Ranger 2.8.0, Java 17, Scala 2.12.21 and S3-compatible storage (MinIO locally).
