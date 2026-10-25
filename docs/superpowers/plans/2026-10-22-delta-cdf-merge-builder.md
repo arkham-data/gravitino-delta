@@ -2,13 +2,13 @@
 
 Status: promoted by the user on 2026-10-25 to the next critical priority and a
 prerequisite for catalog-demo integration. The named SQL and partitioned MERGE
-milestones are complete. This API is not yet supported; the next step is a reviewed
-API design and implementation-ready task breakdown before code changes.
+milestones are complete. This API is not yet supported. The user approved the API
+design on 2026-10-25; the next step is review of the executable implementation plan.
 
-The proposed [DataFrame API design](../specs/2026-10-25-delta-dataframe-merge-design.md)
+The approved [DataFrame API design](../specs/2026-10-25-delta-dataframe-merge-design.md)
 defines strings and Columns, the shared SQL command path, Python packaging and
-qualification. It is pending user approval; this outline is not yet the executable
-implementation plan.
+qualification. The [implementation plan](2026-10-25-delta-dataframe-merge.md)
+supersedes the outline below for execution; no task is implemented yet.
 
 ## Outcome and constraints
 

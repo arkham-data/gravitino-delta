@@ -1,7 +1,7 @@
 # Named DataFrame and PySpark MERGE API
 
-Status: proposed design, pending user review. No implementation or API support is
-claimed. Baseline: `09e092b2f937b1db17f992aedbeb22763162e527`. The user promoted this
+Status: approved by the user's “Proceed” on 2026-10-25. No implementation or API
+support is claimed. Baseline: `09e092b2f937b1db17f992aedbeb22763162e527`. The user promoted this
 work to critical priority before catalog-demo integration. Integration has its own
 plan; broader Spark execution may be an additional prerequisite.
 
@@ -37,8 +37,8 @@ Generating SQL through temporary views would introduce naming/lifetime state and
 cannot preserve arbitrary resolved Column identity. Direct use of Delta's native
 builder would repeat the proven assignment-loss problem. Neither is selected.
 
-The public names, Column support and packaging below are engineering proposals
-for this design, not previously user-approved API details.
+The public names, Column support and packaging below were engineering proposals
+accepted with this design approval.
 
 ## Public surface
 
@@ -75,7 +75,7 @@ A new attempt requires a fresh builder and fresh CDF source.
 This does not disable native retries inside the owned command or authorized
 known-commit reconciliation with the existing transaction identity.
 
-Example of the proposed interface (not executable support yet):
+Example of the approved interface (not executable support yet):
 
 ```python
 from pyspark.sql import functions as F
@@ -250,7 +250,6 @@ zip task naming and focused test organization. Those choices cannot change the
 surface or admitted execution grammar above. An installed identity/lifecycle
 failure is a design finding, not permission to bypass the existing receipts.
 
-After design approval, produce an executable, task-by-task implementation plan:
-first the installed JVM seam, then Python facade/package, then policy/lifecycle
-coverage and four-pair live qualification with independent review. Integration
-remains in its own plan.
+The [implementation plan](../plans/2026-10-25-delta-dataframe-merge.md) covers the
+installed JVM seam, Python facade/package, policy/lifecycle coverage and four-pair
+live qualification with independent review. Integration remains in its own plan.
