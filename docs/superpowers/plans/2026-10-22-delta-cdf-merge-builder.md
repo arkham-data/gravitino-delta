@@ -2,13 +2,15 @@
 
 Status: promoted by the user on 2026-10-25 to the next critical priority and a
 prerequisite for catalog-demo integration. The named SQL and partitioned MERGE
-milestones are complete. This API is not yet supported. The user approved the API
-design on 2026-10-25; the next step is review of the executable implementation plan.
+milestones are complete. The user approved the API design and implementation plan
+on 2026-10-25. JVM Task 1 is locally qualified on Spark 3.5.4 with both Delta pins;
+the Python facade and complete four-pair qualification remain pending.
 
 The approved [DataFrame API design](../specs/2026-10-25-delta-dataframe-merge-design.md)
 defines strings and Columns, the shared SQL command path, Python packaging and
 qualification. The [implementation plan](2026-10-25-delta-dataframe-merge.md)
-supersedes the outline below for execution; no task is implemented yet.
+supersedes the outline below for execution. Its Task 1 passed independent review
+and 37 installed tests per Delta pin; Task 2 (Python packaging/frontend) is next.
 
 ## Outcome and constraints
 

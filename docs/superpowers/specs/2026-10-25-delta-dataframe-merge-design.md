@@ -1,7 +1,8 @@
 # Named DataFrame and PySpark MERGE API
 
-Status: approved by the user's “Proceed” on 2026-10-25. No implementation or API
-support is claimed. Baseline: `09e092b2f937b1db17f992aedbeb22763162e527`. The user promoted this
+Status: approved by the user's “Proceed” on 2026-10-25. Implementation and exact
+qualification scope are tracked in the linked implementation plan; design approval
+does not establish full API support. Baseline: `09e092b2f937b1db17f992aedbeb22763162e527`. The user promoted this
 work to critical priority before catalog-demo integration. Integration has its own
 plan; broader Spark execution may be an additional prerequisite.
 

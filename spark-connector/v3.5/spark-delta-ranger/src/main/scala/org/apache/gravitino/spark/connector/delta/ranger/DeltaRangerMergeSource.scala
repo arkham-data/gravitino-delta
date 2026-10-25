@@ -157,7 +157,11 @@ private[ranger] object DeltaRangerMergeSource {
       check(candidate)
       if (root != null) denied("source projection planned twice")
       val cdf = receipt.cdf.plan(receipt.cdf.carrier)
-      val child = ProjectExec(receipt.materializedColumns, cdf)
+      // Issue the final recipe without an exact identity projection. Spark removes that
+      // projection during physical preparation; freezing it would reject the native successor.
+      val child =
+        if (receipt.materializedColumns == cdf.output) cdf
+        else ProjectExec(receipt.materializedColumns, cdf)
       physical = DeltaRangerPhysicalProvenance.binding(child)
       root = SourceExec(child)(this)
       root
