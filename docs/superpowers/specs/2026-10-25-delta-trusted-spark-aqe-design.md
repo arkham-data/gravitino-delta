@@ -17,13 +17,13 @@
 
 # Delta AQE with trusted Spark execution and operation-boundary authorization
 
-Status: proposed revision awaiting approval of the detailed contract. The user
-agreed to reconsider Delta's physical-stage checks after the validated Iceberg
-baseline. That selects this direction; the timing/profile decisions below are
-explicit proposals. Baseline: `437ef5ace`. Catalog-demo remains deferred, and
-additional logical operations await the user's missing-operation assessment.
+Status: approved. The user approved this detailed contract with “Proceed” after
+reviewing the design summary and document at `f57759621`. This includes captured
+in-flight read decisions, MERGE boundary checks, trusted stock physical execution
+and the stock AQE profile. Baseline: `437ef5ace`. Catalog-demo remains deferred,
+and additional logical operations await the user's missing-operation assessment.
 
-This document proposes replacing the [earlier exact-stage design](2026-10-25-delta-governed-aqe-design.md)
+This approved document replaces the [earlier exact-stage design](2026-10-25-delta-governed-aqe-design.md)
 and its blocked implementation plan. It does not change production behavior or
 reinterpret the retained failed probes as successful implementations.
 
@@ -287,8 +287,8 @@ Acceptance uses semantic and operation-boundary evidence:
 The proposed choices are operation/action authorization with captured in-flight read
 decisions; retained MERGE phase/precommit/reconciliation checks; trusted stock physical
 optimization instead of exact-stage permits; and stock AQE configuration instead of
-the former coalescing-only restrictions. These choices need approval as a complete
-contract before implementation planning.
+the former coalescing-only restrictions. The user approved these choices as a
+complete contract before implementation planning. The replacement plan is [here](../plans/2026-10-25-delta-trusted-spark-aqe.md).
 
 The builder chooses context types, synchronization, file split, native helper adapter
 refactoring and test organization. It must map each existing guard to a retained

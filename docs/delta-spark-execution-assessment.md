@@ -63,10 +63,12 @@ tables, stock HadoopCatalog selected through the custom-backend option, and disa
 Gravitino metadata authorization. It is not grants-to-Ranger propagation proof.
 
 The user agreed to reconsider the physical-stage contract after this baseline.
-The [revised design proposal](superpowers/specs/2026-10-25-delta-trusted-spark-aqe-design.md)
+The [approved revised design](superpowers/specs/2026-10-25-delta-trusted-spark-aqe-design.md)
 retains Delta semantic integration and defines authorization at action/command
-boundaries with trusted stock physical execution. Its detailed timing and profile
-are awaiting approval; existing Delta support and rejection remain unchanged.
+boundaries with trusted stock physical execution. The detailed timing and profile
+are approved; the [replacement implementation plan](superpowers/plans/2026-10-25-delta-trusted-spark-aqe.md)
+is ready for review. Existing Delta support and rejection remain unchanged until
+implementation and qualification succeed.
 
 ## Recommendation
 

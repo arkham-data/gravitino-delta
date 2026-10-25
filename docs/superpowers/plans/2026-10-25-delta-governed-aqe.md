@@ -46,11 +46,11 @@ revised design, not completion of this plan's existing Task 1 ownership contract
 Independent review approved the bounded baseline evidence; Tasks 2–5 remain
 unstarted under the existing ownership design.
 
-A [revised trusted-Spark design](../specs/2026-10-25-delta-trusted-spark-aqe-design.md)
-now proposes replacing this contract. The user agreed to the direction after the
-Iceberg baseline; its detailed authorization timing and stock-AQE profile await
-approval. Do not execute the remaining tasks of this exact-stage plan as though
-the revision were already approved.
+The user approved the [revised trusted-Spark design](../specs/2026-10-25-delta-trusted-spark-aqe-design.md)
+after reviewing the detailed timing and stock-AQE contract. This exact-stage plan
+is superseded by the [replacement plan](2026-10-25-delta-trusted-spark-aqe.md).
+Retain this plan and its failed probes as historical evidence; do not execute its
+remaining tasks or relabel its ownership proof as complete.
 
 ## Global Constraints
 
