@@ -55,8 +55,10 @@ The companion `gravitino_delta.GravitinoDeltaTable` Python API is now implemente
 and packaged as a zip for `spark-submit --py-files`. Its actual DataFrame frontend
 passed five partitioned Ranger 2.8.0/MinIO phases on Spark 3.5.4/Delta 3.3.0,
 including strings, bound Columns, permission denials and same-table writeback.
-This is a narrower qualification than the SQL matrix below; broader API lifecycle
-coverage and the final four-pair matrix remain pending. See the [API design](superpowers/specs/2026-10-25-delta-dataframe-merge-design.md)
+Installed API policy/lifecycle qualification also passed on Spark 3.5.4 with both
+Delta pins: 37 cases per pin, including exact policy demands, partition moves,
+revocation, native retries and commit reconciliation. The final packaged Python
+four-pair matrix remains pending, so this is narrower than the SQL matrix below. See the [API design](superpowers/specs/2026-10-25-delta-dataframe-merge-design.md)
 and [implementation status](superpowers/plans/2026-10-25-delta-dataframe-merge.md).
 
 This example is an explicit consumer program. It is not a generic replica:

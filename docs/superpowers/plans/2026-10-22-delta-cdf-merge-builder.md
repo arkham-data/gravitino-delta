@@ -5,12 +5,13 @@ prerequisite for catalog-demo integration. The named SQL and partitioned MERGE
 milestones are complete. The user approved the API design and implementation plan
 on 2026-10-25. JVM Task 1 is locally qualified on Spark 3.5.4 with both Delta pins. Python Task 2
 is implemented and live-qualified on Spark 3.5.4/Delta 3.3.0 with Ranger 2.8.0 and
-MinIO. Broader frontend lifecycle coverage and the final four-pair matrix remain pending.
+MinIO. Task 3 installed policy/lifecycle qualification passed 37 cases per Delta pin
+on Spark 3.5.4; the final four-pair matrix remains pending.
 
 The approved [DataFrame API design](../specs/2026-10-25-delta-dataframe-merge-design.md)
 defines strings and Columns, the shared SQL command path, Python packaging and
 qualification. The [implementation plan](2026-10-25-delta-dataframe-merge.md)
-supersedes the outline below for execution. Tasks 1–2 passed independent review; Task 3 (policy/lifecycle qualification) is next.
+supersedes the outline below for execution. Tasks 1–3 passed independent review. Task 4 (final four-pair qualification) is next.
 
 ## Outcome and constraints
 

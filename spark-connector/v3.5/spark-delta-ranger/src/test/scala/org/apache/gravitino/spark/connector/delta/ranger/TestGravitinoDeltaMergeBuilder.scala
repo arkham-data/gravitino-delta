@@ -453,6 +453,47 @@ class TestGravitinoDeltaMergeBuilder {
     }
 
   @Test
+  def nativeClauseOrderAndMissingStarColumnsRejectWithoutCheckpoint(): Unit =
+    PartitionedMergeFixture.fixture { (spark, _) =>
+      import GravitinoDeltaMergeTestFixture.{builder, values}
+      val before = PartitionedMergeFixture.rows(spark)
+      val beforeFiles = PartitionedMergeFixture.files()
+      val cases = Vector[() => GravitinoDeltaMergeBuilder](
+        () =>
+          builder(spark, source(spark))
+            .whenMatchedUpdate(values("secret" -> "s.secret"))
+            .whenMatchedDelete("s.id = 1"),
+        () =>
+          builder(spark, source(spark))
+            .whenMatchedDelete("s.id = 2")
+            .whenNotMatchedInsertAll()
+            .whenNotMatchedInsert("s.id = 4", values("id" -> "s.id")),
+        () =>
+          builder(spark, source(spark).select("id", "region").alias("s")).whenMatchedUpdateAll(),
+        () =>
+          builder(spark, source(spark).select("id", "region").alias("s"))
+            .whenMatchedDelete()
+            .whenNotMatchedInsertAll(),
+        () => builder(spark, source(spark)).whenMatchedUpdate(values("secret" -> "secret"))
+      )
+      cases.zipWithIndex.foreach { case (construct, index) =>
+        var checkpoint = 3L
+        val failure =
+          assertThrows(classOf[Exception], () => { construct().execute(); checkpoint = 4L })
+        val detail = PartitionedMergeFixture.messages(failure)
+        assertTrue(
+          if (index < 2) detail.contains("condition") || detail.contains("CONDITION")
+          else if (index < 4) detail.contains("secret")
+          else detail.toLowerCase.contains("ambiguous"),
+          detail
+        )
+        assertEquals(3L, checkpoint); assertEquals(0L, version(spark))
+        assertEquals(beforeFiles, PartitionedMergeFixture.files())
+        assertEquals(before, PartitionedMergeFixture.rows(spark))
+      }
+    }
+
+  @Test
   def unnamedSourcesCannotBorrowNativeDeltaExecution(): Unit =
     NativeSelectFixture.withSpark { spark =>
       val input = spark.range(1).toDF("id")
