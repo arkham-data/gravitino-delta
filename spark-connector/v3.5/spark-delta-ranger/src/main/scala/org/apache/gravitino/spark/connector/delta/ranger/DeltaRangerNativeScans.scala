@@ -24,7 +24,7 @@ import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerNativeOperat
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
-import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{Join, LocalRelation, LogicalPlan}
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.delta.{OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
@@ -37,7 +37,8 @@ import org.apache.spark.sql.execution.{FileSourceScanExec, SparkPlan}
 private[ranger] final class DeltaRangerNativeScans private (
     val session: SparkSession,
     private val receipt: DeltaRangerDecisionReceipt,
-    private val source: Option[DeltaRangerAppendCoordinator.Source] = None
+    private val source: Option[DeltaRangerAppendCoordinator.Source] = None,
+    private val ordinaryJoin: Boolean = false
 ) extends DeltaRangerNativeOperation.ScanOwner {
   val obligations = receipt.obligations
   private case class AcceptedRead(context: DeltaRangerExecutionContext.Context, live: () => Boolean)
@@ -319,13 +320,45 @@ private[ranger] object DeltaRangerNativeScans {
   }
 
   private val tag = TreeNodeTag[Reference]("gravitino.delta.ranger.native-preparation")
-  private def attach(plan: LogicalPlan, prepared: Prepared): Unit =
-    plan.setTagValue(tag, new Reference(prepared))
+  private val joinLocator =
+    TreeNodeTag[Reference]("gravitino.delta.ranger.ordinary-join-preparation")
 
-  def evidence(plan: LogicalPlan): Option[Prepared] = plan.getTagValue(tag).map(_.get)
+  private def attach(plan: LogicalPlan, prepared: Prepared): Unit = {
+    val reference = new Reference(prepared)
+    plan.setTagValue(tag, reference)
+    // The stock suffix's RemoveRedundantAliases also rebuilds root Joins. Preserve only a
+    // locator for this already-sealed ordinary owner; helpers and append never issue it.
+    if (plan.isInstanceOf[Join] && prepared.owner.ordinaryJoin && !prepared.owner.appendInput)
+      plan.foreach {
+        case relation: LogicalRelation => relation.setTagValue(joinLocator, reference)
+        case _                         =>
+      }
+  }
+
+  def joinLocatorPresent(plan: LogicalPlan): Boolean = plan.getTagValue(joinLocator).nonEmpty
+
+  def evidence(plan: LogicalPlan): Option[Prepared] = plan.getTagValue(tag).map(_.get).orElse {
+    if (!plan.isInstanceOf[Join]) None
+    else {
+      val scans = plan.collect { case relation: LogicalRelation => relation }
+      if (!scans.exists(joinLocatorPresent)) None
+      else {
+        if (scans.exists(!joinLocatorPresent(_)))
+          throw new SecurityException("Missing ordinary join preparation locator")
+        val found = scans.map(_.getTagValue(joinLocator).get.get).distinct
+        if (found.size != 1 || !found.head.owner.ordinaryJoin || found.head.owner.appendInput)
+          throw new SecurityException("Mixed ordinary join preparation locators")
+        val prepared = found.head
+        // A leaf locator never supplies root authority: replay and compare the entire exact
+        // executable suffix before returning evidence to capture or the Dataset action gate.
+        prepared.verifyExecutable(plan, prepared.owner.session)
+        Some(prepared)
+      }
+    }
+  }
 
   def prepared(plan: LogicalPlan): Prepared =
-    plan.getTagValue(tag).getOrElse(throw new SecurityException("Missing native preparation")).get
+    evidence(plan).getOrElse(throw new SecurityException("Missing native preparation"))
 
   def forAppend(
       spark: SparkSession,
@@ -337,11 +370,14 @@ private[ranger] object DeltaRangerNativeScans {
       plan: LogicalPlan,
       spark: SparkSession,
       optimized: Boolean = true
-  ): DeltaRangerNativeScans =
+  ): DeltaRangerNativeScans = {
+    val receipt = DeltaRangerDecisionReceipt.consumeOwned(plan, spark, optimized)
     new DeltaRangerNativeScans(
       spark,
-      DeltaRangerDecisionReceipt.consumeOwned(plan, spark, optimized)
+      receipt,
+      ordinaryJoin = DeltaRangerDecisionReceipt.ordinaryJoin(plan, receipt)
     )
+  }
 }
 
 /** Native factory product with inert serialization and identity-bound driver continuation. */

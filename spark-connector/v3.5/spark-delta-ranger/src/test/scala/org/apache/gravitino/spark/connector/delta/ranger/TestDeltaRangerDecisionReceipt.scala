@@ -38,6 +38,8 @@ import org.apache.spark.unsafe.types.UTF8String
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 
+// Executable receipts are issued by normalization. These tests deliberately inspect that
+// boundary; pending analysis and its independent payload-denial checks live in ReadComposition.
 class TestDeltaRangerDecisionReceipt {
   private val tag =
     TreeNodeTag[DeltaRangerDecisionReceipt.Reference]("gravitino.delta.ranger.decision-receipt")
@@ -50,7 +52,7 @@ class TestDeltaRangerDecisionReceipt {
           "SELECT x.secret, y.secret FROM a.db.t x JOIN a.db.t y ON x.id = y.id WHERE y.region = 'keep'"
         )
         .queryExecution
-        .analyzed
+        .normalized
       val receipt = plan.getTagValue(tag).get.receipt
       assertEquals(2, receipt.obligations.size)
       assertEquals(
@@ -74,7 +76,7 @@ class TestDeltaRangerDecisionReceipt {
   @Test
   def referencesRenderConstantlyAndDeserializeWithoutAuthority(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
-      val plan = spark.sql("SELECT secret FROM a.db.t").queryExecution.analyzed
+      val plan = spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized
       val reference = plan.getTagValue(tag).get
       assertEquals("Delta authorization reference", reference.toString)
       val bytes = new ByteArrayOutputStream
@@ -97,7 +99,7 @@ class TestDeltaRangerDecisionReceipt {
   @Test
   def changedOutputsRemovedMasksAndForeignSamePathSourcesCannotBorrowReceipt(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
-      val plan = spark.sql("SELECT secret FROM a.db.t WHERE id = 1").queryExecution.analyzed
+      val plan = spark.sql("SELECT secret FROM a.db.t WHERE id = 1").queryExecution.normalized
       val top = plan.asInstanceOf[Project]
       val changedAlias = top.copy(projectList = Seq(Alias(top.projectList.head, "borrowed")()))
       changedAlias.copyTagsFrom(plan)
@@ -133,7 +135,7 @@ class TestDeltaRangerDecisionReceipt {
       val foreign = spark
         .sql("SELECT secret FROM b.db.t")
         .queryExecution
-        .analyzed
+        .normalized
         .collectFirst { case r: LogicalRelation => r }
         .get
       val replaced = replaceLeaf(plan, foreign.copy(output = relation.output))
@@ -148,7 +150,7 @@ class TestDeltaRangerDecisionReceipt {
   @Test
   def staleMetadataSameNumberPolicyAndGroupsRejectOriginalReceipt(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, policy) =>
-      val plan = spark.sql("SELECT secret FROM a.db.t").queryExecution.analyzed
+      val plan = spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized
       val registration = NativeSelectFixture.bindingFixture(spark, "a")
       registration.properties.put("delta.registration.receipt.token", "replacement-token")
       rejected("registration binding", () => DeltaRangerReadRule.check(plan, spark))
@@ -176,7 +178,10 @@ class TestDeltaRangerDecisionReceipt {
             case "lease" => registration.clock.set(TimeUnit.SECONDS.toNanos(301))
             case "close" => registration.wrapper.close()
           }
-        assertThrows(classOf[SecurityException], () => spark.sql("SELECT secret FROM a.db.t"))
+        assertThrows(
+          classOf[SecurityException],
+          () => spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized
+        )
       }
     }
   }
@@ -184,7 +189,7 @@ class TestDeltaRangerDecisionReceipt {
   @Test
   def configurationChangeRejectsBeforeOptimizerConsumption(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
-      val plan = spark.sql("SELECT secret FROM a.db.t").queryExecution.analyzed
+      val plan = spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized
       spark.conf.set("spark.sql.optimizer.inSetConversionThreshold", "2")
       rejected("configuration changed", () => DeltaRangerReadRule.check(plan, spark))
     }
@@ -231,7 +236,8 @@ class TestDeltaRangerDecisionReceipt {
           assertEquals(1, proof.owner.obligations.size)
           assertTrue(proof.occurrences.isEmpty)
           proof.verify(prepared.clone(), spark)
-          val beforeCollapse = new TestPrefix(spark).execute(frame.queryExecution.analyzed.clone())
+          val beforeCollapse =
+            new TestPrefix(spark).execute(frame.queryExecution.normalized.clone())
           proof.verify(beforeCollapse.clone(), spark)
           val changed = beforeCollapse match {
             case project: org.apache.spark.sql.catalyst.plans.logical.Project =>
@@ -257,7 +263,7 @@ class TestDeltaRangerDecisionReceipt {
   def mutableLiteralCannotChangeRetainedReplayAuthority(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
       val plan =
-        spark.sql("SELECT secret FROM a.db.t WHERE region = 'keep'").queryExecution.analyzed
+        spark.sql("SELECT secret FROM a.db.t WHERE region = 'keep'").queryExecution.normalized
       val candidate = new TestPrefix(spark).execute(plan.clone())
       candidate.copyTagsFrom(plan)
       DeltaRangerDecisionReceipt.check(candidate, spark, optimized = true)
@@ -281,7 +287,7 @@ class TestDeltaRangerDecisionReceipt {
   def unknownFoldableCastChildIsRejectedWithoutEvaluation(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
       val plan =
-        spark.sql("SELECT secret FROM a.db.t").queryExecution.analyzed.asInstanceOf[Project]
+        spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized.asInstanceOf[Project]
       val calls = new AtomicInteger
       val changed =
         plan.copy(projectList = Seq(Alias(Cast(CountingFoldable(calls), DateType), "clock")()))
@@ -322,7 +328,7 @@ class TestDeltaRangerDecisionReceipt {
       NativeSelectFixture.catalogPolicies = Map("b" -> second)
       try {
         val query = spark.sql("SELECT a.secret,b.secret FROM a.db.t a JOIN b.db.t b ON a.id=b.id")
-        val receipt = query.queryExecution.analyzed.getTagValue(tag).get.receipt
+        val receipt = query.queryExecution.normalized.getTagValue(tag).get.receipt
         val engines = receipt.obligations.map(o => o.scan.catalog -> o.binding.engine()).toMap
         assertTrue(engines("a") eq policy.engine)
         assertTrue(engines("b") eq second.engine)
@@ -338,7 +344,7 @@ class TestDeltaRangerDecisionReceipt {
   @Test
   def emptyOptimizationStillRevalidatesRemovedOriginalRegistration(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
-      val plan = spark.sql("SELECT secret FROM a.db.t WHERE false").queryExecution.analyzed
+      val plan = spark.sql("SELECT secret FROM a.db.t WHERE false").queryExecution.normalized
       val candidate = new TestPrefix(spark).execute(plan.clone())
       candidate.copyTagsFrom(plan)
       assertTrue(candidate.collect { case r: LogicalRelation => r }.isEmpty)
@@ -357,7 +363,7 @@ class TestDeltaRangerDecisionReceipt {
   def replayDoesNotSubmitJobsOrPrepareNativeScans(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
       val plan =
-        spark.sql("SELECT secret FROM a.db.t WHERE id IN (1L,2L,3L)").queryExecution.analyzed
+        spark.sql("SELECT secret FROM a.db.t WHERE id IN (1L,2L,3L)").queryExecution.normalized
       val candidate = new TestPrefix(spark).execute(plan.clone())
       candidate.copyTagsFrom(plan)
       val before = candidate.collect { case r: LogicalRelation => r.relation }
@@ -400,7 +406,7 @@ class TestDeltaRangerDecisionReceipt {
   @Test
   def changedSignedZeroCannotBorrowExpressionBinding(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
-      val plan = spark.sql("SELECT CAST(id AS DOUBLE) * 0.0D FROM a.db.t").queryExecution.analyzed
+      val plan = spark.sql("SELECT CAST(id AS DOUBLE) * 0.0D FROM a.db.t").queryExecution.normalized
       val changed = plan.transformAllExpressions {
         case literal: Literal if literal.dataType == DoubleType && literal.value == 0.0d =>
           Literal(-0.0d)
@@ -433,13 +439,14 @@ class TestDeltaRangerDecisionReceipt {
     }
     NativeSelectFixture.withBoundSpark { (spark, _) =>
       val query = spark.sql("SELECT secret FROM a.db.t")
-      val approved = query.queryExecution.analyzed
+      val approved = query.queryExecution.normalized
       cachedPlan.setTagValue(tag, approved.getTagValue(tag).get)
       rejected(
         "cache substitution",
         () => DeltaRangerDecisionReceipt.check(cachedPlan, spark, optimized = true)
       )
-      // Spark constructs a distinct session to cache this receipt-bearing query.
+      // Default cache planning clones the session; its exact executable receipt fails there.
+      // ReadComposition separately pins identical settings to exercise cache-operation denial.
       rejected("session changed", () => query.cache())
     }
   }
@@ -448,19 +455,31 @@ class TestDeltaRangerDecisionReceipt {
   def configurationMutationDuringPolicyEvaluationCannotEmitReceipt(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, policy) =>
       policy.onRequest = _ => spark.conf.set("spark.sql.session.timeZone", "Pacific/Honolulu")
-      rejected("configuration changed", () => spark.sql("SELECT secret FROM a.db.t"))
+      rejected(
+        "configuration changed",
+        () => spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized
+      )
     }
 
   @Test
   def finalMetadataWorkPrecedesEnginePublicationAndSubjectChecks(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, policy) =>
       val registration = NativeSelectFixture.bindingFixture(spark, "a")
-      registration.onRead = number => if (number == 4) policy.start()
-      rejected("publication changed", () => spark.sql("SELECT secret FROM a.db.t"))
+      // Arm the final metadata callback after payload authorization begins, since ordinary
+      // staging now performs separate registration-only observations before that boundary.
+      policy.onRequest = _ => registration.onRead = _ => policy.start()
+      rejected(
+        "publication changed",
+        () => spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized
+      )
       registration.onRead = _ => ()
       policy.onRequest =
         _ => spark.sparkContext.setLocalProperty("kyuubi.session.user", "changed-user")
-      try rejected("identity contradicts", () => spark.sql("SELECT secret FROM a.db.t"))
+      try
+        rejected(
+          "identity contradicts",
+          () => spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized
+        )
       finally spark.sparkContext.setLocalProperty("kyuubi.session.user", null)
     }
 
@@ -491,7 +510,7 @@ class TestDeltaRangerDecisionReceipt {
       )
       spark.conf.set("spark.sql.cbo.starSchemaDetection", "false")
       spark.conf.set("spark.sql.optimizer.excludedRules", classOf[DeltaRangerPreCboRule].getName)
-      rejected("consumer", () => spark.sql("SELECT secret FROM a.db.t"))
+      rejected("consumer", () => spark.sql("SELECT secret FROM a.db.t").queryExecution.normalized)
     }
 
   @Test
@@ -500,9 +519,9 @@ class TestDeltaRangerDecisionReceipt {
       val query = spark.sql(
         "SELECT x.secret AS first, y.secret AS second FROM a.db.t x JOIN a.db.t y ON x.id = y.id WHERE y.region = 'keep'"
       )
-      val receipt = query.queryExecution.analyzed.getTagValue(tag).get.receipt
+      val receipt = query.queryExecution.normalized.getTagValue(tag).get.receipt
       assertEquals(2, receipt.obligations.size)
-      DeltaRangerReadRule.check(query.queryExecution.analyzed.clone(), spark)
+      DeltaRangerReadRule.check(query.queryExecution.normalized.clone(), spark)
       assertEquals(Set(Row("a-one-masked", "a-one-masked"), Row(null, null)), query.collect().toSet)
 
     }
@@ -510,7 +529,8 @@ class TestDeltaRangerDecisionReceipt {
   @Test
   def metadataCallbackCannotMutateAlreadyComparedCandidate(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, _) =>
-      val plan = spark.sql("SELECT secret FROM a.db.t WHERE region='keep'").queryExecution.analyzed
+      val plan =
+        spark.sql("SELECT secret FROM a.db.t WHERE region='keep'").queryExecution.normalized
       val literal = plan
         .collect { case node =>
           node.expressions.flatMap(_.collect { case l: Literal if l.dataType == StringType => l })
@@ -529,7 +549,7 @@ class TestDeltaRangerDecisionReceipt {
       val plan = spark
         .sql("SELECT x.secret,y.secret FROM a.db.t x JOIN b.db.t y ON x.id=y.id")
         .queryExecution
-        .analyzed
+        .normalized
         .asInstanceOf[Project]
       val output = plan.projectList.head.asInstanceOf[AttributeReference]
       val changedOutput = plan.copy(projectList =
@@ -547,7 +567,7 @@ class TestDeltaRangerDecisionReceipt {
           "logical binding changed"
         )
       )
-      val other = spark.sql("SELECT secret,id FROM b.db.t").queryExecution.analyzed
+      val other = spark.sql("SELECT secret,id FROM b.db.t").queryExecution.normalized
       val mixed = plan.copy(child = join.copy(right = other))
       mixed.setTagValue(tag, plan.getTagValue(tag).get)
       val mixedFailure =

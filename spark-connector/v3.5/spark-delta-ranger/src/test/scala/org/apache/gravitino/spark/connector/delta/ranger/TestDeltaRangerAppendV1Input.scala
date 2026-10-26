@@ -117,9 +117,18 @@ class TestDeltaRangerAppendV1Input {
             source.onRequest = _ =>
               if (atInsert && !inputObserved) {
                 inputObserved = true
+                val command = SQLExecution
+                  .getQueryExecution(
+                    spark.sparkContext.getLocalProperty("spark.sql.execution.id").toLong
+                  )
+                  .analyzed
+                  .asInstanceOf[AppendData]
+                originalReceipt = DeltaRangerDecisionReceipt
+                  .consumeOwned(command.analyzedQuery.get, spark, optimized = false)
+                trace.source(originalReceipt)
                 trace.record(
                   "original-obligations",
-                  s"receipt=${trace.id(originalReceipt)} occurrences=${originalReceipt.obligations.size} sameReceipt=true"
+                  s"receipt=${trace.id(originalReceipt)} occurrences=${originalReceipt.obligations.size} issuedSource=true"
                 )
                 assertNull(DeltaRangerNativeOperation.current())
                 assertTrue(OptimisticTransaction.getActive.isEmpty)
@@ -131,9 +140,8 @@ class TestDeltaRangerAppendV1Input {
             try {
               val data = spark.sql("SELECT id, secret, region FROM b.db.t")
               val original = data.queryExecution.analyzed
-              originalReceipt =
-                DeltaRangerDecisionReceipt.consumeOwned(original, spark, optimized = false)
-              trace.source(originalReceipt)
+              assertTrue(DeltaRangerOrdinaryRead.pending(original))
+              assertFalse(DeltaRangerDecisionReceipt.present(original))
               spark.sessionState.analyzer.batches
               val settings = spark.sessionState.conf.getAllConfs.toMap
               Files.write(
@@ -146,7 +154,12 @@ class TestDeltaRangerAppendV1Input {
               val qe = completed.poll(10, TimeUnit.SECONDS)
               assertNotNull(qe)
               val command = qe.analyzed.asInstanceOf[AppendData]
-              assertSame(original, command.analyzedQuery.get)
+              assertNotSame(original, command.analyzedQuery.get)
+              assertSame(command.query, command.analyzedQuery.get)
+              assertEquals(
+                DeltaRangerReadRule.extract(original, spark).map(_._2).toSet,
+                originalReceipt.obligations.map(_.columns).toSet
+              )
               val optimized = qe.optimizedPlan.asInstanceOf[AppendData]
               val planned = qe.sparkPlan.collectFirst { case guard: DeltaRangerAppendInputExec =>
                 guard
@@ -165,7 +178,9 @@ class TestDeltaRangerAppendV1Input {
               assertReason(
                 assertThrows(
                   classOf[SecurityException],
-                  () => DeltaRangerDecisionReceipt.consumeOwned(original, spark, optimized = false)
+                  () =>
+                    DeltaRangerDecisionReceipt
+                      .consumeOwned(command.analyzedQuery.get, spark, optimized = false)
                 ),
                 "configuration changed"
               )
@@ -311,27 +326,36 @@ class TestDeltaRangerAppendV1Input {
 
   /** Bare-source authority is revalidated when retained input reaches a writer. */
   @Test
-  def bareRetainedSourceCannotReuseChangedMaskOrPublication(): Unit = {
+  def bareIssuedSourceCannotReuseChangedMaskOrPublication(): Unit = {
     Seq("mask", "publication").foreach { change =>
       withCase("bare-retained-" + change) { c =>
         asApp {
           val data = c.spark.table("b.db.t")
           val receipt = DeltaRangerDecisionReceipt.consumeOwned(
-            data.queryExecution.analyzed,
+            data.queryExecution.normalized,
             c.spark,
             optimized = false
           )
           assertEquals(Set("id", "secret", "region"), receipt.obligations.head.columns)
-          if (change == "mask") c.source.mask = "upper({col})"
-          else {
-            val next = c.source.plugin.getPoliciesVersion + 1L
-            when(c.source.plugin.getPoliciesVersion).thenReturn(next)
-            c.source.start()
-          }
-          assertReason(
-            appendFailure(c, data, recordSource = false),
-            if (change == "mask") "action decision changed" else "publication changed"
-          )
+          var fired = false
+          c.source.onRequest = _ =>
+            if (!fired && atInsert) {
+              fired = true
+              if (change == "mask") c.source.mask = "upper({col})"
+              else {
+                val next = c.source.plugin.getPoliciesVersion + 1L
+                when(c.source.plugin.getPoliciesVersion).thenReturn(next)
+                c.source.start()
+              }
+            }
+          try {
+            assertReason(
+              appendFailure(c, data, recordSource = false),
+              if (change == "mask") "action decision changed" else "publication changed"
+            )
+            assertTrue(fired, "change must reach the actual issued source input")
+            assertThrows(classOf[SecurityException], () => receipt.validateAction(c.spark))
+          } finally c.source.onRequest = _ => ()
         }
       }
     }
@@ -461,7 +485,7 @@ class TestDeltaRangerAppendV1Input {
       withCase(name) { c =>
         val data = c.spark.sql(sql)
         val receipt = DeltaRangerDecisionReceipt.consumeOwned(
-          data.queryExecution.analyzed,
+          data.queryExecution.normalized,
           c.spark,
           optimized = false
         )
@@ -469,14 +493,19 @@ class TestDeltaRangerAppendV1Input {
         var reached = false
         val policy = if (name == "self") c.target else c.source
         policy.onRequest = request =>
-          if (atInsert) {
+          if (!reached && atInsert) {
             reached = true
+            val actual = activeSourceReceipt(c.spark)
+            assertEquals(occurrences, actual.obligations.size)
+            assertEquals(
+              receipt.obligations.map(_.columns).toSet,
+              actual.obligations.map(_.columns).toSet
+            )
+            assertTrue(actual.obligations.forall(_.columns.nonEmpty))
             c.trace.record(
               "original-obligations",
-              s"receipt=${c.trace.id(receipt)} occurrences=$occurrences sameReceipt=true"
+              s"receipt=${c.trace.id(actual)} occurrences=$occurrences sameOriginalDemands=true"
             )
-            assertEquals(occurrences, receipt.obligations.size)
-            assertTrue(receipt.obligations.forall(_.columns.nonEmpty))
           }
         appendSuccess(c, data, publishes = name != "empty")
         assertTrue(reached)
@@ -496,7 +525,7 @@ class TestDeltaRangerAppendV1Input {
       try {
         val data = c.spark.sql("SELECT id, secret, region FROM b.db.t")
         val receipt = DeltaRangerDecisionReceipt.consumeOwned(
-          data.queryExecution.analyzed,
+          data.queryExecution.normalized,
           c.spark,
           optimized = false
         )
@@ -511,10 +540,14 @@ class TestDeltaRangerAppendV1Input {
         c.source.onRequest = _ =>
           if (!fired && atInsert) {
             fired = true
+            val actual = activeSourceReceipt(c.spark)
+            assertEquals(1, actual.obligations.size)
+            assertEquals("b", actual.obligations.head.scan.catalog)
+            assertSame(target.deltaLog, actual.obligations.head.binding.log())
             c.source.denied.add("b:secret")
             c.trace.record(
               "original-obligations",
-              s"receipt=${c.trace.id(receipt)} occurrences=1 sameReceipt=true source=b target=a sameLog=true mutationFired=true"
+              s"receipt=${c.trace.id(actual)} occurrences=1 source=b target=a sameLog=true mutationFired=true"
             )
           }
         try {
@@ -862,10 +895,23 @@ class TestDeltaRangerAppendV1Input {
   def missingAmbiguousAndExpiredReferencesCannotIssueAuthority(): Unit =
     withCase("reference-negatives") { c =>
       val prior = c.spark.sql("SELECT id, secret, region FROM b.db.t")
-      appendSuccess(c, prior)
       val tag =
         TreeNodeTag[DeltaRangerAppendV1Input.Reference]("gravitino.delta.ranger.append-input")
-      val expired = prior.queryExecution.analyzed.getTagValue(tag).get
+      var expired: DeltaRangerAppendV1Input.Reference = null
+      c.source.onRequest = _ =>
+        if (expired == null && atInsert) {
+          val command = SQLExecution
+            .getQueryExecution(
+              c.spark.sparkContext.getLocalProperty("spark.sql.execution.id").toLong
+            )
+            .analyzed
+            .asInstanceOf[AppendData]
+          expired = command.analyzedQuery.get.getTagValue(tag).get
+        }
+      appendSuccess(c, prior)
+      c.source.onRequest = _ => ()
+      assertNotNull(expired)
+      assertTrue(prior.queryExecution.analyzed.getTagValue(tag).isEmpty)
       val data = c.spark.sql("SELECT id, secret, region FROM b.db.t")
       var fired = false
       c.source.onRequest = _ =>
@@ -923,7 +969,7 @@ class TestDeltaRangerAppendV1Input {
       "raw-append" -> "unnamed target",
       "raw-select" -> "Raw Delta paths are not admitted",
       "streaming" -> "Unqualified Delta Ranger route: unresolved or streaming plan",
-      "overwrite" -> "Derived or reused Delta plans are not qualified",
+      "overwrite" -> "Unqualified Delta Ranger route: OverwriteByExpression",
       "create" -> "Unqualified Delta Ranger route: CreateTableAsSelect",
       "replace" -> "Unqualified Delta Ranger route: ReplaceTableAsSelect"
     )
@@ -943,14 +989,14 @@ class TestDeltaRangerAppendV1Input {
       DeltaRangerAppendInventory.qualify(c.spark)
       val data = c.spark.sql("SELECT id, secret, region FROM b.db.t")
       val receipt = DeltaRangerDecisionReceipt.consumeOwned(
-        data.queryExecution.analyzed,
+        data.queryExecution.normalized,
         c.spark,
         optimized = false
       )
       c.trace.source(receipt)
       c.trace.record(
         "qualified-source",
-        s"route=$route analyzedReceipt=${c.trace.id(receipt)} logicalIsAnalyzed=${data.queryExecution.logical eq data.queryExecution.analyzed} logicalHasReceipt=${DeltaRangerDecisionReceipt.present(data.queryExecution.logical)}"
+        s"route=$route normalizedParentReceipt=${c.trace.id(receipt)} logicalIsAnalyzed=${data.queryExecution.logical eq data.queryExecution.analyzed} logicalHasReceipt=${DeltaRangerDecisionReceipt.present(data.queryExecution.logical)}"
       )
       val catalog = NativeSelectFixture.wrapper(c.spark, "a")
       val table = catalog
@@ -1379,20 +1425,38 @@ class TestDeltaRangerAppendV1Input {
     val qe = SQLExecution.getQueryExecution(id)
     qe.executedPlan.collectFirst { case guard: DeltaRangerAppendInputExec => guard }.get
   }
+  private def activeSourceReceipt(spark: SparkSession): DeltaRangerDecisionReceipt = {
+    val command = SQLExecution
+      .getQueryExecution(spark.sparkContext.getLocalProperty("spark.sql.execution.id").toLong)
+      .analyzed
+      .asInstanceOf[AppendData]
+    val tag =
+      TreeNodeTag[DeltaRangerDecisionReceipt.Reference]("gravitino.delta.ranger.decision-receipt")
+    command.analyzedQuery.get.getTagValue(tag).get.receipt
+  }
+
+  // Source tracing is metadata-only: tests must not authorize pending input before the
+  // actual typed append boundary whose ordering and payload denial they are exercising.
+  private def recordPendingSource(c: Case, data: Dataset[Row], name: String): Unit = {
+    val scans = DeltaRangerReadRule.extract(data.queryExecution.analyzed, c.spark)
+    c.trace.record(
+      "pending-source",
+      s"attempt=$name occurrences=${scans.size} resources=${scans.map { case (scan, columns) =>
+          (scan.catalog, scan.database, scan.table, columns)
+        }}"
+    )
+  }
+
   private def appendSuccess(c: Case, data: Dataset[Row], publishes: Boolean = true): Unit = {
     val root = Paths.get(NativeSelectFixture.locations("a")).getParent
     val name = "attempt-" + java.util.UUID.randomUUID().toString
     val before =
       InstalledAppendBoundaryProbe.manifest(root, c.trace.directory.resolve(name + "-before"))
-    c.trace.source(
-      DeltaRangerDecisionReceipt.consumeOwned(
-        data.queryExecution.analyzed,
-        c.spark,
-        optimized = false
-      )
-    )
+    recordPendingSource(c, data, name)
+    var returned = false
     try {
       data.write.mode("append").insertInto("a.db.t")
+      returned = true
       c.successfulReturns += 1
       if (publishes) c.committed += 1
       c.attempts += Map[String, Any](
@@ -1410,8 +1474,8 @@ class TestDeltaRangerAppendV1Input {
     } finally {
       val after =
         InstalledAppendBoundaryProbe.manifest(root, c.trace.directory.resolve(name + "-after"))
-      assertNotEquals(before, after)
-      if (!publishes) {
+      if (returned) assertNotEquals(before, after)
+      if (returned && !publishes) {
         assertTrue(before.forall { case (path, stamp) => after.get(path).contains(stamp) })
         assertEquals(
           before.filter(_._1.contains("/_delta_log/")),
@@ -1433,18 +1497,7 @@ class TestDeltaRangerAppendV1Input {
     val before =
       InstalledAppendBoundaryProbe.manifest(root, c.trace.directory.resolve(name + "-before"))
     val objects = inventory(root)
-    if (recordSource) {
-      val receipt = DeltaRangerDecisionReceipt.consumeOwned(
-        data.queryExecution.analyzed,
-        c.spark,
-        optimized = false
-      )
-      c.trace.source(receipt)
-      c.trace.record(
-        "original-source",
-        s"attempt=$name occurrences=${receipt.obligations.size} columns=${receipt.obligations.map(_.columns)}"
-      )
-    }
+    if (recordSource) recordPendingSource(c, data, name)
     try {
       val failure =
         assertThrows(classOf[Exception], () => data.write.mode("append").insertInto("a.db.t"))

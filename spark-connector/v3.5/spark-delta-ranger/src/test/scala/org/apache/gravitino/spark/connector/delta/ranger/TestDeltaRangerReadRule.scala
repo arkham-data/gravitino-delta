@@ -369,7 +369,7 @@ private[ranger] object NativeSelectFixture {
   def withNativeOperation[T](spark: SparkSession, catalog: String = "b")(
       body: org.apache.spark.sql.delta.files.TahoeLogFileIndex => T
   ): T = {
-    val plan = spark.sql(s"SELECT id, region FROM $catalog.db.t").queryExecution.analyzed
+    val plan = spark.sql(s"SELECT id, region FROM $catalog.db.t").queryExecution.normalized
     val owner = DeltaRangerNativeScans.consume(plan, spark, optimized = false)
     owner.run { _ => body(owner.obligations.head.binding.index()) }
   }

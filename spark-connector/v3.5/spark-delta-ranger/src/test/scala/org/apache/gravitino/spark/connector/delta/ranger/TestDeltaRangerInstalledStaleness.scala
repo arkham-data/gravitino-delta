@@ -133,7 +133,7 @@ class TestDeltaRangerInstalledStaleness {
         finally spark.conf.set("spark.sql.session.timeZone", zone)
         spark.conf.set("spark.sql.adaptive.enabled", "true")
         try {
-          rejected(frame, root, "unsupported user aqe")
+          rejected(frame, root, "configuration changed")
           assertEquals("true", spark.conf.get("spark.sql.adaptive.enabled"))
         } finally spark.conf.set("spark.sql.adaptive.enabled", "false")
       }
@@ -391,6 +391,11 @@ class TestDeltaRangerInstalledStaleness {
       root: DeltaRangerCollectGuardExec,
       expected: String
   ): RuntimeException = {
+    // The action gate runs before Spark clears metrics from a prior accepted action.
+    // A denied attempt must leave every scan counter unchanged, including initial zeroes.
+    val before = DeltaRangerPhysicalProvenance.nodes(root).collect {
+      case scan: FileSourceScanExec => scan -> scan.metrics("numOutputRows").value
+    }
     val failure = assertThrows(
       classOf[RuntimeException],
       () => { frame.collectAsList(); () },
@@ -404,9 +409,10 @@ class TestDeltaRangerInstalledStaleness {
       failure.getStackTrace.exists(frame =>
         frame.getClassName.endsWith(
           "DeltaRangerCollectGuardExec"
-        ) && frame.getMethodName == "executeCollect"
+        ) && frame.getMethodName == "resetMetrics"
       ),
-      "Failure must originate at installed collection entry"
+      "Failure must originate at the installed Dataset action entry: " +
+        failure.getStackTrace.mkString("\n")
     )
     assertFalse(
       failure.getStackTrace.exists(frame =>
@@ -417,12 +423,9 @@ class TestDeltaRangerInstalledStaleness {
       "Failure must precede defense-in-depth execution"
     )
     assertSame(root, frame.queryExecution.executedPlan)
-    assertTrue(
-      DeltaRangerPhysicalProvenance
-        .nodes(root)
-        .collect { case scan: FileSourceScanExec => scan }
-        .forall(_.metrics("numOutputRows").value == 0L)
-    )
+    before.foreach { case (scan, rows) =>
+      assertEquals(rows, scan.metrics("numOutputRows").value, "Denied action emitted scan rows")
+    }
     failure
   }
 }

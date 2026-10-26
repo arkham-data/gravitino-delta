@@ -163,7 +163,32 @@ private[ranger] object DeltaRangerDecisionReceipt {
   }
   private val tag = TreeNodeTag[Reference]("gravitino.delta.ranger.decision-receipt")
 
+  private val joinLocator = TreeNodeTag[Reference]("gravitino.delta.ranger.ordinary-join-receipt")
+
   def present(plan: LogicalPlan): Boolean = plan.getTagValue(tag).nonEmpty
+
+  def executableReference(plan: LogicalPlan): Boolean =
+    present(plan) || plan.getTagValue(joinLocator).nonEmpty
+
+  // RemoveRedundantAliases rebuilds a root Join without its tags on both pinned Spark patches.
+  // Only ordinary completed-query authorization calls this locator issuer. Leaves carry the
+  // existing inert reference, never independent authority for their subtree.
+  def retainOrdinaryJoinReceipt(plan: LogicalPlan): Unit = plan match {
+    case _: Join =>
+      val reference = plan.getTagValue(tag).getOrElse(denied("missing receipt"))
+      plan.foreach {
+        case relation: LogicalRelation => relation.setTagValue(joinLocator, reference)
+        case _                         =>
+      }
+    case _ =>
+  }
+
+  def ordinaryJoin(plan: LogicalPlan, receipt: DeltaRangerDecisionReceipt): Boolean = {
+    val scans = plan.collect { case relation: LogicalRelation => relation }
+    plan.isInstanceOf[Join] && scans.nonEmpty && scans.forall(
+      _.getTagValue(joinLocator).exists(_.receipt eq receipt)
+    )
+  }
 
   def attach(
       plan: LogicalPlan,
@@ -205,14 +230,24 @@ private[ranger] object DeltaRangerDecisionReceipt {
       spark: SparkSession,
       optimized: Boolean
   ): DeltaRangerDecisionReceipt = {
-    val receipt = plan.getTagValue(tag).getOrElse(denied("missing receipt")).receipt
+    val receipt = plan.getTagValue(tag).map(_.receipt).getOrElse {
+      if (!optimized || !plan.isInstanceOf[Join]) denied("missing receipt")
+      val scans = plan.collect { case relation: LogicalRelation => relation }
+      if (scans.isEmpty || scans.exists(_.getTagValue(joinLocator).isEmpty))
+        denied("missing join receipt locator")
+      val receipts = scans.map(_.getTagValue(joinLocator).get.receipt).distinct
+      if (receipts.size != 1) denied("ambiguous join receipt locator")
+      receipts.head
+    }
+    // Locator recovery is only a lookup. The unchanged exact full-prefix replay and all
+    // current receipt checks must succeed before any native preparation can use this owner.
     receipt.consume(plan, spark, optimized)
     receipt
   }
 
   private def detached(plan: LogicalPlan): LogicalPlan = {
     val copy = plan.clone()
-    copy.foreach(_.unsetTagValue(tag))
+    copy.foreach { node => node.unsetTagValue(tag); node.unsetTagValue(joinLocator) }
     copy
   }
 
@@ -324,7 +359,7 @@ private[ranger] object DeltaRangerDecisionReceipt {
     case other                     => denied("unqualified expression value")
   }
 
-  private def binding(plan: LogicalPlan): Vector[Any] = {
+  private[ranger] def binding(plan: LogicalPlan): Vector[Any] = {
     val details: Any = plan match {
       case relation: LogicalRelation if relation.getClass == classOf[LogicalRelation] =>
         relation.relation match {

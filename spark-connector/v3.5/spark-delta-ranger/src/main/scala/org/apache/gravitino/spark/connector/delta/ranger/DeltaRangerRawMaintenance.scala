@@ -191,5 +191,9 @@ private[ranger] object DeltaRangerRawMaintenance {
 private[ranger] final class DeltaRangerRawNormalization(spark: SparkSession)
     extends Rule[LogicalPlan] {
   override def apply(plan: LogicalPlan): LogicalPlan =
-    DeltaRangerRawMaintenance.normalize(DeltaRangerCdfRead.normalize(plan, spark), spark)
+    DeltaRangerOrdinaryRead
+      .normalize(plan, spark)
+      .getOrElse(
+        DeltaRangerRawMaintenance.normalize(DeltaRangerCdfRead.normalize(plan, spark), spark)
+      )
 }

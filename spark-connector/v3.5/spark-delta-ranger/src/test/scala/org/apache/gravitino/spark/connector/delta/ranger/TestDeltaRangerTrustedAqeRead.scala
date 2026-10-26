@@ -121,13 +121,13 @@ class TestDeltaRangerTrustedAqeRead {
           try {
             rejectedBeforeJobs(frame) { frame.collectAsList(); () }
             if (!reused) assertUnstartedBroadcasts(root)
-            if (mode == "predicate")
-              assertThrows(
-                classOf[SecurityException],
-                () => {
-                  spark.sql(DeltaRangerTrustedAqeFixture.query + " WHERE p.region = 'east'"); ()
-                }
-              )
+            if (mode == "predicate") {
+              // Ordinary construction now retains intent; the fresh action must still reject
+              // during normalization before any payload job can start.
+              val fresh = spark.sql(DeltaRangerTrustedAqeFixture.query + " WHERE p.region = 'east'")
+              assertTrue(DeltaRangerOrdinaryRead.pending(fresh.queryExecution.analyzed))
+              rejectedBeforeJobs(fresh, normalizing = true) { fresh.collect(); () }
+            }
           } finally {
             people.denied.clear(); people.mask = "'MASKED'"; people.filter = "region = 'east'"
             binding.properties.put("delta.registration.receipt.token", token)
@@ -240,7 +240,7 @@ class TestDeltaRangerTrustedAqeRead {
       frame.queryExecution.executedPlan
       val prepared = DeltaRangerNativeScans.prepared(frame.queryExecution.optimizedPlan)
       val receipt = DeltaRangerDecisionReceipt.consumeOwned(
-        frame.queryExecution.analyzed,
+        frame.queryExecution.normalized,
         spark,
         optimized = false
       )
@@ -328,18 +328,23 @@ class TestDeltaRangerTrustedAqeRead {
       }
   }
 
-  private def rejectedBeforeJobs(frame: DataFrame)(action: => Unit): Unit = {
+  private def rejectedBeforeJobs(frame: DataFrame, normalizing: Boolean = false)(
+      action: => Unit
+  ): Unit = {
     val spark = frame.sparkSession
     val group = "trusted-aqe-denial-" + UUID.randomUUID().toString
     spark.sparkContext.setJobGroup(group, group)
     try {
       val failure = assertThrows(classOf[SecurityException], () => action)
       assertTrue(
-        failure.getStackTrace.exists(element =>
-          element.getClassName.endsWith(
-            "DeltaRangerCollectGuardExec"
-          ) && Set("executeCollect", "resetMetrics").contains(element.getMethodName)
-        ),
+        failure.getStackTrace.exists { element =>
+          if (normalizing)
+            element.getClassName
+              .endsWith("DeltaRangerOrdinaryRead$") && element.getMethodName == "normalize"
+          else
+            element.getClassName.endsWith("DeltaRangerCollectGuardExec") &&
+            Set("executeCollect", "resetMetrics").contains(element.getMethodName)
+        },
         failure.toString
       )
       assertEquals(

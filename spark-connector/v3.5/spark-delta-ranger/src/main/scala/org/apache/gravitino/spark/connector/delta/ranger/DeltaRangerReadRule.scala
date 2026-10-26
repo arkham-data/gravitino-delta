@@ -91,8 +91,24 @@ private[ranger] class DeltaRangerReadRule(
         val id = table.catalogTable
           .getOrElse(throw new SecurityException("Delta append input rejected: unnamed target"))
           .identifier
+        // A DataFrame now retains pending ordinary intent. Complete only that exact source
+        // before handing the command to the existing typed append owner; the pending origin
+        // itself never substitutes for the owner's executable source receipt.
+        val completed = DeltaRangerOrdinaryRead
+          .normalize(append.query, spark)
+          .map { query =>
+            val stored = append.analyzedQuery.map { original =>
+              if (!(original eq append.query))
+                throw new SecurityException("Delta append input rejected: stored source changed")
+              query
+            }
+            val next = append.copy(query = query, analyzedQuery = stored)
+            next.copyTagsFrom(append)
+            next
+          }
+          .getOrElse(append)
         return DeltaRangerAppendV1Input.resolve(
-          append,
+          completed,
           spark,
           catalogs(Scan(null, id.catalog.get, id.database.get, id.table, None))
         )
@@ -119,15 +135,19 @@ private[ranger] class DeltaRangerReadRule(
     ) {
       throw new SecurityException("Native Delta catalog updates must remain disabled")
     }
-    val subject = DeltaRangerQuerySubject.current(spark)
     if (DeltaRangerDecisionReceipt.present(plan)) {
       DeltaRangerDecisionReceipt.check(plan, spark, optimized = false)
       return plan
     }
     if (plan.exists(DeltaRangerDecisionReceipt.present))
       throw new SecurityException("Derived or reused Delta plans are not qualified")
-    DeltaRangerPlanAdmission.query(plan)
-    val scans = extract(plan, spark)
+    DeltaRangerOrdinaryRead.stage(plan, spark, catalogs)
+  }
+
+  private[ranger] def authorizeComplete(plan: LogicalPlan): LogicalPlan = {
+    val subject = DeltaRangerQuerySubject.current(spark)
+    DeltaRangerOrdinaryAdmission.query(plan)
+    val scans = extract(DeltaRangerOrdinaryAdmission.demandPlan(plan), spark)
     val bound = scans.map { case (scan, columns) =>
       val binding = catalogs(scan).registrationBindings().resolve(scan.relation)
       if (binding.index().metadata.configuration.get("delta.enableRowTracking").contains("true"))
@@ -181,6 +201,7 @@ private[ranger] class DeltaRangerReadRule(
       instant,
       configuration
     )
+    DeltaRangerDecisionReceipt.retainOrdinaryJoinReceipt(rewritten)
     rewritten
   }
 }
@@ -232,8 +253,10 @@ private[ranger] object DeltaRangerReadRule {
       DeltaRangerAppendV1Input.analyzed(plan.asInstanceOf[AppendData], spark)
       return
     }
-    if (nativeAdmission(plan, spark) == DeltaRangerNativeProvenance.UserPlan)
-      DeltaRangerDecisionReceipt.check(plan, spark, optimized = false)
+    if (nativeAdmission(plan, spark) == DeltaRangerNativeProvenance.UserPlan) {
+      if (DeltaRangerOrdinaryRead.pending(plan)) DeltaRangerOrdinaryRead.check(plan, spark)
+      else DeltaRangerDecisionReceipt.check(plan, spark, optimized = false)
+    }
   }
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
@@ -384,7 +407,7 @@ private[ranger] object DeltaRangerReadRule {
     result
   }
 
-  private def canonical(relation: LogicalRelation): Scan = {
+  private[ranger] def canonical(relation: LogicalRelation): Scan = {
     requireQuery(!relation.isStreaming)
     relation.relation match {
       case fs: HadoopFsRelation =>
