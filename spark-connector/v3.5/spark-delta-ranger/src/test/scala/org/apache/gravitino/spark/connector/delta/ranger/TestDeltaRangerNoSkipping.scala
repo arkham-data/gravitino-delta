@@ -42,6 +42,12 @@ class TestDeltaRangerNoSkipping {
     withSpark(
       spark => {
         val queries = Seq(
+          ("SELECT count(secret) FROM a.db.t", Set(Row(1L)), Set("a")),
+          (
+            "SELECT DISTINCT secret FROM a.db.t ORDER BY secret NULLS FIRST LIMIT 1",
+            Set(Row(null)),
+            Set("a")
+          ),
           (
             "SELECT x.secret, y.secret FROM a.db.t x JOIN b.db.t y ON x.id=y.id",
             Set(Row("a-one-masked", null), Row(null, null)),
@@ -278,8 +284,8 @@ class TestDeltaRangerNoSkipping {
         assertFalse(failed.peek().succeeded())
         assertThrows(classOf[SecurityException], () => failed.peek().requireEvidence(spark))
         assertNotNull(index.getSnapshot)
-        val analyzed = spark.sql("SELECT id, region FROM a.db.t").queryExecution.analyzed
-        val owner = DeltaRangerNativeScans.consume(analyzed, spark, optimized = false)
+        val normalized = spark.sql("SELECT id, region FROM a.db.t").queryExecution.normalized
+        val owner = DeltaRangerNativeScans.consume(normalized, spark, optimized = false)
         var abandoned: DeltaRangerLogIndex = null
         assertThrows(
           classOf[IllegalStateException],

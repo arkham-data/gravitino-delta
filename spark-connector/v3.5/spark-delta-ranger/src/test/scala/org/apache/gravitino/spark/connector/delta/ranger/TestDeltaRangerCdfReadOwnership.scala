@@ -36,6 +36,22 @@ import org.junit.jupiter.api.Test
 /** Foreign plans and native reconstruction state cannot inherit another action's authority. */
 class TestDeltaRangerCdfReadOwnership {
   @Test
+  def ordinaryOperatorsDoNotWidenCdfSources(): Unit = {
+    val fixture = new DeltaRangerCdfReadFixture
+    DeltaRangerCdfReadFixture.withGoverned(fixture.prepare) { spark =>
+      Seq[org.apache.spark.sql.DataFrame => org.apache.spark.sql.DataFrame](
+        _.selectExpr("count(id)"),
+        _.selectExpr("1 AS one"),
+        _.distinct(),
+        _.orderBy("id"),
+        _.limit(1)
+      ).foreach { operator =>
+        assertThrows(classOf[SecurityException], () => operator(fixture.read(spark)).collect())
+      }
+    }
+  }
+
+  @Test
   def unrecognizedManifestOwnerCannotMintHelper(): Unit = {
     val fake = new DeltaRangerCdfReadScans.MatchOwner {
       override def requireHelper(candidate: DeltaRangerCdfReadScans.Match): Unit = ()

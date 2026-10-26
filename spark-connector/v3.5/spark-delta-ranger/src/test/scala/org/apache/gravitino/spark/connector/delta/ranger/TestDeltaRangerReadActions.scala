@@ -33,6 +33,12 @@ import org.apache.spark.sql.SparkSession
 
 class TestDeltaRangerReadActions {
   @Test
+  def nativeArrowAggregateAndZeroLimitReauthorize(): Unit = runPython("operators")
+
+  @Test
+  def nonadaptiveArrowAggregateAndZeroLimitReauthorize(): Unit = runPython("legacy-operators")
+
+  @Test
   def nativeArrowFreshAndRepeated(): Unit = runPython("arrow")
 
   @Test

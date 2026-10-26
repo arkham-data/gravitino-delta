@@ -27,11 +27,13 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.expressions.{
+  Alias,
   AttributeReference,
   Expression,
   ExprId,
   SubqueryExpression
 }
+import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.adaptive.{
@@ -41,6 +43,7 @@ import org.apache.spark.sql.execution.adaptive.{
   BroadcastQueryStageExec,
   AQEShuffleReadExec
 }
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import org.apache.spark.sql.execution.exchange.{
@@ -55,13 +58,19 @@ import org.apache.spark.unsafe.types.UTF8String
 private[ranger] object DeltaRangerPhysicalProvenance {
   final class Witness private[DeltaRangerPhysicalProvenance] (
       expected: SparkPlan,
-      alternatives: Vector[SparkPlan] = Vector.empty
+      alternatives: Vector[SparkPlan] = Vector.empty,
+      ordinaryLogicalIds: Option[Set[ExprId]] = None
   ) {
     private val recipes = expected +: alternatives
     private val frozen = recipes.map(binding)
+    private def comparable(plan: SparkPlan): Vector[Any] = ordinaryLogicalIds match {
+      case Some(ids) => bindingWithGrouping(plan, generatedGrouping(plan, ids))
+      case None      => binding(plan)
+    }
+    private val comparisons = recipes.map(comparable)
     def verify(candidate: SparkPlan): Unit = {
       if (recipes.map(binding) != frozen) denied("sealed physical recipe changed")
-      if (!frozen.contains(binding(candidate))) {
+      if (!comparisons.contains(comparable(candidate))) {
         denied("executable physical binding changed")
       }
     }
@@ -76,18 +85,30 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   ): Witness = {
     prepared.owner.requireExecutable()
     val expectedLogical = prepared.verifyExecutable(logical, spark)
-    val witness = userWitness(expectedLogical, spark)
+    val witness = userWitness(expectedLogical, spark, ordinary = !prepared.owner.appendInput)
     witness.verify(plan)
     witness
   }
 
   private def userWitness(
       logical: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan,
-      spark: SparkSession
+      spark: SparkSession,
+      ordinary: Boolean = false
   ): Witness = {
     val expected = DeltaRangerPhysicalPlanning.lower(spark, logical)
     val tail = DeltaRangerPhysicalPlanning.tail(spark, logical, expected)
-    new Witness(expected, Vector(tail))
+    val ids =
+      if (ordinary) Some(logical.flatMap { node =>
+        node.output.map(_.exprId) ++ node.expressions.flatMap { expression =>
+          expression.collect {
+            case attribute: AttributeReference  => attribute.exprId
+            case alias: Alias                   => alias.exprId
+            case aggregate: AggregateExpression => aggregate.resultId
+          }
+        }
+      }.toSet)
+      else None
+    new Witness(expected, Vector(tail), ids)
   }
 
   sealed trait Ticket {
@@ -364,7 +385,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         val witness =
           if (spark.sessionState.conf.adaptiveExecutionEnabled) None
           else {
-            val exact = userWitness(prepared.recoverExecutable(spark), spark)
+            val exact = userWitness(prepared.recoverExecutable(spark), spark, ordinary = true)
             exact.verify(plan)
             Some(exact)
           }
@@ -470,7 +491,28 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     result.result()
   }
 
-  private[ranger] def binding(plan: SparkPlan): Vector[Any] = {
+  // Spark's aggregate strategy names non-NamedExpression DISTINCT keys while planning.
+  // Only these concrete no-function HashAggregate grouping producers may be renamed. The
+  // complete physical binding below still checks the producer expression and every consumer;
+  // original logical IDs, scan backing and output IDs never enter this map.
+  private def generatedGrouping(plan: SparkPlan, logicalIds: Set[ExprId]): Map[ExprId, Int] = {
+    val producers = nodes(plan).collect {
+      case aggregate: HashAggregateExec
+          if aggregate.getClass == classOf[HashAggregateExec] &&
+            aggregate.aggregateExpressions.isEmpty && aggregate.aggregateAttributes.isEmpty =>
+        aggregate.groupingExpressions.collect {
+          case alias: Alias if alias.getClass == classOf[Alias] && !logicalIds(alias.exprId) =>
+            alias.exprId
+        }
+    }.flatten
+    if (producers.distinct.size != producers.size) denied("duplicate generated grouping producer")
+    producers.zipWithIndex.toMap
+  }
+
+  private[ranger] def binding(plan: SparkPlan): Vector[Any] = bindingWithGrouping(plan, Map.empty)
+
+  private def bindingWithGrouping(plan: SparkPlan, grouping: Map[ExprId, Int]): Vector[Any] = {
+    def expressionId(id: ExprId): Any = grouping.get(id).map(GeneratedGrouping).getOrElse(id)
     nodes(plan).foreach {
       case _: InMemoryTableScanExec => denied("physical cache substitution")
       case _: AdaptiveSparkPlanExec => denied("nested adaptive subtree")
@@ -555,11 +597,20 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         Vector(
           attribute.getClass,
           attribute.name,
-          attribute.exprId,
+          expressionId(attribute.exprId),
           attribute.qualifier,
           attribute.dataType.json,
           attribute.nullable,
           attribute.metadata.json
+        )
+      case alias: Alias if grouping.nonEmpty =>
+        Vector(
+          alias.getClass,
+          alias.productIterator.map(value).toVector,
+          expressionId(alias.exprId),
+          alias.qualifier.toVector,
+          alias.explicitMetadata.map(_.json),
+          alias.nonInheritableMetadataKeys.toVector
         )
       case expression: Expression =>
         Vector(expression.getClass, expression.productIterator.map(value).toVector)
@@ -576,7 +627,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case data: DataType      => data.json
       case metadata: Metadata  => metadata.json
       case text: UTF8String    => text.getBytes.toVector
-      case id: ExprId          => id
+      case id: ExprId          => expressionId(id)
       case values: Seq[_]      => values.map(value).toVector
       case optional: Option[_] => optional.map(value)
       case array: Array[_]     => array.map(value).toVector
@@ -600,6 +651,8 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     val root = physical(plan)
     Vector(root, records.toVector)
   }
+
+  private final case class GeneratedGrouping(position: Int)
 
   private final case class PhysicalRef(index: Int)
 

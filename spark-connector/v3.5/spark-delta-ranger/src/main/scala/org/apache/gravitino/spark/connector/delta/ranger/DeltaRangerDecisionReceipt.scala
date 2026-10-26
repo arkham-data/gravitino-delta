@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Complete, Count}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
@@ -183,6 +184,17 @@ private[ranger] object DeltaRangerDecisionReceipt {
     case _ =>
   }
 
+  // RemoveNoopOperators can return an existing Sort after removing its root Project.
+  // This is only an ordinary receipt continuation: consuming that Sort still compares
+  // the entire exact authorized prefix. A detached descendant is not a new recipe.
+  def retainOrdinarySortReceipt(plan: LogicalPlan): Unit = {
+    val reference = plan.getTagValue(tag).getOrElse(denied("missing receipt"))
+    plan.foreach {
+      case sort: Sort => sort.setTagValue(tag, reference)
+      case _          =>
+    }
+  }
+
   def ordinaryJoin(plan: LogicalPlan, receipt: DeltaRangerDecisionReceipt): Boolean = {
     val scans = plan.collect { case relation: LogicalRelation => relation }
     plan.isInstanceOf[Join] && scans.nonEmpty && scans.forall(
@@ -262,6 +274,9 @@ private[ranger] object DeltaRangerDecisionReceipt {
 
   // The finite expression classes are exact: subclasses must not introduce evaluation code.
   private val expressionClasses: Set[Class[_]] = Set(
+    classOf[AggregateExpression],
+    classOf[Count],
+    classOf[SortOrder],
     classOf[AttributeReference],
     classOf[Literal],
     classOf[Alias],
@@ -334,6 +349,11 @@ private[ranger] object DeltaRangerDecisionReceipt {
   }
 
   private def value(item: Any): Any = item match {
+    case Complete                => Complete
+    case Ascending               => Ascending
+    case Descending              => Descending
+    case NullsFirst              => NullsFirst
+    case NullsLast               => NullsLast
     case null                    => null
     case expr: Expression        => expression(expr)
     case text: UTF8String        => text.getBytes.toVector
@@ -398,6 +418,19 @@ private[ranger] object DeltaRangerDecisionReceipt {
         Vector(alias.identifier.name, alias.identifier.qualifier.toVector)
       case join: Join if join.getClass == classOf[Join] =>
         Vector(join.joinType, join.hint, join.condition.map(expression))
+      case aggregate: Aggregate if aggregate.getClass == classOf[Aggregate] =>
+        Vector(
+          aggregate.groupingExpressions.map(expression).toVector,
+          aggregate.aggregateExpressions.map(expression).toVector
+        )
+      case distinct: Distinct if distinct.getClass == classOf[Distinct] => Vector.empty
+      case dedup: Deduplicate if dedup.getClass == classOf[Deduplicate] =>
+        dedup.keys.map(expression).toVector
+      case sort: Sort if sort.getClass == classOf[Sort] =>
+        Vector(sort.order.map(expression).toVector, sort.global)
+      case limit: GlobalLimit if limit.getClass == classOf[GlobalLimit] =>
+        expression(limit.limitExpr)
+      case limit: LocalLimit if limit.getClass == classOf[LocalLimit] => expression(limit.limitExpr)
       case _: InMemoryRelation => denied("cache substitution")
       case local: LocalRelation
           if local.getClass == classOf[LocalRelation] && local.data.isEmpty && !local.isStreaming =>

@@ -73,11 +73,34 @@ private[ranger] object DeltaRangerAppendV1Input {
     if (!command.resolved) return command
     command.getTagValue(tag) match {
       case Some(reference) => reference.get.resolution(command)
-      case None =>
-        val owner = new Owner(command, spark, catalog)
-        command.setTagValue(tag, new Reference(owner))
-        if (command.query.getTagValue(tag).nonEmpty) denied("source already has an append owner")
-        command.query.setTagValue(tag, new Reference(owner))
+      case None            =>
+        // Only an original pending source can initialize an append owner. A normalized
+        // ordinary receipt is not proof that the source passed append's extraction boundary.
+        if (!DeltaRangerOrdinaryRead.pending(command.query))
+          denied("missing original pending source")
+        DeltaRangerPlanAdmission.query(command.query)
+        val demand = DeltaRangerReadRule.extract(
+          DeltaRangerOrdinaryAdmission.authoredDemandPlan(command.query),
+          spark
+        )
+        if (demand.exists(_._2.isEmpty)) denied("columnless original source demand")
+        // Metadata extraction above preserves the pre-operator source contract without
+        // policy calls. Normalize exactly once, after that check and before native work.
+        val query = DeltaRangerOrdinaryRead
+          .normalize(command.query, spark)
+          .getOrElse(denied("missing original pending source"))
+        val stored = command.analyzedQuery.map { original =>
+          if (!(original eq command.query)) denied("stored source changed")
+          query
+        }
+        val completed = command.copy(query = query, analyzedQuery = stored)
+        completed.copyTagsFrom(command)
+        inspect(completed, spark)
+        val owner = new Owner(completed, spark, catalog)
+        completed.setTagValue(tag, new Reference(owner))
+        if (query.getTagValue(tag).nonEmpty) denied("source already has an append owner")
+        query.setTagValue(tag, new Reference(owner))
+        return completed
     }
     command
   }
@@ -104,6 +127,9 @@ private[ranger] object DeltaRangerAppendV1Input {
     private val association = DeltaRangerAppendCommandBinding.capture(spark, original, catalog)
     private val receipt =
       DeltaRangerDecisionReceipt.consumeOwned(original.query, spark, optimized = false)
+    // Columnless authorization belongs only to ordinary reads. Restore the original
+    // append-source invariant before any native preparation or input side effects.
+    if (receipt.obligations.exists(_.columns.isEmpty)) denied("columnless original source demand")
     private val relation = original.table.asInstanceOf[DataSourceV2Relation]
     private val table = relation.table.asInstanceOf[DeltaTableV2]
     private val descriptor = table.catalogTable.get

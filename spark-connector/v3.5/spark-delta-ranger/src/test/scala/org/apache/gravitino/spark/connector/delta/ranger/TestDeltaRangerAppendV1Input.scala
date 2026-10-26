@@ -54,6 +54,89 @@ import org.junit.jupiter.api.Test
 
 class TestDeltaRangerAppendV1Input {
   @Test
+  def unownedOrdinaryReceiptCannotInitializeAppendOwner(): Unit =
+    withCase("unowned-ordinary-source") { c =>
+      import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
+      asApp {
+        val source = c.spark.table("b.db.t").queryExecution.normalized
+        assertTrue(DeltaRangerDecisionReceipt.present(source))
+        assertFalse(DeltaRangerOrdinaryRead.pending(source))
+        val catalog = c.spark.sessionState.catalogManager.catalog("a").asInstanceOf[TableCatalog]
+        val id = Identifier.of(Array("db"), "t")
+        val target = DataSourceV2Relation.create(catalog.loadTable(id), Some(catalog), Some(id))
+        val command = AppendData.byPosition(target, source, Map.empty)
+        assertReason(
+          assertThrows(
+            classOf[SecurityException],
+            () =>
+              DeltaRangerAppendV1Input
+                .resolve(command, c.spark, NativeSelectFixture.wrapper(c.spark, "a"))
+          ),
+          "missing original pending source"
+        )
+        val tag =
+          TreeNodeTag[DeltaRangerAppendV1Input.Reference]("gravitino.delta.ranger.append-input")
+        assertTrue(command.getTagValue(tag).isEmpty)
+        assertTrue(source.getTagValue(tag).isEmpty)
+      }
+    }
+
+  @Test
+  def originalAppendDemandAllowsFilteredProjectionsAndUsing(): Unit =
+    withCase("original-demand-forms") { c =>
+      asApp {
+        appendSuccess(c, c.spark.sql("SELECT id, secret, region FROM b.db.t WHERE id > 0"))
+        val left = c.spark.table("b.db.t").alias("x")
+        val right = c.spark.table("b.db.t").alias("y")
+        val using = left.join(right, Seq("id")).select("x.id", "x.secret", "x.region")
+        assertEquals(
+          2,
+          DeltaRangerReadRule
+            .extract(
+              DeltaRangerOrdinaryAdmission.authoredDemandPlan(using.queryExecution.analyzed),
+              c.spark
+            )
+            .size
+        )
+        using.write.mode("append").insertInto("a.db.t")
+        c.successfulReturns += 1
+        c.committed += 1
+      }
+    }
+
+  @Test
+  def constantProjectionOverPredicateCannotBecomeAnAppendSource(): Unit =
+    withCase("constant-predicate-source") { c =>
+      asApp {
+        appendSuccess(c, c.spark.table("b.db.t"))
+        c.trace.record("constant-source-target", NativeSelectFixture.locations("a"))
+        val constants = c.spark
+          .table("b.db.t")
+          .filter("region = 'keep'")
+          .selectExpr("9L AS id", "'constant' AS secret", "'keep' AS region")
+        val demand = DeltaRangerReadRule.extract(
+          DeltaRangerOrdinaryAdmission.demandPlan(constants.queryExecution.analyzed),
+          c.spark
+        )
+        assertEquals(Set("region"), demand.head._2)
+        appendFailure(c, constants, recordSource = false)
+      }
+    }
+
+  @Test
+  def columnlessProjectionCannotBecomeAnAppendSource(): Unit = withCase("columnless-source") { c =>
+    asApp {
+      appendSuccess(c, c.spark.table("b.db.t"))
+      val constants =
+        c.spark.table("b.db.t").selectExpr("9L AS id", "'constant' AS secret", "'keep' AS region")
+      val demands = DeltaRangerReadRule.extract(constants.queryExecution.analyzed, c.spark)
+      assertEquals(1, demands.size)
+      assertTrue(demands.head._2.isEmpty)
+      assertReason(appendFailure(c, constants), "columnless original source demand")
+    }
+  }
+
+  @Test
   def realNamedFrontendsReachTerminalInputValidation(): Unit = {
     Seq("insertInto", "saveAsTable").foreach { frontend =>
       val trace = InstalledAppendBoundaryProbe.fresh("v1-input-" + frontend)

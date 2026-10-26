@@ -331,8 +331,18 @@ private[ranger] object DeltaRangerNativeProvenance {
     try plan.resolved
     catch { case scala.util.control.NonFatal(_) => false }
 
-  private[ranger] def emptyPreparationBinding(plan: LogicalPlan): Option[Vector[Any]] = {
+  private[ranger] def emptyPreparationBinding(
+      plan: LogicalPlan,
+      ordinary: Boolean = false
+  ): Option[Vector[Any]] = {
     def finiteEmpty(node: LogicalPlan): Boolean = node match {
+      case aggregate: Aggregate if ordinary =>
+        finiteEmpty(aggregate.child)
+      case sort: Sort if ordinary => finiteEmpty(sort.child)
+      case limit: GlobalLimit if ordinary =>
+        finiteEmpty(limit.child)
+      case limit: LocalLimit if ordinary =>
+        finiteEmpty(limit.child)
       case project: Project     => finiteEmpty(project.child)
       case filter: Filter       => finiteEmpty(filter.child)
       case alias: SubqueryAlias => finiteEmpty(alias.child)

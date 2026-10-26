@@ -31,16 +31,7 @@ import scala.collection.mutable
 import org.apache.kyuubi.plugin.spark.authz.{OperationType, PrivilegeObjectType, PrivilegesBuilder}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.catalyst.plans.logical.{
-  LogicalPlan,
-  SetTableProperties,
-  AppendData,
-  Project,
-  Filter,
-  Join,
-  SubqueryAlias,
-  LocalRelation
-}
+import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.kyuubi.plugin.spark.authz.rule.RuleEliminateMarker
 import org.apache.kyuubi.plugin.spark.authz.rule.datamasking.RuleApplyDataMaskingStage1
@@ -91,24 +82,8 @@ private[ranger] class DeltaRangerReadRule(
         val id = table.catalogTable
           .getOrElse(throw new SecurityException("Delta append input rejected: unnamed target"))
           .identifier
-        // A DataFrame now retains pending ordinary intent. Complete only that exact source
-        // before handing the command to the existing typed append owner; the pending origin
-        // itself never substitutes for the owner's executable source receipt.
-        val completed = DeltaRangerOrdinaryRead
-          .normalize(append.query, spark)
-          .map { query =>
-            val stored = append.analyzedQuery.map { original =>
-              if (!(original eq append.query))
-                throw new SecurityException("Delta append input rejected: stored source changed")
-              query
-            }
-            val next = append.copy(query = query, analyzedQuery = stored)
-            next.copyTagsFrom(append)
-            next
-          }
-          .getOrElse(append)
         return DeltaRangerAppendV1Input.resolve(
-          completed,
+          append,
           spark,
           catalogs(Scan(null, id.catalog.get, id.database.get, id.table, None))
         )
@@ -190,7 +165,15 @@ private[ranger] class DeltaRangerReadRule(
         )
       }
       val stage0 = plan.transformUp { case relation: LogicalRelation => replacements.get(relation) }
-      RuleEliminateMarker(RuleApplyDataMaskingStage1(spark)(stage0))
+      val masked = RuleEliminateMarker(RuleApplyDataMaskingStage1(spark)(stage0))
+      // Full-output nonstreaming deduplication is DISTINCT. Lower only after capturing
+      // all authored key demands; Spark's ReplaceDeduplicateWithAggregate drops root tags.
+      masked.transformUp { case deduplicate: Deduplicate =>
+        val distinct = Distinct(deduplicate.child)
+        if (distinct.output != deduplicate.output)
+          throw new SecurityException("Ordinary deduplication output changed")
+        distinct
+      }
     }
     DeltaRangerDecisionReceipt.attach(
       rewritten,
@@ -202,6 +185,7 @@ private[ranger] class DeltaRangerReadRule(
       configuration
     )
     DeltaRangerDecisionReceipt.retainOrdinaryJoinReceipt(rewritten)
+    DeltaRangerDecisionReceipt.retainOrdinarySortReceipt(rewritten)
     rewritten
   }
 }
@@ -296,6 +280,12 @@ private[ranger] object DeltaRangerReadRule {
       throw new SecurityException("Unsupported user AQE for Delta Ranger collection")
     owner.run { operation =>
       val prepared = new PrepareDeltaScan(spark) {
+        // Raw Delta statistics are not a governed aggregate input. Keep the stock
+        // scan/preparation path and user settings, while excluding this substitution
+        // only for ordinary receipts (append retains its prior native behavior).
+        override def optimizeQueryWithMetadata(candidate: LogicalPlan): LogicalPlan =
+          if (owner.appendInput) super.optimizeQueryWithMetadata(candidate) else candidate
+
         override protected def prepareDeltaScanWithoutFileSkipping(
             candidate: LogicalPlan
         ): LogicalPlan = {
@@ -313,8 +303,12 @@ private[ranger] object DeltaRangerReadRule {
                     }
                   case _ => throw new SecurityException("Unqualified no-skipping native relation")
                 }
-              case project: Project => project.copy(child = replace(project.child))
-              case filter: Filter   => filter.copy(child = replace(filter.child))
+              case aggregate: Aggregate => aggregate.copy(child = replace(aggregate.child))
+              case sort: Sort           => sort.copy(child = replace(sort.child))
+              case limit: GlobalLimit   => limit.copy(child = replace(limit.child))
+              case limit: LocalLimit    => limit.copy(child = replace(limit.child))
+              case project: Project     => project.copy(child = replace(project.child))
+              case filter: Filter       => filter.copy(child = replace(filter.child))
               case join: Join => join.copy(left = replace(join.left), right = replace(join.right))
               case alias: SubqueryAlias => alias.copy(child = replace(alias.child))
               case local: LocalRelation if local.data.isEmpty => local
@@ -362,6 +356,7 @@ private[ranger] object DeltaRangerReadRule {
   )
 
   def extract(plan: LogicalPlan, spark: SparkSession): Seq[(Scan, Set[String])] = {
+    DeltaRangerOrdinaryAdmission.query(plan)
     val (original, targets, operation) = PrivilegesBuilder.build(plan, spark)
     requireQuery(targets.isEmpty && operation == OperationType.QUERY)
     val tokens = mutable.Map.empty[String, Scan]
@@ -378,7 +373,17 @@ private[ranger] object DeltaRangerReadRule {
     }
     val (inputs, outputs, kind) = PrivilegesBuilder.build(extraction, spark)
     requireQuery(outputs.isEmpty && kind == OperationType.QUERY && tokens.nonEmpty)
-    requireQuery(inputs.size == tokens.size && original.size == inputs.size)
+    requireQuery(inputs.size <= tokens.size && original.size == inputs.size)
+    val usedIds = plan.output.map(_.exprId).toSet ++ plan
+      .collect {
+        case distinct: Distinct => distinct.child.output.map(_.exprId)
+        case node if !node.isInstanceOf[LogicalRelation] =>
+          node.expressions.flatMap(_.references.map(_.exprId))
+      }
+      .flatten
+      .toSet
+    def demand(scan: Scan): Set[String] =
+      scan.relation.output.filter(a => usedIds(a.exprId)).map(_.name).toSet
     val seen = mutable.Set.empty[String]
     val result = inputs.toSeq.map { privilege =>
       requireQuery(privilege.privilegeObjectType == PrivilegeObjectType.TABLE_OR_VIEW)
@@ -390,21 +395,15 @@ private[ranger] object DeltaRangerReadRule {
       requireQuery(privilege.dbname == scan.database && privilege.owner == scan.owner)
       requireQuery(privilege.catalog.isEmpty || privilege.catalog.contains(scan.catalog))
       val columns = privilege.columns.toSet
-      requireQuery(columns.nonEmpty && columns.subsetOf(scan.relation.output.map(_.name).toSet))
-      // Root output is implicit demand, including passthrough relations, filters and joins.
-      // Preserve expression demand for projected producers and predicate/join references.
-      val usedIds = plan.output.map(_.exprId).toSet ++ plan
-        .collect {
-          case node if !node.isInstanceOf[LogicalRelation] =>
-            node.expressions.flatMap(_.references.map(_.exprId))
-        }
-        .flatten
-        .toSet
-      val usedColumns = scan.relation.output.filter(a => usedIds(a.exprId)).map(_.name).toSet
-      requireQuery(columns == usedColumns)
+      requireQuery(columns.subsetOf(scan.relation.output.map(_.name).toSet))
+      requireQuery(columns == demand(scan))
       scan -> columns
     }
-    result
+    val omitted = tokens.toSeq.filterNot { case (token, _) => seen(token) }.map { case (_, scan) =>
+      requireQuery(demand(scan).isEmpty)
+      scan -> Set.empty[String]
+    }
+    result ++ omitted
   }
 
   private[ranger] def canonical(relation: LogicalRelation): Scan = {

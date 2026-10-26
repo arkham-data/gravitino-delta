@@ -254,7 +254,7 @@ class TestDeltaRangerDecisionReceipt {
           assertEquals(beforeCollapse.output, changed.output)
           val rejected =
             assertThrows(classOf[SecurityException], () => proof.verify(changed, spark))
-          assertTrue(rejected.getMessage.contains("Empty native preparation changed"))
+          assertTrue(rejected.getMessage.contains("executable logical binding changed"))
         }
       }
     }

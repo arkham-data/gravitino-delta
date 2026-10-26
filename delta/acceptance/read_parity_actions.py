@@ -32,6 +32,7 @@ sc = SparkContext(gateway=gateway, jsc=jsc, conf=SparkConf(_jconf=jsc.getConf())
 spark = SparkSession(sc, bridge.session())
 spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
 spark.conf.set("spark.sql.execution.arrow.pyspark.fallback.enabled", "false")
+assert pyspark.__version__ == spark.version
 print(json.dumps(dict(pandas=pandas.__version__, pyarrow=pyarrow.__version__, pyspark=pyspark.__version__, observations=json.loads(bridge.observations()))), flush=True)
 query = "SELECT p.id, p.secret, d.secret AS label FROM a.db.t p INNER JOIN b.db.t d ON p.id = d.id"
 
@@ -114,6 +115,57 @@ elif mode == "drift":
         finally:
             restore()
     arrow(planned())
+elif mode in ("operators", "legacy-operators"):
+    expected_count = 2 if mode.startswith("legacy") else 3
+    aggregate = spark.sql("SELECT count(secret) AS n FROM (" + query + ")")
+    bridge.observeFrame(aggregate._jdf)
+    # The legacy fixture has one NULL masked secret; the adaptive fixture masks all rows.
+    expected_nonnull = 1 if mode.startswith("legacy") else 3
+    assert aggregate.toPandas()["n"].tolist() == [expected_nonnull]
+    assert bridge.captureExpired()
+    bridge.setSelectAllowed(False)
+    denied(aggregate)
+    bridge.setSelectAllowed(True)
+    factories = (
+        lambda: spark.sql(query).limit(0),
+        lambda: spark.sql(query + " WHERE false"),
+        lambda: spark.sql("SELECT count(*) AS n FROM (" + query + " WHERE false)"),
+        lambda: spark.sql("SELECT count(secret) AS n FROM (" + query + ")"),
+    )
+    for factory in factories:
+        frame = factory()
+        bridge.observeFrame(frame._jdf)
+        bridge.setSelectAllowed(False)
+        denied(frame)
+        bridge.setSelectAllowed(True)
+        result = frame.toPandas()
+        assert result.empty or result["n"].tolist() in ([0], [expected_nonnull]), result
+        assert bridge.captureExpired()
+        original_mask = "concat({col}, '-masked')" if mode.startswith("legacy") else "'MASKED'"
+        original_filter = "region = 'keep'" if mode.startswith("legacy") else "region = 'east'"
+        for change, restore in (
+            (lambda: bridge.setRegistrationChanged(True), lambda: bridge.setRegistrationChanged(False)),
+            (lambda: bridge.setMask("'CHANGED'"), lambda: bridge.setMask(original_mask)),
+            (lambda: bridge.setFilter("region = 'absent'"), lambda: bridge.setFilter(original_filter)),
+            (lambda: spark.conf.set("spark.sql.caseSensitive", "true"), lambda: spark.conf.set("spark.sql.caseSensitive", "false")),
+            (lambda: sc.setLocalProperty("kyuubi.session.user", "different-user"), lambda: sc.setLocalProperty("kyuubi.session.user", None)),
+        ):
+            fresh = factory()
+            bridge.observeFrame(fresh._jdf)
+            change()
+            try:
+                denied(fresh)
+            finally:
+                restore()
+    assert spark.sql(query).count() == expected_count
+    bridge.setSelectAllowed(False)
+    try:
+        spark.sql(query).count()
+    except Exception as failure:
+        assert "SecurityException" in str(failure), str(failure)
+    else:
+        raise AssertionError("Denied native count returned payload")
+    bridge.setSelectAllowed(True)
 elif mode == "conversion":
     empty = spark.sql(query + " WHERE false")
     bridge.observeFrame(empty._jdf)

@@ -19,48 +19,122 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
-import org.apache.spark.sql.catalyst.expressions.{
-  And,
-  Attribute,
-  AttributeReference,
-  EqualTo,
-  Expression
-}
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, Complete, Count}
 import org.apache.spark.sql.catalyst.plans.Inner
-import org.apache.spark.sql.catalyst.plans.logical.{
-  Filter,
-  Join,
-  LogicalPlan,
-  Project,
-  SubqueryAlias
-}
+import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.types.{IntegerType, LongType}
 
 /** Ordinary reads have their own admission boundary; shared policy grammar stays finite. */
 private[ranger] object DeltaRangerOrdinaryAdmission {
-  def query(plan: LogicalPlan): Unit = DeltaRangerPlanAdmission.query(plan)
+  def query(plan: LogicalPlan): Unit = admit(plan, pending = false)
 
-  // Dataset.join(usingColumns) analyzes a conditionless Inner before creating its UsingJoin.
-  // This is analysis-only intent; query() still requires a condition before authorization.
-  def pendingQuery(plan: LogicalPlan): Unit = {
+  // Dataset.join(usingColumns) temporarily analyzes a conditionless Inner.
+  def pendingQuery(plan: LogicalPlan): Unit = admit(plan, pending = true)
+
+  private def admit(plan: LogicalPlan, pending: Boolean): Unit = {
     if (!plan.resolved || plan.isStreaming) denied("unresolved or streaming plan")
     plan.foreach {
-      case _: Project | _: Filter | _: SubqueryAlias | _: LogicalRelation =>
-      case join: Join if join.joinType == Inner                           =>
-      case other                                                          => denied(other.nodeName)
-    }
-    plan.foreach {
       case _: LogicalRelation =>
-      case node               => node.expressions.foreach(DeltaRangerPlanAdmission.expression)
+      case node @ (_: Project | _: Filter | _: SubqueryAlias) =>
+        node.expressions.foreach(DeltaRangerPlanAdmission.expression)
+      case join: Join if join.joinType == Inner && (pending || join.condition.nonEmpty) =>
+        join.expressions.foreach(DeltaRangerPlanAdmission.expression)
+      case aggregate: Aggregate
+          if aggregate.groupingExpressions.isEmpty &&
+            aggregate.aggregateExpressions.nonEmpty =>
+        aggregate.aggregateExpressions.foreach {
+          case alias: Alias =>
+            alias.child match {
+              case expression: AggregateExpression
+                  if expression.mode == Complete &&
+                    !expression.isDistinct && expression.filter.isEmpty =>
+                expression.aggregateFunction match {
+                  case count: Count if count.children.size == 1 =>
+                    count.children.head match {
+                      case _: AttributeReference                           =>
+                      case Literal(1, IntegerType) | Literal(1L, LongType) =>
+                      case _ => denied("count argument")
+                    }
+                  case _ => denied("aggregate function")
+                }
+              case _ => denied("aggregate expression")
+            }
+          case _ => denied("aggregate output")
+        }
+      case distinct: Distinct if distinct.child.output.nonEmpty =>
+      case dedup: Deduplicate
+          if dedup.keys.nonEmpty &&
+            dedup.keys.map(_.exprId).distinct.size == dedup.keys.size &&
+            dedup.keys.map(_.exprId).toSet == dedup.child.output.map(_.exprId).toSet =>
+      case sort: Sort if sort.global && sort.order.nonEmpty =>
+        sort.order.foreach { order =>
+          if (
+            !order.child.isInstanceOf[AttributeReference] || order.sameOrderExpressions.nonEmpty ||
+            !Set[SortDirection](Ascending, Descending)(order.direction) ||
+            !Set[NullOrdering](NullsFirst, NullsLast)(order.nullOrdering)
+          ) denied("sort expression")
+        }
+      case limit: GlobalLimit => literalLimit(limit.limitExpr)
+      case limit: LocalLimit  => literalLimit(limit.limitExpr)
+      case other              => denied(other.nodeName)
     }
+  }
+
+  private def literalLimit(expression: Expression): Unit = expression match {
+    case Literal(value: Int, IntegerType) if value >= 0 =>
+    case _                                              => denied("limit expression")
   }
 
   // Only the measured ResolveNaturalAndUsingJoin passthrough is absent from authored demand.
   // Keep the executable tree intact, and give both Kyuubi and structural extraction this same
   // representation. An explicit outer select("*") remains a separate authored Project.
-  def demandPlan(plan: LogicalPlan): LogicalPlan = plan.transformUp {
+  def authoredDemandPlan(plan: LogicalPlan): LogicalPlan = plan.transformUp {
     case project: Project if generatedUsingProjection(project) => project.child
   }
+
+  // Ordinary-only extraction carries hidden semantic demand across authored projections.
+  // Append validates the original representation above before this transformation.
+  def demandPlan(plan: LogicalPlan): LogicalPlan = {
+    val authored = authoredDemandPlan(plan)
+    val originalIds = semanticIds(authored)
+    // Derived outputs keep traversal alive across nested authored projections/counts.
+    // They are carriers only: all original base-column demand is checked again below.
+    val visible = originalIds ++ authored.collect { case node @ (_: Project | _: Aggregate) =>
+      node.output.map(_.exprId)
+    }.flatten
+    val represented = authored.transformUp {
+      case project: Project =>
+        val existing = project.projectList.map(_.exprId).toSet
+        val carried = project.child.output.filter(a => visible(a.exprId) && !existing(a.exprId))
+        project.copy(projectList = project.projectList ++ carried)
+      case deduplicate: Deduplicate => Distinct(deduplicate.child)
+      case aggregate: Aggregate if aggregate.groupingExpressions.isEmpty =>
+        aggregate.copy(child =
+          Project(aggregate.child.output.filter(a => visible(a.exprId)), aggregate.child)
+        )
+    }
+    val representedIds = semanticIds(represented)
+    val originalScans = authored.collect { case relation: LogicalRelation => relation }
+    val representedScans = represented.collect { case relation: LogicalRelation => relation }
+    if (
+      originalScans.size != representedScans.size || !originalScans.zip(representedScans).forall {
+        case (original, next) =>
+          (original eq next) &&
+          original.output.filter(a => originalIds(a.exprId)).map(_.name).toSet ==
+            next.output.filter(a => representedIds(a.exprId)).map(_.name).toSet
+      }
+    ) denied("demand representation changed original occurrences")
+    represented
+  }
+
+  private def semanticIds(plan: LogicalPlan): Set[ExprId] =
+    plan.output.map(_.exprId).toSet ++ plan.collect {
+      case distinct: Distinct => distinct.child.output.map(_.exprId)
+      case node if !node.isInstanceOf[LogicalRelation] =>
+        node.expressions.flatMap(_.references.map(_.exprId))
+    }.flatten
 
   private def generatedUsingProjection(project: Project): Boolean = project.child match {
     case join: Join if join.joinType == Inner && join.condition.nonEmpty =>

@@ -41,6 +41,35 @@ private[ranger] object DeltaRangerReadParityFixture {
       finally policy.engine.close()
     }
 
+  def withOperators(test: (SparkSession, TestDeltaRangerNativeSelect.Fixture) => Unit): Unit =
+    Seq(false, true).foreach { adaptive =>
+      val policy = new TestDeltaRangerNativeSelect.Fixture
+      policy.filter = "region = 'east'"
+      policy.maskColumn = "email"
+      policy.mask = "'M'"
+      try
+        NativeSelectFixture.withSpark(
+          spark => { recordProviders(spark); test(spark, policy) },
+          Some(NativeSelectFixture.extension(policy)),
+          startupOptions = Map("spark.sql.adaptive.enabled" -> adaptive.toString),
+          beforeExtension = seedOperators
+        )
+      finally policy.engine.close()
+    }
+
+  def seedOperators(spark: SparkSession): Unit =
+    NativeSelectFixture.locations.filterKeys(_ != "q").values.foreach { location =>
+      spark
+        .sql(
+          "SELECT 1L id, 'east' region, 'z' email, 's1' secret UNION ALL SELECT 2L, 'east', 'a', 's2' UNION ALL SELECT 3L, 'east', CAST(NULL AS STRING), 's3' UNION ALL SELECT 4L, 'west', 'hidden', 's4' UNION ALL SELECT 5L, 'east', 'b', 's5'"
+        )
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+        .save(location)
+    }
+
   def demands(frame: DataFrame): Vector[(String, Set[String])] = {
     val receipt = DeltaRangerDecisionReceipt.consumeOwned(
       frame.queryExecution.normalized,

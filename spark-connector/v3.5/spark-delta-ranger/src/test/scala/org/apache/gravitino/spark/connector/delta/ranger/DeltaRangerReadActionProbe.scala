@@ -21,6 +21,9 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import scala.collection.JavaConverters._
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
+import java.util.UUID
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.execution.SQLExecution
@@ -62,7 +65,19 @@ class DeltaRangerReadActionProbe(
   def session(): SparkSession = spark
   // Driver-only handle for the second authenticated test connection; never returns payload rows.
   def retainedFrame(): Dataset[Row] = frame
-  def observeFrame(value: Dataset[Row]): Unit = { frame = value; frame.queryExecution.executedPlan }
+  def observeFrame(value: Dataset[Row]): Unit = {
+    frame = value
+    sys.env.get("READ_ACTION_EVIDENCE").foreach { directory =>
+      Files.write(
+        Paths.get(directory, "python-prefix-" + UUID.randomUUID() + ".txt"),
+        DeltaRangerDecisionReceipt
+          .nativePrefix(frame.queryExecution.normalized.clone(), spark)
+          .treeString
+          .getBytes(StandardCharsets.UTF_8)
+      )
+    }
+    frame.queryExecution.executedPlan
+  }
   def setSelectAllowed(allowed: Boolean): Unit = {
     if (allowed) policy.denied.clear() else policy.denied.add("a:secret")
   }

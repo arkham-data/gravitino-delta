@@ -262,7 +262,7 @@ class TestDeltaRangerReadRule {
     }
   }
 
-  /** Constant-only native projections remain rejected when pinned extraction skips the leaf. */
+  /** Constant-only ordinary projections retain their canonical leaf with table-wide demand. */
   @Test
   def constantNativeProjectionCannotSubstituteAllLeafColumns(): Unit = {
     NativeSelectFixture.withSpark { spark =>
@@ -270,9 +270,22 @@ class TestDeltaRangerReadRule {
       assertEquals(1, plan.collect { case relation: LogicalRelation => relation }.size)
       val (inputs, _, _) = PrivilegesBuilder.build(plan, spark)
       assertTrue(inputs.isEmpty)
-      val failure =
-        assertThrows(classOf[SecurityException], () => DeltaRangerReadRule.extract(plan, spark))
-      assertEquals("Unsupported or ambiguous Delta SELECT extraction", failure.getMessage)
+      val extracted = DeltaRangerReadRule.extract(plan, spark)
+      assertEquals(1, extracted.size)
+      assertEquals(Set.empty[String], extracted.head._2)
+      assertSame(
+        plan.collect { case relation: LogicalRelation => relation }.head,
+        extracted.head._1.relation
+      )
+      val keys = DeltaRangerResourceKey.select(
+        "a",
+        "db",
+        "t",
+        java.util.Collections.emptySet[String](),
+        null
+      )
+      assertEquals(1, keys.size())
+      assertNull(keys.iterator().next().column())
     }
   }
 

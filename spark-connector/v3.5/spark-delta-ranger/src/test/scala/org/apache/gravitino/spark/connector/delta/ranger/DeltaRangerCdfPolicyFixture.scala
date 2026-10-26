@@ -59,7 +59,8 @@ private[ranger] final class DeltaRangerCdfPolicyFixture extends DeltaRangerPolic
       filter: Option[String] = None,
       masks: Map[String, String] = Map.empty,
       schedule: Option[RangerValiditySchedule] = None,
-      grantSchedule: Option[RangerValiditySchedule] = None
+      grantSchedule: Option[RangerValiditySchedule] = None,
+      granted: Seq[String] = Seq("*")
   ): Unit = {
     def resource(id: Long, kind: Int, columns: Seq[String]): RangerPolicy = {
       val policy = new RangerPolicy
@@ -80,7 +81,7 @@ private[ranger] final class DeltaRangerCdfPolicyFixture extends DeltaRangerPolic
       item.setRoles(Collections.singletonList("cdf-reader"))
       item.setAccesses(Collections.singletonList(new RangerPolicyItemAccess("select", true)))
     }
-    val grant = resource(1L, 0, Seq("*"))
+    val grant = resource(1L, 0, granted)
     val allowed = new RangerPolicyItem; access(allowed)
     grant.setPolicyItems(Collections.singletonList(allowed))
     grantSchedule.foreach(s => grant.setValiditySchedules(Collections.singletonList(s)))

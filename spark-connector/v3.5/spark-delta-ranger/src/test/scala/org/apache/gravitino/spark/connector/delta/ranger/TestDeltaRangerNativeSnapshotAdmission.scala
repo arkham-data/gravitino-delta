@@ -77,9 +77,9 @@ class TestDeltaRangerNativeSnapshotAdmission {
           )
           assertNativeSpoofsReject(spark, nativeAggregate.get, nativeBinding.get)
           Seq(
-            "SELECT count(*) FROM b.db.t",
+            "SELECT count(id + 1) FROM b.db.t",
             "SELECT region, count(*) FROM b.db.t GROUP BY region",
-            "SELECT id FROM b.db.t LIMIT 1"
+            "SELECT id FROM b.db.t LIMIT 1 OFFSET 1"
           )
             .foreach(sql =>
               assertThrows(classOf[SecurityException], () => spark.sql(sql).collect())

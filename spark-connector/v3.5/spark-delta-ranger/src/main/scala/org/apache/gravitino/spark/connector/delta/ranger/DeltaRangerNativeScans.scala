@@ -103,11 +103,13 @@ private[ranger] final class DeltaRangerNativeScans private (
       new DeltaRangerNativeScans.Occurrence(matches.head, relation, fs.location)
     }
     val emptyBinding =
-      if (mapped.isEmpty) DeltaRangerNativeProvenance.emptyPreparationBinding(plan) else None
+      if (mapped.isEmpty)
+        DeltaRangerNativeProvenance.emptyPreparationBinding(plan, ordinary = !appendInput)
+      else None
     if (mapped.isEmpty) {
       if (emptyBinding.isEmpty)
         throw new SecurityException("Unqualified empty native preparation")
-    } else if (session.sessionState.conf.adaptiveExecutionEnabled && !appendInput) {
+    } else if (!appendInput) {
       // The receipt was verified before stock optimization. Pruned occurrences keep their
       // original action demands even when no physical scan survives for that occurrence.
       val surviving = mapped.map(_.obligation)
@@ -271,13 +273,21 @@ private[ranger] object DeltaRangerNativeScans {
           local.getClass == classOf[LocalRelation] && local.data.isEmpty && !local.isStreaming
         case _ => false
       }
-      if (
-        actual.isEmpty && (emptyBinding.isEmpty ||
-          (!collapsedEmpty && DeltaRangerNativeProvenance.emptyPreparationBinding(
+      if (actual.isEmpty) {
+        if (emptyBinding.isEmpty) throw new SecurityException("Empty native preparation changed")
+        if (!owner.appendInput) {
+          // This is a derivation over eliminated scans, not an empty result: a global
+          // aggregate still emits its zero row. Accept the sealed prefix itself or only
+          // the complete exact stock suffix, including any evaluated local data.
+          if (DeltaRangerNativeProvenance.binding(plan) != emptyBinding.get)
+            executable.verify(plan, session)
+        } else if (
+          !collapsedEmpty && DeltaRangerNativeProvenance.emptyPreparationBinding(
             plan
-          ) != emptyBinding))
-      )
-        throw new SecurityException("Empty native preparation changed")
+          ) != emptyBinding
+        )
+          throw new SecurityException("Empty native preparation changed")
+      }
     }
     def recoverExecutable(session: SparkSession): LogicalPlan =
       executable.replay(session, plan => verify(plan, session))

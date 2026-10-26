@@ -46,6 +46,25 @@ class TestDeltaRangerInstalledMerge {
       |""".stripMargin
 
   @Test
+  def ordinaryOperatorsDoNotWidenMergeSources(): Unit = withFixture { spark =>
+    Seq(
+      distinctSql.replace("SELECT * FROM table_changes", "SELECT DISTINCT * FROM table_changes"),
+      distinctSql
+        .replace(
+          "SELECT * FROM table_changes",
+          "SELECT 1L AS id, 'value' AS secret, 'east' AS region, 'insert' AS _change_type FROM table_changes"
+        )
+        .replace(" WHERE _commit_version = 4 AND _change_type <> 'update_preimage'", ""),
+      distinctSql.replace(
+        "SELECT * FROM table_changes",
+        "SELECT count(id) AS id FROM table_changes"
+      ),
+      distinctSql.replace("'update_preimage') s", "'update_preimage' ORDER BY id) s"),
+      distinctSql.replace("'update_preimage') s", "'update_preimage' LIMIT 1) s")
+    ).foreach(query => rejectWithoutMutation(spark, query))
+  }
+
+  @Test
   def namedSqlReachesOwnedNativeMerge(): Unit = withFixture { spark =>
     val log = LoggerFactory.getLogger(getClass)
     Seq(

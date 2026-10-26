@@ -160,7 +160,10 @@ class TestDeltaRangerAppendSourceShape {
           )
           asApp {
             val data = spark.table("b.db.t")
-            val original = data.queryExecution.analyzed
+            val pending = data.queryExecution.analyzed
+            assertTrue(DeltaRangerOrdinaryRead.pending(pending))
+            assertFalse(DeltaRangerDecisionReceipt.present(pending))
+            val original = data.queryExecution.normalized
             val receipt =
               DeltaRangerDecisionReceipt.consumeOwned(original, spark, optimized = false)
             assertEquals(1, receipt.obligations.size)
@@ -204,7 +207,7 @@ class TestDeltaRangerAppendSourceShape {
               DeltaLog.forTable(spark, NativeSelectFixture.locations("a")).update().version
             if (scenario == "shape") checkShapes(spark, original, trace)
             else if (scenario == "authority")
-              checkAuthority(spark, original, receipt, relation, trace)
+              checkAuthority(spark, pending, relation, trace)
             else {
               val completed = new LinkedBlockingQueue[QueryExecution]()
               val listener = new QueryExecutionListener {
@@ -215,6 +218,7 @@ class TestDeltaRangerAppendSourceShape {
                   ()
               }
               var actualInputObserved = false
+              var actualSource: LogicalPlan = null
               source.onRequest = _ => {
                 if (!actualInputObserved && atInsert) {
                   actualInputObserved = true
@@ -222,8 +226,12 @@ class TestDeltaRangerAppendSourceShape {
                     spark.sparkContext.getLocalProperty("spark.sql.execution.id").toLong
                   )
                   val command = qe.analyzed.asInstanceOf[AppendData]
-                  assertSame(original, command.query)
-                  assertSame(original, command.analyzedQuery.get)
+                  actualSource = command.query
+                  assertNotSame(pending, actualSource)
+                  assertSame(actualSource, command.analyzedQuery.get)
+                  assertEquals(original.schema.json, actualSource.schema.json)
+                  val actualReceipt =
+                    DeltaRangerDecisionReceipt.consumeOwned(actualSource, spark, optimized = false)
                   val guard = qe.executedPlan.collectFirst { case g: DeltaRangerAppendInputExec =>
                     g
                   }.get
@@ -233,7 +241,7 @@ class TestDeltaRangerAppendSourceShape {
                   }.get
                   trace.record(
                     "identity-diagnostic",
-                    s"original=${trace.id(original)} analyzedQuery=${trace.id(command.query)} analyzedStored=${trace.id(command.analyzedQuery.get)} optimizedQuery=${trace.id(optimized.query)} optimizedStored=${trace.id(optimized.analyzedQuery.get)} plannedFallback=${trace.id(planned.delegate.plan)} executedFallback=${trace.id(guard.delegate.plan)} fallbackEqOriginal=${guard.delegate.plan eq original} fallbackEqOptimizedStored=${guard.delegate.plan eq optimized.analyzedQuery.get} plannedDelegateEqExecuted=${planned.delegate eq guard.delegate} sourceSchemaSame=${guard.delegate.plan.schema == original.schema} sourceOutputSame=${guard.delegate.plan.output == original.output}"
+                    s"original=${trace.id(original)} analyzedQuery=${trace.id(command.query)} analyzedStored=${trace.id(command.analyzedQuery.get)} optimizedQuery=${trace.id(optimized.query)} optimizedStored=${trace.id(optimized.analyzedQuery.get)} plannedFallback=${trace.id(planned.delegate.plan)} executedFallback=${trace.id(guard.delegate.plan)} fallbackEqOriginal=${guard.delegate.plan eq original} fallbackEqOptimizedStored=${guard.delegate.plan eq optimized.analyzedQuery.get} plannedDelegateEqExecuted=${planned.delegate eq guard.delegate} sourceSchemaSame=${guard.delegate.plan.schema == original.schema} sourceOutputSame=${guard.delegate.plan.output == actualSource.output}"
                   )
                   trace.record("retained-fallback-output", fields(guard.delegate.plan.output))
                   trace
@@ -241,9 +249,9 @@ class TestDeltaRangerAppendSourceShape {
                   assertSame(optimized.analyzedQuery.get, guard.delegate.plan)
                   assertSame(planned.delegate, guard.delegate)
                   assertSame(planned.delegate.plan, guard.delegate.plan)
-                  assertEquals(original.output, guard.delegate.plan.output)
-                  assertEquals(original.schema.json, guard.delegate.plan.schema.json)
-                  receipt.consume(guard.delegate.plan, spark, optimized = false)
+                  assertEquals(actualSource.output, guard.delegate.plan.output)
+                  assertEquals(actualSource.schema.json, guard.delegate.plan.schema.json)
+                  actualReceipt.consume(guard.delegate.plan, spark, optimized = false)
                   assertTrue(command.writeOptions.isEmpty)
                   clean()
                   trace.record(
@@ -265,8 +273,8 @@ class TestDeltaRangerAppendSourceShape {
                   val qe = completed.poll(10, TimeUnit.SECONDS)
                   assertNotNull(qe)
                   val command = qe.analyzed.asInstanceOf[AppendData]
-                  assertSame(original, command.query)
-                  assertSame(original, command.analyzedQuery.get)
+                  assertSame(actualSource, command.query)
+                  assertSame(actualSource, command.analyzedQuery.get)
                   assertTrue(actualInputObserved)
                   trace.record("executed-source-output", fields(command.query.output))
                   trace.record("executed-target-output", fields(command.table.output))
@@ -418,7 +426,7 @@ class TestDeltaRangerAppendSourceShape {
     val nested = spark
       .sql("SELECT id, CAST(NULL AS STRUCT<value: STRING>) secret, region FROM b.db.t")
       .queryExecution
-      .analyzed
+      .normalized
     assertEquals(
       StructType(Seq(StructField("value", StringType, nullable = true))),
       nested.output(1).dataType
@@ -427,7 +435,7 @@ class TestDeltaRangerAppendSourceShape {
     val nestedNonNull = spark
       .sql("SELECT id, CAST(NULL AS STRUCT<value: STRING NOT NULL>) secret, region FROM b.db.t")
       .queryExecution
-      .analyzed
+      .normalized
     assertFalse(nestedNonNull.output(1).dataType.asInstanceOf[StructType].fields.head.nullable)
     assertTrue(DeltaRangerDecisionReceipt.present(nestedNonNull))
     shapeTargets.keys.toVector.sorted.foreach { name =>
@@ -460,17 +468,20 @@ class TestDeltaRangerAppendSourceShape {
 
   private def checkAuthority(
       spark: SparkSession,
-      original: LogicalPlan,
-      receipt: DeltaRangerDecisionReceipt,
+      pending: LogicalPlan,
       relation: DataSourceV2Relation,
       trace: InstalledAppendBoundaryProbe.Trace
   ): Unit = {
-    val command = AppendData.byPosition(relation, original, Map.empty)
-    DeltaRangerAppendV1Input.inspect(command, spark)
-    assertSame(
-      command,
-      DeltaRangerAppendV1Input.resolve(command, spark, NativeSelectFixture.wrapper(spark, "a"))
-    )
+    val authored = AppendData.byPosition(relation, pending, Map.empty)
+    DeltaRangerAppendV1Input.inspect(authored, spark)
+    val command = DeltaRangerAppendV1Input
+      .resolve(authored, spark, NativeSelectFixture.wrapper(spark, "a"))
+      .asInstanceOf[AppendData]
+    assertNotSame(authored, command)
+    assertSame(relation, command.table)
+    val original = command.query
+    val receipt = DeltaRangerDecisionReceipt.consumeOwned(original, spark, optimized = false)
+    assertFalse(DeltaRangerOrdinaryRead.pending(original))
     val tag = TreeNodeTag[DeltaRangerAppendV1Input.Reference]("gravitino.delta.ranger.append-input")
     val owner = command.getTagValue(tag).get.get
     owner.analyzed(command.copy(analyzedQuery = Some(original)), spark)
