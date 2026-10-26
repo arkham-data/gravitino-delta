@@ -17,7 +17,9 @@
 
 # Bounded ordinary Spark read parity for governed Delta
 
-Status: builder-reviewed proposal; awaiting approval of this written design. Baseline:
+Status: approved by the user with “Approved” after the reviewed design at
+`255480dd9`. Detailed implementation planning follows; no new runtime
+qualification is implied. Baseline:
 `683ba8976a8973f2027b217143782dccd9ccac1a` (previous milestone closed and pushed).
 The user selected ordinary-read parity next and explicitly selected Spark-style
 column permissions: `spark.table("t").select("id").count()` must work with access
