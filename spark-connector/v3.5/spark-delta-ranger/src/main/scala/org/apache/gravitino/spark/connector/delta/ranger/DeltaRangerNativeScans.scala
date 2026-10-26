@@ -233,6 +233,9 @@ private[ranger] object DeltaRangerNativeScans {
       private val executable: DeltaRangerPhysicalPlanning.LogicalWitness
   ) {
 
+    private var issuedReadRecipe: LogicalPlan = null
+    private var issuedReadBinding: Vector[Any] = null
+
     /** Verifies occurrence bindings; the later physical gate must also verify executable behavior.
       */
     def verify(plan: LogicalPlan, session: SparkSession): Unit = {
@@ -270,16 +273,23 @@ private[ranger] object DeltaRangerNativeScans {
     def recoverExecutable(session: SparkSession): LogicalPlan =
       executable.replay(session, plan => verify(plan, session))
 
-    def readRecipe(session: SparkSession): LogicalPlan = {
-      val recipe = recoverExecutable(session)
-      DeltaRangerNativeScans.attach(recipe, this)
-      recipe
+    def readRecipe(session: SparkSession): LogicalPlan = synchronized {
+      if (session ne owner.session) throw new SecurityException("Read recipe session changed")
+      if (issuedReadRecipe == null) {
+        val recipe = recoverExecutable(session)
+        DeltaRangerNativeScans.attach(recipe, this)
+        issuedReadBinding = DeltaRangerNativeProvenance.binding(recipe)
+        issuedReadRecipe = recipe
+      }
+      issuedReadRecipe
     }
 
-    def verifyReadRecipe(recipe: LogicalPlan, session: SparkSession): Unit = {
+    def verifyReadRecipe(recipe: LogicalPlan, session: SparkSession): Unit = synchronized {
+      // Stock runtime-filter insertion allocates new expression IDs on each optimizer replay.
+      // Bind the exact issued recipe and its frozen semantics, not a second optimizer result.
       if (
-        DeltaRangerNativeProvenance.binding(recipe) !=
-          DeltaRangerNativeProvenance.binding(recoverExecutable(session))
+        (session ne owner.session) || (recipe ne issuedReadRecipe) ||
+        DeltaRangerNativeProvenance.binding(recipe) != issuedReadBinding
       )
         throw new SecurityException("Read recipe changed")
     }

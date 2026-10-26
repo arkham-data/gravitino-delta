@@ -26,7 +26,13 @@ import scala.collection.mutable
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExprId}
+import org.apache.spark.sql.catalyst.expressions.{
+  AttributeReference,
+  Expression,
+  ExprId,
+  SubqueryExpression
+}
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.adaptive.{
   AdaptiveSparkPlanExec,
@@ -163,7 +169,14 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       spark: SparkSession
   ): Unit = {
     val reference = new Reference(new CapturedTicket(context, spark))
-    plan.foreach(_.setTagValue(capturedTag, reference))
+    def attach(recipe: LogicalPlan): Unit = recipe.foreach { node =>
+      node.setTagValue(capturedTag, reference)
+      node.expressions.foreach(_.foreach {
+        case subquery: SubqueryExpression => attach(subquery.plan)
+        case _                            =>
+      })
+    }
+    attach(plan)
   }
 
   final class AppendTicket(private val spark: SparkSession) extends Ticket {
@@ -318,6 +331,10 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       ticket
     } else denied("missing or mixed physical origin")
     nodes(plan).foreach(_.setTagValue(tag, new Reference(ticket)))
+    ticket match {
+      case read: TrustedReadTicket => bindReadSubqueries(plan, read)
+      case _                       =>
+    }
     plan
   }
 
@@ -535,6 +552,22 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case _              => false
     }
     override def hashCode(): Int = System.identityHashCode(item)
+  }
+
+  // Stock runtime filters create executable subqueries after named logical admission. They
+  // consume the enclosing action's captured decisions, including asynchronous AQE callbacks.
+  private def bindReadSubqueries(plan: SparkPlan, read: TrustedReadTicket): Unit = {
+    nodes(plan).foreach { node =>
+      node.expressions.foreach(_.foreach {
+        case subquery: ExecSubqueryExpression =>
+          val children = nodes(subquery.plan)
+          if (children.flatMap(_.getTagValue(tag).map(_.get)).exists(_ ne read))
+            denied("mixed runtime-filter origin")
+          children.foreach(_.setTagValue(tag, new Reference(read)))
+          bindReadSubqueries(subquery.plan, read)
+        case _ =>
+      })
+    }
   }
 
   private def denied(reason: String): Nothing =

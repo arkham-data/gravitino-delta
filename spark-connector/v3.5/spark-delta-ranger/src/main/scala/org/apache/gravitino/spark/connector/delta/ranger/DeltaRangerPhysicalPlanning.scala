@@ -166,7 +166,10 @@ private[ranger] object DeltaRangerPhysicalPlanning {
     qualify(spark)
     val recipe = new LogicalWitness(context.logicalPlan(), spark).replay(spark, _ => ())
     DeltaRangerPhysicalProvenance.captureRecipe(recipe, context, spark)
-    new PhysicalPrefix(spark, recipe).applyCaptured(raw(spark, recipe))
+    // The qualified stock optimizer may add runtime-filter subqueries to this already
+    // authorized native recipe. The unrelated legacy raw route retains its subquery gate.
+    val physical = QueryExecution.createSparkPlan(spark, planner(spark), recipe.clone())
+    new PhysicalPrefix(spark, recipe).applyCaptured(physical)
   }
 
   def lower(spark: SparkSession, logical: LogicalPlan): SparkPlan =

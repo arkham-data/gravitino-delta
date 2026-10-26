@@ -503,14 +503,22 @@ private[ranger] object DeltaRangerCdfReadScans {
         body: => Seq[org.apache.spark.sql.delta.actions.AddFile]
     ): Seq[org.apache.spark.sql.delta.actions.AddFile] = {
       val operation = DeltaRangerNativeOperation.cdfRead(this)
+      var primary: Throwable = null
       try {
         val result = body
         helper.requireReturned(result)
         operation.succeed()
         result
+      } catch {
+        case failure: Throwable =>
+          primary = failure
+          throw failure
       } finally {
         try operation.close()
-        finally closed = true
+        catch {
+          case failure: Throwable if primary != null =>
+            if (failure ne primary) primary.addSuppressed(failure)
+        } finally closed = true
       }
     }
   }

@@ -40,7 +40,7 @@ private[ranger] object DeltaRangerTrustedAqeFixture {
     "spark.sql.adaptive.advisoryPartitionSizeInBytes" -> "1048576"
   )
 
-  def withSpark(options: Map[String, String] = Map.empty)(
+  def withSpark(options: Map[String, String] = Map.empty, data: Map[String, String] = Map.empty)(
       test: (
           SparkSession,
           TestDeltaRangerNativeSelect.Fixture,
@@ -81,10 +81,10 @@ private[ranger] object DeltaRangerTrustedAqeFixture {
         Some(NativeSelectFixture.extension(people)),
         startupOptions = options + ("spark.sql.adaptive.enabled" -> "true"),
         beforeExtension = spark => {
-          Map(
+          (Map(
             "a" -> "SELECT 1L id, 'one' secret, 'east' region UNION ALL SELECT 2L, 'two', 'west' UNION ALL SELECT 3L, CAST(NULL AS STRING), 'east'",
             "b" -> "SELECT 1L id, 'x' secret, 'east' region UNION ALL SELECT 1L, 'y', 'east' UNION ALL SELECT 2L, 'z', 'east' UNION ALL SELECT 3L, 'v', 'east'"
-          )
+          ) ++ data)
             .foreach { case (catalog, sql) =>
               spark
                 .sql(sql)
