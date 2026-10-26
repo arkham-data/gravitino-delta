@@ -27,6 +27,10 @@ import org.apache.spark.sql.execution.{SparkPlan, UnaryExecNode}
 
 /** Driver-only validation seam for the collection guard. */
 private[ranger] trait DeltaRangerCollectValidationContext {
+  def beginDatasetAction(root: SparkPlan, child: SparkPlan): Unit = ()
+
+  def endCollection(): Unit = ()
+
   def validateCollection(child: SparkPlan): Unit
 
   def validateExecution(child: SparkPlan): Unit
@@ -44,9 +48,15 @@ private[ranger] final case class DeltaRangerCollectGuardExec(child: SparkPlan)(
 
   override def jsonFields = super.jsonFields.filterNot(_._1 == "driverContext")
 
+  override def resetMetrics(): Unit = {
+    requiredDriverContext().beginDatasetAction(this, child)
+    super.resetMetrics()
+  }
+
   override def executeCollect(): Array[InternalRow] = {
     requiredDriverContext().validateCollection(child)
-    super.executeCollect()
+    try super.executeCollect()
+    finally requiredDriverContext().endCollection()
   }
 
   override protected def doExecute(): RDD[InternalRow] = {

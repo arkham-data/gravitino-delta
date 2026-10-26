@@ -40,20 +40,28 @@ private[ranger] final class DeltaRangerNativeScans private (
     private val source: Option[DeltaRangerAppendCoordinator.Source] = None
 ) extends DeltaRangerNativeOperation.ScanOwner {
   val obligations = receipt.obligations
-  @volatile private var acceptedRead: Option[DeltaRangerExecutionContext.Context] = None
+  private case class AcceptedRead(context: DeltaRangerExecutionContext.Context, live: () => Boolean)
+  @volatile private var acceptedRead: Option[AcceptedRead] = None
   private var frozen = false
   private val transitions = new java.util.IdentityHashMap[TahoeFileIndex, TahoeLogFileIndex]()
 
   def owns(candidate: DeltaRangerDecisionReceipt): Boolean = receipt eq candidate
 
-  def beginRead(recipe: LogicalPlan): Unit = {
+  def beginRead(recipe: LogicalPlan, lifetime: () => Boolean = () => true): Unit = {
+    endRead()
     if (appendInput) throw new SecurityException("Append is not an ordinary read")
-    acceptedRead = Some(DeltaRangerExecutionContext.forRead(receipt, session, recipe))
+    val context = DeltaRangerExecutionContext.forRead(receipt, session, recipe)
+    acceptedRead = Some(AcceptedRead(context, lifetime))
   }
 
-  def readContext: Option[DeltaRangerExecutionContext.Context] = acceptedRead
+  def endRead(): Unit = { acceptedRead = None }
 
-  def acceptedReadIndex(index: FileIndex): Boolean = acceptedRead.exists { context =>
+  // SQLExecution removes its exact binding on success and failure. Reading an expired
+  // capture must never clear a newer capture installed while an old callback unwinds.
+  def readContext: Option[DeltaRangerExecutionContext.Context] =
+    acceptedRead.filter(_.live()).map(_.context)
+
+  def acceptedReadIndex(index: FileIndex): Boolean = readContext.exists { context =>
     val belongs = context.logicalPlan().exists {
       case relation: LogicalRelation =>
         relation.relation match {
@@ -125,7 +133,7 @@ private[ranger] final class DeltaRangerNativeScans private (
   }
   override def bindings(): java.util.List[DeltaRangerRegistrationBindings.BoundRegistrationScan] =
     obligations.map(_.binding).asJava
-  override def usesCapturedRead(): Boolean = acceptedRead.nonEmpty
+  override def usesCapturedRead(): Boolean = readContext.nonEmpty
 
   override def requireLive(): Unit = if (!usesCapturedRead()) {
     source.foreach(_.requireLive())

@@ -338,7 +338,7 @@ class TestDeltaRangerTrustedAqeRead {
         failure.getStackTrace.exists(element =>
           element.getClassName.endsWith(
             "DeltaRangerCollectGuardExec"
-          ) && element.getMethodName == "executeCollect"
+          ) && Set("executeCollect", "resetMetrics").contains(element.getMethodName)
         ),
         failure.toString
       )

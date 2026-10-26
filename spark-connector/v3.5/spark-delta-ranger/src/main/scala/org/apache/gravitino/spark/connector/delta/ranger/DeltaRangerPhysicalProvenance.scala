@@ -125,24 +125,61 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     override def toString: String = "Delta user collection evidence"
   }
 
-  /** Ordinary adaptive read: policy checks belong to the outer supported action only. */
+  /** Ordinary read: policy checks belong to the outer supported action only. */
   final class TrustedReadTicket(
       private val prepared: DeltaRangerNativeScans.Prepared,
       private val spark: SparkSession,
-      private val recipe: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+      private val recipe: LogicalPlan,
+      private val physicalWitness: Option[Witness] = None
   ) extends Ticket
       with DeltaRangerCollectValidationContext {
     private var installed = false
+    private var root: SparkPlan = _
+    private var action: Option[(Long, QueryExecution)] = None
+    private var directCollection = false
+
+    override def beginDatasetAction(actualRoot: SparkPlan, child: SparkPlan): Unit = {
+      val binding = currentAction(actualRoot).getOrElse(denied("read has no active Dataset action"))
+      // Stock physical preparation may copy the guard after columnar-rule installation.
+      // Only the exact active QueryExecution root with this issued owner can bind here.
+      root = actualRoot
+      verify(child)
+      if (!action.contains(binding) || prepared.owner.readContext.isEmpty) {
+        action = None
+        prepared.owner.endRead()
+        DeltaRangerPhysicalPlanning.qualify(spark)
+        prepared.owner.beginRead(
+          recipe,
+          () => SQLExecution.getQueryExecution(binding._1) eq binding._2
+        )
+        action = Some(binding)
+      }
+    }
+
+    override def endCollection(): Unit = if (directCollection) {
+      directCollection = false
+      prepared.owner.endRead()
+    }
     override def requireSession(session: SparkSession): Unit =
       if (session ne spark) denied("read planning session changed")
     // Stock adaptive stage trees are execution products, not authorization evidence.
-    override def verify(plan: SparkPlan): Unit = ()
+    override def verify(plan: SparkPlan): Unit = physicalWitness.foreach(_.verify(plan))
     override def validateCollection(plan: SparkPlan): Unit = {
-      DeltaRangerPhysicalPlanning.qualify(spark)
-      prepared.owner.beginRead(recipe)
+      verify(plan)
+      if (currentAction().exists(binding => action.contains(binding))) validateExecution(plan)
+      else {
+        // A direct physical collection may run inside a native SQLExecution wrapper.
+        // It owns only this synchronous collection, never a Dataset/Arrow binding.
+        DeltaRangerPhysicalPlanning.qualify(spark)
+        prepared.owner.beginRead(recipe)
+        directCollection = true
+      }
     }
     override def validateExecution(plan: SparkPlan): Unit = {
+      verify(plan)
       if (prepared.owner.readContext.isEmpty) denied("read has no accepted action")
+      if (!directCollection && !currentAction().exists(binding => action.contains(binding)))
+        denied("read execution belongs to another action")
     }
     def finish(plan: SparkPlan): SparkPlan = synchronized {
       if (installed) {
@@ -150,9 +187,22 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         plan
       } else {
         installed = true
-        DeltaRangerCollectGuardExec(plan)(this)
+        root = DeltaRangerCollectGuardExec(plan)(this)
+        root
       }
     }
+
+    private def currentAction(expectedRoot: SparkPlan = root): Option[(Long, QueryExecution)] =
+      Option(spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)).flatMap { value =>
+        scala.util.Try(value.toLong).toOption.flatMap { id =>
+          Option(SQLExecution.getQueryExecution(id))
+            .filter { query =>
+              (query.sparkSession eq spark) && (query.executedPlan eq expectedRoot) &&
+              DeltaRangerNativeScans.evidence(query.optimizedPlan).exists(_.owner eq prepared.owner)
+            }
+            .map(query => (id, query))
+        }
+      }
   }
 
   /** Captured native phase: the owner checks current authority before entering Spark. */
@@ -310,8 +360,15 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       if (authorities.size != 1) denied("mixed user preparation evidence")
       val prepared = authorities.head
       prepared.owner.requireExecutable()
-      if (spark.sessionState.conf.adaptiveExecutionEnabled && !prepared.owner.appendInput) {
-        new TrustedReadTicket(prepared, spark, prepared.readRecipe(spark))
+      if (!prepared.owner.appendInput) {
+        val witness =
+          if (spark.sessionState.conf.adaptiveExecutionEnabled) None
+          else {
+            val exact = userWitness(prepared.recoverExecutable(spark), spark)
+            exact.verify(plan)
+            Some(exact)
+          }
+        new TrustedReadTicket(prepared, spark, prepared.readRecipe(spark), witness)
       } else {
         val logical = prepared.recoverExecutable(spark)
         val witness = userWitness(logical, spark)

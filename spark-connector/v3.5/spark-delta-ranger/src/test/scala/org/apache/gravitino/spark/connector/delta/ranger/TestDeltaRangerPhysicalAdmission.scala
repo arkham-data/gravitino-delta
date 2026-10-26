@@ -604,7 +604,8 @@ class TestDeltaRangerPhysicalAdmission {
         if (collected) assertEquals(Vector(Row("a-one-masked")), dataset.collect().toVector)
         val scans = root.collect { case scan: FileSourceScanExec => scan }
         assertFalse(scans.isEmpty)
-        // Dataset.withAction resets prior metrics before executeCollect, including denied reuse.
+        // Denial at action entry precedes recursive metric reset and all child preparation.
+        val priorRows = scans.map(_.metrics("numOutputRows").value)
         val jobs = spark.sparkContext.statusTracker.getJobIdsForGroup("physical-guard-stale").toSet
         spark.sparkContext.setJobGroup("physical-guard-stale", "retained collection denial")
         policy.denied.add("a:secret")
@@ -615,7 +616,7 @@ class TestDeltaRangerPhysicalAdmission {
         assertTrue(
           failure.getStackTrace.exists(_.getClassName.endsWith("DeltaRangerCollectGuardExec"))
         )
-        assertTrue(scans.forall(_.metrics("numOutputRows").value == 0L))
+        assertEquals(priorRows, scans.map(_.metrics("numOutputRows").value))
         assertEquals(
           jobs,
           spark.sparkContext.statusTracker.getJobIdsForGroup("physical-guard-stale").toSet

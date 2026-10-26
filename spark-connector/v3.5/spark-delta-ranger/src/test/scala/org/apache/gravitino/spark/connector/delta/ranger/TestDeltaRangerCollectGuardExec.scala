@@ -67,6 +67,12 @@ class TestDeltaRangerCollectGuardExec {
       val executed = state.child.executes.get()
       val executionValidations = state.context.executionValidations.get()
       state.context.allowed = false
+      root.resetMetrics()
+      assertEquals(
+        2,
+        state.context.collectionValidations.get(),
+        "Unrelated metric resets grant no helper authority"
+      )
       assertThrows(classOf[CollectGuardTestDenied], () => data.collect())
       assertThrows(classOf[CollectGuardTestDenied], () => data.collectAsList())
       assertEquals(4, state.context.collectionValidations.get())
@@ -267,6 +273,22 @@ class TestDeltaRangerCollectGuardExec {
     }
   }
 
+  @Test
+  def collectionScopeClosesWhenPreparationFails(): Unit = {
+    val state = new CollectGuardTestState
+    withSpark(state) { spark =>
+      val frame = query(spark)
+      val root = frame.queryExecution.executedPlan
+      state.child.failPreparation = true
+      assertThrows(classOf[IllegalStateException], () => root.executeCollect())
+      assertEquals(1, state.context.closedCollections.get())
+      assertEquals(0, state.child.executes.get())
+      state.child.failPreparation = false
+      assertEquals(3, root.executeCollect().length)
+      assertEquals(2, state.context.closedCollections.get())
+    }
+  }
+
   private def serialize(value: AnyRef): Array[Byte] = {
     val bytes = new ByteArrayOutputStream
     val output = new ObjectOutputStream(bytes)
@@ -294,6 +316,8 @@ private[ranger] final class CollectGuardTestContext(
     val child: CollectGuardChildState,
     val sensitiveMarker: String
 ) extends DeltaRangerCollectValidationContext {
+  val closedCollections = new AtomicInteger
+  override def endCollection(): Unit = { closedCollections.incrementAndGet(); () }
   val collectionValidations = new AtomicInteger
   val executionValidations = new AtomicInteger
   @volatile var allowed = true
@@ -332,6 +356,7 @@ private[ranger] final class CollectGuardChildState(val broadcastOnPrepare: Boole
   val broadcasts = new AtomicInteger
   val destroyedBroadcasts = new AtomicInteger
   @volatile var failExecution = false
+  @volatile var failPreparation = false
 }
 
 private[ranger] final case class CollectGuardTestProbeExec(
@@ -348,6 +373,7 @@ private[ranger] final case class CollectGuardTestProbeExec(
 
   override protected def doPrepare(): Unit = {
     state.prepares.incrementAndGet()
+    if (state.failPreparation) throw new IllegalStateException("test preparation failed")
     if (state.broadcastOnPrepare) {
       preparedBroadcast = Some(sparkContext.broadcast(Array(1, 2, 3)))
       state.broadcasts.incrementAndGet()
