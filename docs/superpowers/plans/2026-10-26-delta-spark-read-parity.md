@@ -27,7 +27,7 @@
 
 **Spec:** [Approved design](../specs/2026-10-26-delta-spark-read-parity-design.md), approved after `255480dd9`. Read both documents.
 
-**Status:** Proposed implementation plan awaiting the user's review. No implementation or new runtime qualification has started. Baseline product milestone: `683ba8976`. Existing worktree: `.worktrees/delta-spark-feasibility`, branch `codex/delta-spark-feasibility`.
+**Status:** Approved by the user with “Proceed” after `eb8b1bf0d`. Task 1 is starting; no new runtime qualification is claimed. Baseline product milestone: `683ba8976`. Existing worktree: `.worktrees/delta-spark-feasibility`, branch `codex/delta-spark-feasibility`.
 
 ## Global Constraints
 
