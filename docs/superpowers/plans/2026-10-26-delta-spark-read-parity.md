@@ -27,7 +27,7 @@
 
 **Spec:** [Approved design](../specs/2026-10-26-delta-spark-read-parity-design.md), approved after `255480dd9`. Read both documents.
 
-**Status:** Approved by the user with “Proceed” after `eb8b1bf0d`. Tasks 1 and 2 are complete and independently reviewed; Task 3 is starting. Final four-pair/live qualification remains Task 5. Baseline product milestone: `683ba8976`. Existing worktree: `.worktrees/delta-spark-feasibility`, branch `codex/delta-spark-feasibility`.
+**Status:** Approved by the user with “Proceed” after `eb8b1bf0d`. Tasks 1–3 are complete and independently reviewed; Task 4 is starting. Final four-pair/live qualification remains Task 5. Baseline product milestone: `683ba8976`. Existing worktree: `.worktrees/delta-spark-feasibility`, branch `codex/delta-spark-feasibility`.
 
 ## Global Constraints
 
@@ -154,6 +154,8 @@ owns count and empty authored-column admission.
 
 ## Task 3: Admit finite count, distinct, ordering and limits
 
+**Complete:** `e33b49e21`; SPEC PASS / QUALITY PASS, no findings. Final Task3 coverage: 123 cases on Spark3.5.4/Delta3.3.0, 67 on Spark3.5.4/Delta3.3.2 (59 unchanged plus 8 corrected source-shape cases), and 67 on Spark3.5.6/Delta3.3.0; 39 native Python PASS/zero exits. All original failures are retained. Source/class/runtime equality and current inputs independently verified. Ranger client2.8.0 is loaded; final live server/MinIO/four-pair packages remain Task5. Evidence: `E/task-3-report.md`, `E/task-3-review.md`, `E/task-3-controller-verification.json`.
+
 **Files:** OrdinaryAdmission, ReadRule extraction/preparation, DecisionReceipt binding
 and prefix replay, NativeScans and NativeProvenance; new operator suite and parity
 fixture. Shared `DeltaRangerPlanAdmission.expression` remains unchanged.
@@ -163,7 +165,7 @@ fixture. Shared `DeltaRangerPlanAdmission.expression` remains unchanged.
 allowed only for structurally proven ordinary occurrences; CDF receipt stays strict.
 No new public methods or Ranger access types.
 
-- [ ] Seed the design's five `(id,region,email,secret)` rows in the parity fixture. Add SQL and DataFrame tests `countUsesGovernedValues`, `distinctAndOrderingUseMasks`, `emptyAndPrunedCountsRetainAuthority`. Pin these assertions (variables are observed query values):
+- [x] Seed the design's five `(id,region,email,secret)` rows in the parity fixture. Add SQL and DataFrame tests `countUsesGovernedValues`, `distinctAndOrderingUseMasks`, `emptyAndPrunedCountsRetainAuthority`. Pin these assertions (variables are observed query values):
 
   ```scala
   assertEquals(4L, rowCount)
@@ -181,11 +183,11 @@ No new public methods or Ranger access types.
   SQL Distinct and full-output Deduplicate, ASC/DESC/NULLS FIRST/LAST, sort-only
   columns and literal limits including zero. Unordered limits assert only size
   and visible-row membership. Run RED before widening admission.
-- [ ] Add `countRetainsOriginalDemand`: id-only principal succeeds at `spark.table(t).select("id").count()` and denies explicit-star then count; bare count/literal projection uses table-wide SELECT. Record actual Ranger wildcard/deny decisions rather than substituting all columns. Constant/NULL masked email still needs email SELECT; policy-only region does not invent authored region access, but an authored region predicate does. Joins/empty/eliminated occurrences keep their original registration and demand.
-- [ ] Implement finite ordinary grammar and exact binding for global count with top-level column or literal-one inputs, full-output DISTINCT/Deduplicate, SortOrder fields and literal GlobalLimit/LocalLimit. Separate generated optimizer products from authored permissions. Extend recursive no-skipping preparation and prefix replay together. For zero-width or fully eliminated scans, retain a bound authorized derivation; COUNT(empty) is one zero row, not an empty result. Derive structural per-occurrence demand explicitly when Kyuubi omits a columnless input; retain checks for unknown/missing/nonmatching column-bearing inputs and every canonical registration.
-- [ ] Add `unsupportedAggregateAndDedupNeighborsReject`: grouped/count-distinct/SUM/window/FILTER aggregates, arbitrary count argument expressions, subset or zero-column dedup, unsupported sort expressions and OFFSET remain rejected. Test nullable/nonnullable email before and after NULL masking, aliases, nested projections and distinct→count so null folding/pruning cannot use raw metadata. Re-run Task 1 action-denial/freshness cases with limit(0), empty/false query and count, including Arrow conversion of an admitted aggregate.
-- [ ] Run operator, composition and action suites GREEN on Spark 3.5.4 with both Delta pins and Spark 3.5.6 / Delta 3.3.0; final Task 5 covers all four on the frozen candidate. Run affected no-skipping/native-snapshot/physical-admission cases. Verify ordinary grammar additions do not admit the same transforms into CDF/MERGE sources or raw metadata routes. Record actual aggregate/top-N/limit/scan plans; exchange-free counts do not count as AQE evidence.
-- [ ] Format/check, fresh SPEC/QUALITY review and commit `feat(delta): support governed count distinct order and limit`. Deliverable: the approved native projection-count behavior and exact policy-before-operator semantics, with no general analytics allowlist.
+- [x] Add `countRetainsOriginalDemand`: id-only principal succeeds at `spark.table(t).select("id").count()` and denies explicit-star then count; bare count/literal projection uses table-wide SELECT. Record actual Ranger wildcard/deny decisions rather than substituting all columns. Constant/NULL masked email still needs email SELECT; policy-only region does not invent authored region access, but an authored region predicate does. Joins/empty/eliminated occurrences keep their original registration and demand.
+- [x] Implement finite ordinary grammar and exact binding for global count with top-level column or literal-one inputs, full-output DISTINCT/Deduplicate, SortOrder fields and literal GlobalLimit/LocalLimit. Separate generated optimizer products from authored permissions. Extend recursive no-skipping preparation and prefix replay together. For zero-width or fully eliminated scans, retain a bound authorized derivation; COUNT(empty) is one zero row, not an empty result. Derive structural per-occurrence demand explicitly when Kyuubi omits a columnless input; retain checks for unknown/missing/nonmatching column-bearing inputs and every canonical registration.
+- [x] Add `unsupportedAggregateAndDedupNeighborsReject`: grouped/count-distinct/SUM/window/FILTER aggregates, arbitrary count argument expressions, subset or zero-column dedup, unsupported sort expressions and OFFSET remain rejected. Test nullable/nonnullable email before and after NULL masking, aliases, nested projections and distinct→count so null folding/pruning cannot use raw metadata. Re-run Task 1 action-denial/freshness cases with limit(0), empty/false query and count, including Arrow conversion of an admitted aggregate.
+- [x] Run operator, composition and action suites GREEN on Spark 3.5.4 with both Delta pins and Spark 3.5.6 / Delta 3.3.0; final Task 5 covers all four on the frozen candidate. Run affected no-skipping/native-snapshot/physical-admission cases. Verify ordinary grammar additions do not admit the same transforms into CDF/MERGE sources or raw metadata routes. Record actual aggregate/top-N/limit/scan plans; exchange-free counts do not count as AQE evidence.
+- [x] Format/check, fresh SPEC/QUALITY review and commit `feat(delta): support governed count distinct order and limit`. Deliverable: the approved native projection-count behavior and exact policy-before-operator semantics, with no general analytics allowlist.
 
 ## Task 4: Local DataFrame views, show and Pandas conversion
 
