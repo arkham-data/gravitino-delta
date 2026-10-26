@@ -23,7 +23,7 @@ import java.net.{URI, InetSocketAddress}
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.time.Duration
 import com.sun.net.httpserver.{HttpServer, HttpExchange}
-import java.util.concurrent.Executors
+import java.util.concurrent.{Executors, ConcurrentLinkedQueue, ConcurrentHashMap}
 import java.nio.file.{Files, Path, Paths}
 import java.security.MessageDigest
 import java.util.{Map => JavaMap, Properties}
@@ -34,7 +34,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{SparkSession, Dataset, Row}
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
+import org.apache.spark.sql.execution.{QueryExecution, SQLExecution, SparkPlan}
+import org.apache.spark.sql.execution.adaptive.{
+  AdaptiveSparkPlanExec,
+  AQEShuffleReadExec,
+  QueryStageExec,
+  ShuffleQueryStageExec,
+  BroadcastQueryStageExec
+}
+import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
+import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 
 import scala.collection.JavaConverters._
 
@@ -104,6 +115,7 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
       hadoop.set(key.stripPrefix("spark.hadoop."), properties.getProperty(key))
   }
   conf.set("spark.sql.gravitino.uri", gateway.uri.toString)
+  DeltaRangerLiveCdfMerge.validateProfile(request, conf)
   UserGroupInformation.setConfiguration(hadoop)
   spark = SparkSession.builder().config(conf).getOrCreate()
   SparkSession.setActiveSession(spark)
@@ -140,6 +152,25 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
     request.path("minPolicy").asLong(),
     request.path("minRole").asLong()
   )
+  private val executions = new ConcurrentLinkedQueue[(String, QueryExecution)]()
+  private val observedJobs = ConcurrentHashMap.newKeySet[Integer]()
+  private val evidence = scala.collection.mutable.ArrayBuffer.empty[JavaMap[String, Any]]
+  private val effectiveSettings = request
+    .path("requestedSettings")
+    .fieldNames()
+    .asScala
+    .map(key => key -> spark.conf.get(key))
+    .toMap
+  private val stockSettings = stockSettingsSnapshot()
+  spark.sparkContext.addSparkListener(new SparkListener {
+    override def onJobStart(event: SparkListenerJobStart): Unit = {
+      val group = Option(event.properties.getProperty("spark.jobGroup.id"))
+      val execution = Option(event.properties.getProperty(SQLExecution.EXECUTION_ID_KEY))
+        .flatMap(id => Option(SQLExecution.getQueryExecution(id.toLong)))
+      for (name <- group; query <- execution) executions.add(name -> query)
+      observedJobs.add(event.jobId)
+    }
+  })
   private var cursor = 0L
   private def applied(name: String, statePath: String, initial: Boolean): Unit = {
     val state = json.readTree(Files.readAllBytes(Paths.get(statePath)))
@@ -215,6 +246,7 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
         "thread" -> Thread.currentThread.getName
       ).asJava
     )
+    spark.sparkContext.setJobGroup(name, name)
     step.path("sql").asText()
   }
 
@@ -222,6 +254,7 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
   def after(name: String, failure: Throwable): Unit = {
     val step = request.path("steps").elements().asScala.find(_.path("name").asText() == name).get
     val causes = Iterator.iterate(failure)(_.getCause).takeWhile(_ != null).toVector
+    captureNative(name)
     val end = if (failure == null) step.path("end").asLong() else 0L
     writeJson(
       output.resolve(name + "-checkpoint-after.json"),
@@ -262,22 +295,36 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
   /** Capture governed values through installed SQL, with no payload bridge into MERGE. */
   def observeSource(): Unit = {
     val named = text("catalog") + "." + text("database") + ".source"
-    val rows = spark
+    val frame = spark
       .sql(
         "SELECT id, secret, region, " + (if (request.path("partitioned").asBoolean()) "part, "
                                          else
                                            "") + "_change_type, _commit_version FROM table_changes('" + named + "', 1, 1)"
       )
-      .collect()
-      .toVector
-      .map(_.toSeq.asJava)
-      .asJava
+    val rows = frame.collect().toVector.map(_.toSeq.asJava).asJava
+    recordPlan("distinct", "cdf", frame.queryExecution.executedPlan)
     writeJson(output.resolve("source-governed.json"), rows)
   }
 
   /** Retain actual frontend/runtime/identity evidence before releasing owned resources. */
   override def close(): Unit = {
     try {
+      require(
+        effectiveSettings.forall { case (key, value) => spark.conf.get(key) == value },
+        "Execution settings changed"
+      )
+      require(stockSettings == stockSettingsSnapshot(), "Stock execution settings changed")
+      writeJson(
+        output.resolve("adaptive-evidence.json"),
+        Map[String, Any](
+          "executionProfile" -> request.path("executionProfile").asText("nonadaptive"),
+          "requestedSettings" -> request.path("requestedSettings"),
+          "effectiveSettings" -> effectiveSettings.asJava,
+          "stockSettingsBefore" -> stockSettings.asJava,
+          "stockSettingsAfter" -> stockSettingsSnapshot().asJava,
+          "observations" -> evidence.asJava
+        ).asJava
+      )
       gateway.requireMetadataObserved("metadata-identity-final.json")
       writeJson(
         output.resolve("observed.json"),
@@ -295,6 +342,84 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
       gateway.close()
     }
   }
+
+  /** Record the executed ordinary query after its actual Python action has returned. */
+  def observeRead(name: String, frame: Dataset[Row]): Unit = {
+    recordPlan(name, "ordinary", frame.queryExecution.executedPlan)
+  }
+
+  private def stockSettingsSnapshot(): Map[String, String] = Seq(
+    "spark.sql.adaptive.enabled",
+    "spark.sql.adaptive.forceApply",
+    "spark.sql.adaptive.coalescePartitions.enabled",
+    "spark.sql.adaptive.localShuffleReader.enabled",
+    "spark.sql.adaptive.skewJoin.enabled",
+    "spark.sql.optimizer.dynamicPartitionPruning.enabled",
+    "spark.sql.optimizer.runtime.bloomFilter.enabled",
+    "spark.sql.exchange.reuse",
+    "spark.sql.execution.reuseSubquery",
+    "spark.sql.autoBroadcastJoinThreshold",
+    "spark.sql.adaptive.autoBroadcastJoinThreshold",
+    "spark.sql.adaptive.customCostEvaluatorClass"
+  ).map(key => key -> spark.conf.getOption(key).getOrElse("<unset>")).toMap
+
+  private def nodes(plan: SparkPlan): Vector[SparkPlan] = {
+    val children = plan match {
+      case adaptive: AdaptiveSparkPlanExec => Seq(adaptive.executedPlan)
+      case stage: QueryStageExec           => Seq(stage.plan)
+      case other                           => other.children
+    }
+    Vector(plan) ++ children.toVector.flatMap(nodes)
+  }
+
+  private def captureNative(name: String): Unit = {
+    // StatusTracker sees completed submissions; wait until the asynchronous listener has seen
+    // every job before reading the retained QueryExecutions' final plans.
+    val jobs = spark.sparkContext.statusTracker.getJobIdsForGroup(name).toSet
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+    while (!jobs.forall(id => observedJobs.contains(id)) && System.nanoTime() < deadline)
+      Thread.sleep(10)
+    require(jobs.forall(id => observedJobs.contains(id)), "Payload listener did not drain")
+    executions.asScala.toVector.filter(_._1 == name).map(_._2).distinct.foreach { query =>
+      nodes(query.executedPlan).foreach {
+        case phase: DeltaRangerMergeNative.Exec => recordPlan(name, "touched", phase.child)
+        case phase: DeltaRangerMergeWrite.Exec  => recordPlan(name, "write", phase.child)
+        case _                                  => ()
+      }
+    }
+  }
+
+  private def recordPlan(name: String, phase: String, plan: SparkPlan): Unit = {
+    val all = nodes(plan)
+    val adaptive = all.collect { case value: AdaptiveSparkPlanExec => value }
+    val path = output.resolve(name + "-" + phase + "-" + evidence.size + "-plan.txt")
+    Files.writeString(path, plan.toString)
+    evidence += Map[String, Any](
+      "step" -> name,
+      "phase" -> phase,
+      "isPayload" -> true,
+      "rootClass" -> plan.getClass.getName,
+      "outcome" -> (if (adaptive.isEmpty) "exchange-free" else "adaptive-payload"),
+      "isFinalPlan" -> (adaptive.nonEmpty && adaptive.forall(_.isFinalPlan)),
+      "materializedShuffle" -> all.count {
+        case stage: ShuffleQueryStageExec => stage.isMaterialized; case _ => false
+      },
+      "materializedBroadcast" -> all.count {
+        case stage: BroadcastQueryStageExec => stage.isMaterialized; case _ => false
+      },
+      "coalesced" -> all.exists {
+        case reader: AQEShuffleReadExec => reader.hasCoalescedPartition; case _ => false
+      },
+      "local" -> all.exists {
+        case reader: AQEShuffleReadExec => reader.isLocalRead; case _ => false
+      },
+      "skew" -> all.exists { case join: SortMergeJoinExec => join.isSkewJoin; case _ => false },
+      "reuse" -> all.exists(_.isInstanceOf[ReusedExchangeExec]),
+      "operators" -> all.map(_.getClass.getSimpleName).asJava,
+      "plan" -> Map("path" -> path.toString, "sha256" -> sha(path)).asJava
+    ).asJava
+  }
+
   private def sha(path: Path): String = {
     val hash = MessageDigest.getInstance("SHA-256")
     val stream = Files.newInputStream(path)
@@ -372,11 +497,35 @@ object DeltaRangerLiveCdfMerge {
         val sql = app.before(name)
         if (name == "distinct") app.observeSource()
         var failure: Throwable = null
-        try app.session().sql(sql).collect()
-        catch { case e: Throwable => failure = e }
+        try {
+          val frame = app.session().sql(sql)
+          val rows = frame.collect()
+          if (Set("ordinaryRead", "predicateDenied")(name)) {
+            app.observeRead(name, frame)
+            new ObjectMapper().writeValue(
+              Paths.get(request.path("output").asText(), name + "-rows.json").toFile,
+              rows.toVector.map(_.toSeq.asJava).asJava
+            )
+          }
+        } catch { case e: Throwable => failure = e }
         app.after(name, failure)
       }
     } finally app.close()
+  }
+
+  private[ranger] def validateProfile(request: JsonNode, conf: SparkConf): Unit = {
+    val profile = request.path("executionProfile").asText("nonadaptive")
+    require(Set("nonadaptive", "adaptive-stock")(profile), "Unknown execution profile")
+    require(
+      conf.get("spark.sql.adaptive.enabled") == (profile == "adaptive-stock").toString,
+      "Execution profile must be supplied before session construction"
+    )
+    request.path("requestedSettings").fields().asScala.foreach { entry =>
+      require(
+        conf.get(entry.getKey) == entry.getValue.asText(),
+        "Requested startup setting differs"
+      )
+    }
   }
 
   private[ranger] def postHelper(stack: Array[StackTraceElement]): Boolean = {

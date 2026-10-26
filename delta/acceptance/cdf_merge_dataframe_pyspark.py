@@ -85,7 +85,13 @@ def main():
             identities[step['name']]=dict(bridge.queryIdentity())
             failure=None
             try:
-                execute_operation(spark, step['operation'])
+                if step['operation'].get('kind')=='ordinary-read':
+                    frame=spark.sql(step['operation']['sql'])
+                    rows=[list(row) for row in frame.collect()]
+                    bridge.observeRead(step['name'],frame._jdf)
+                    Path(request['output'],step['name']+'-rows.json').write_text(json.dumps(rows)+'\n')
+                else:
+                    execute_operation(spark, step['operation'])
             except Py4JJavaError as error:
                 failure=error.java_exception
             except Exception as error:

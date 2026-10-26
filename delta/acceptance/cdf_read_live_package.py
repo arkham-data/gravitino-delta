@@ -94,11 +94,19 @@ def shared_sources(source):
         not p.startswith((MODULE,RUNTIME,'delta/acceptance/','.superpowers/'))}
 
 
+def verify_supplemental_artifacts(runtime):
+    """Recheck archived build-path dependencies even after subsequent pair builds overwrite them."""
+    for original, artifact in runtime.get('supplementalArtifacts', {}).items():
+        assert sha(artifact['path'])==artifact['sha256'], 'Supplemental artifact changed: '+original
+        assert archive_entries(artifact['path'])==artifact['members'], 'Supplemental members changed'
+
+
 def verify_runtime(runtime):
     """Recheck immutable build receipts and every class/provider/origin before live use."""
     assert capture_sources(ROOT)==runtime['sourceInputs'],'Source moved after package capture'
     assert canonical_digest(runtime['sourceInputs'])==runtime['sourceInputDigest']
     if runtime.get('pythonZip'):verify_python_package(runtime)
+    verify_supplemental_artifacts(runtime)
     assert all(sha(p)==d for p,d in runtime['jarHashes'].items())
     assert all(str(Path(p).resolve())==target for p,target in runtime['runtimeJarLinks'].items())
     assert all(sha(p)==d for p,d in runtime['sharedArtifacts'].items())
@@ -171,10 +179,18 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     python_zip=output/built_python.name
     shutil.copyfile(built_python,python_zip)
     artifacts={str(p):sha(p) for p in [changed,built_app,python_zip,output/'compiled-classes.json']}
+    supplemental={}
     if application=='merge':
         build_inputs=output/'app/cdf-merge-build-inputs.json'
         artifacts[str(build_inputs)]=sha(build_inputs)
         resolved=read(build_inputs)
+        dependencies=output/'supplemental';dependencies.mkdir()
+        for path in sorted(set().union(*(set(paths) for paths in resolved.values()))):
+            if str(ROOT) in path and '/build/' in path:
+                original=Path(path);retained=dependencies/(sha(path)+'-'+original.name)
+                shutil.copyfile(original,retained)
+                supplemental[path]={'path':str(retained),'sha256':sha(retained),'members':archive_entries(retained)}
+                artifacts[str(retained)]=sha(retained)
         for configuration in ['compileClasspath','testCompileClasspath']:
             assert all(sha(path)==digest for path,digest in resolved[configuration].items())
             names={Path(path).name for path in resolved[configuration]}
@@ -214,7 +230,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
         assemblyProvenanceScope='Shared server only; current companion/application provenance and reuse flags use freshBuildReceipt',spark=spark,delta=delta,sparkHome=str(home),app=str(app),changedRuntime=str(changed.resolve()),
         jarHashes={str(p.resolve()):sha(p) for p in jars},runtimeJarLinks={str(p):str(p.resolve()) for p in jars},addedJarNames=sorted(selected),
         providers=providers,providerClasses={n:inventories[p][n.replace('.','/')+'.class'] for n,p in providers.items()},
-        thinClasses=classes(app),changedRuntimeClasses=ranger_classes,sourceInputs=before,sourceInputDigest=canonical_digest(before),
+        supplementalArtifacts=supplemental,thinClasses=classes(app),changedRuntimeClasses=ranger_classes,sourceInputs=before,sourceInputDigest=canonical_digest(before),
         pythonApiVersion=1,pythonZip=str(python_zip),pythonZipSha256=sha(python_zip),pythonZipMembers=python_archive_entries(python_zip),pythonSourceInputs=python_sources(before),
         sharedComponentSources=shared_sources(before),sharedArtifacts=shared,sharedProductionManifest=str(base_path),sharedProductionManifestSha256=sha(base_path),
         freshBuildReceipt=str(output/'build-receipt.json'),freshBuildReceiptSha256=sha(output/'build-receipt.json'),

@@ -382,12 +382,11 @@ class TestGravitinoDeltaMergeBuilder {
       assertEquals(settings, spark.sessionState.conf.getAllConfs)
       val beforeAdaptiveVersion = version(spark)
       val beforeAdaptiveRows = PartitionedMergeFixture.rows(spark)
+      // A fresh adaptive builder is supported; an already captured builder cannot change settings.
+      val retained = target.merge(source(spark), "t.id = s.id").whenMatchedDelete()
       spark.conf.set("spark.sql.adaptive.enabled", "true")
       val adaptive = spark.sessionState.conf.getAllConfs
-      assertThrows(
-        classOf[Exception],
-        () => target.merge(source(spark), "t.id = s.id").whenMatchedDelete().execute()
-      )
+      assertThrows(classOf[Exception], () => retained.execute())
       assertEquals(adaptive, spark.sessionState.conf.getAllConfs)
       spark.conf.set("spark.sql.adaptive.enabled", "false")
       assertEquals(beforeAdaptiveVersion, version(spark))

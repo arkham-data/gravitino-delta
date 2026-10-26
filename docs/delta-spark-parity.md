@@ -31,7 +31,7 @@ must not be admitted because their schema resembles a qualified relation.
 | Partitioned targets | Bounded named SQL profile locally qualified on all four pinned pairs | Five fresh Ranger 2.8.0/MinIO/PySpark scenarios per pair cover STRING/null/escaped partition values, governed moves, same-table writeback, denial, native CDC and persistence; broader type/settings/storage profiles remain separate |
 | Insert-only optimization | Unsupported | Owned native branch with original column demands, masks/filters, output and denial evidence |
 | Column mapping and defaults | Unsupported | Protocol/schema profiles, native features, authored-expression provenance and raw copy-forward |
-| AQE | Requires disabled AQE | Exact owned adaptive execution and policy revalidation |
+| AQE | Bounded named ordinary reads, CDF and native MERGE use trusted stock adaptive execution; caller chooses the profile | Four-pair installed defaults/coalescing and representative optimization branches; seven fresh packaged Python/Ranger/MinIO phases per pair, exact original artifacts/exits and operation-boundary revocation. See [current contract](delta-cdf-merge.md#trusted-stock-adaptive-execution) |
 | Schema evolution | Unsupported | Native schema evolution with registration/publication and policy demand correctness |
 | Row tracking and deletion vectors | Unsupported write profiles | Exact native feature semantics and owned action/reconstruction evidence |
 | Broader source grammar/clauses | One bounded CDF source with finite scalar grammar | Defined joins/windows/aggregates and NOT MATCHED BY SOURCE semantics; no admission by schema equivalence |
@@ -66,3 +66,19 @@ See [CDF consumption](delta-cdf-consumption.md) for historical-schema and finite
 read bounds, [governed MERGE](delta-cdf-merge.md) for policy/checkpoint semantics,
 and the separate [builder](superpowers/plans/2026-10-22-delta-cdf-merge-builder.md)
 and [deployment](superpowers/plans/2026-10-22-delta-cdf-merge-demo.md) plans.
+
+## Revised adaptive execution boundary
+
+The trusted-stock route supersedes the former exact physical-stage/RDD-graph
+hardening requirement. Running reads may finish under captured decisions; the next
+supported action checks locally applied Ranger state. MERGE also checks source
+attempts, touched/write phases and precommit/reconciliation, without an atomic
+Ranger/Delta fence. Historical restrictive-profile diagnostics remain historical.
+
+All four requested Spark/Delta pairs have fresh installed evidence and seven fresh
+packaged DataFrame live phases each. Ordinary final broadcast and native
+touched/write coalescing are observed; exchange-free CDF and expected denials are
+labeled explicitly. The full legacy baseline and focused per-pair coverage are
+distinct in the [original execution table](delta-cdf-merge.md#original-task-4-execution-records).
+Broader logical grammar, caches, Connect/streaming, separate workers and catalog-demo
+remain pending scope; no API version or deployment claim follows from this change.

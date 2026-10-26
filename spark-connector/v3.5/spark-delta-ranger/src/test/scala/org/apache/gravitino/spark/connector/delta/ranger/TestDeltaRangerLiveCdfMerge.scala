@@ -21,9 +21,25 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
+import org.apache.spark.SparkConf
+import com.fasterxml.jackson.databind.ObjectMapper
 
 /** The live gate must hold only the actual post-helper MERGE publication boundary. */
 class TestDeltaRangerLiveCdfMerge {
+  @Test
+  def executionProfileRequiresStartupConfiguration(): Unit = {
+    val request = new ObjectMapper().readTree(
+      """{"executionProfile":"adaptive-stock","requestedSettings":{"spark.sql.adaptive.enabled":"true"}}"""
+    )
+    val conf = new SparkConf(false).set("spark.sql.adaptive.enabled", "false")
+    assertThrows(
+      classOf[IllegalArgumentException],
+      () => DeltaRangerLiveCdfMerge.validateProfile(request, conf)
+    )
+    conf.set("spark.sql.adaptive.enabled", "true")
+    DeltaRangerLiveCdfMerge.validateProfile(request, conf)
+  }
+
   @Test
   def mergeGateRequiresBothNativeCommandAndCommitConstruction(): Unit = {
     val prefix = "org.apache.gravitino.spark.connector.delta.ranger."

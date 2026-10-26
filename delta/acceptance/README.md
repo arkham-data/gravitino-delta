@@ -338,3 +338,54 @@ common-JAR metadata/archive exception. Original source/package/live evidence is
 indexed by `.superpowers/sdd/2026-10-25-delta-dataframe-merge/task-4/final-evidence-index.json`;
 final independent SPEC/QUALITY review approved the qualified scope and evidence.
 See [supported API and example](../../docs/delta-cdf-merge.md#named-dataframe-api).
+
+### Trusted-stock adaptive qualification
+
+The execution profile is explicit and composes with `--frontend sql|dataframe`:
+`--execution-profile nonadaptive|adaptive-stock`, default `nonadaptive`. The new
+four-pair live matrix uses the packaged classic-Python DataFrame frontend:
+
+```bash
+python delta/acceptance/cdf_merge_live.py \
+  --execution-profile adaptive-stock --frontend dataframe --partitioned \
+  --runtime <fresh-manifest> --inputs <private-inputs> --out <fresh-directory>
+```
+
+Profile settings are written before Spark/session/source/handle construction.
+`adaptive-stock` enables AQE and records an eight-partition deterministic fixture;
+stock coalescing, local readers, skew, reuse and runtime-filter switches retain
+their defaults. These fixture choices are not production toggles. SQL request
+composition and installed native SQL execution have focused coverage; the new
+four-pair live qualification is specifically the DataFrame path.
+
+Seven phases retain distinct-target MERGE, column UPDATE denial, source SELECT
+revocation, target MODIFY revocation and same-table writeback, plus an ordinary
+named join and predicate-only SELECT denial. The last denial uses an explicitly
+labeled unique fixture policy; public table grants/revokes retain the actual
+Gravitino-to-Ranger callback/download chain. The checker validates final payload
+plans, original requested/effective settings, native rows/CDF/actions/partitions,
+checkpoint files, registration restart, original process exits and every bound
+stock/supplemental artifact. Naturally exchange-free CDF and expected denials never
+count as fabricated successful adaptive stages.
+
+Original evidence is indexed in
+`.superpowers/sdd/2026-10-25-delta-trusted-spark-aqe/task-4/final-evidence-index.json`.
+The failed obsolete blanket-AQE expectation in the initial 79-case baseline retains
+its original exit 1; the corrected retained-builder settings-drift case has its own
+exit-zero run. Remaining pairs use all new trusted suites plus the request/profile
+and six affected nonadaptive seams. Unchanged blanket legacy suites are not
+represented as rerun on every pair. Every installed runtime JAR has an immutable
+copy; original archive hashes and member differences are retained separately.
+
+Support docs are a subsequent Markdown-only change to the recorded package
+snapshots. Their separate diff/hash record does not relabel original manifests or
+require repeating an unchanged execution matrix. See the [operation-boundary
+contract and coverage table](../../docs/delta-cdf-merge.md#trusted-stock-adaptive-execution).
+
+Known diagnostic limitation: the new adaptive observation labels/counts are
+qualified only for `adaptive-stock`. A newly run `nonadaptive` record can label
+a plan `exchange-free` when it has no adaptive wrapper even if ordinary shuffle
+operators exist. Inspect the retained operator plan; that label is not proof of
+absence of nonadaptive exchanges. This does not change legacy operation support
+or relabel historical evidence. The checker cannot use a nonadaptive record to
+qualify adaptive execution.

@@ -185,6 +185,14 @@ def bind_evidence(result,cell,runtime_path,source_overrides=None):
         for step in request['steps']:references['stages'][step['name']]=file_ref(directory/(step['name']+'-result.json'))
     outer_argv=read_ref(references['outerCommand'])['argv'];references['inputs']=file_ref(outer_argv[outer_argv.index('--inputs')+1])
     references['frontend']=file_ref(cell/'python/app-evidence/python-observed.json')
+    if result.get('executionProfile')=='adaptive-stock':
+        primary='python' if result.get('profile')=='partitioned' else 'scala'
+        references['adaptiveEvidence']=file_ref(cell/primary/'app-evidence/adaptive-evidence.json')
+        references['readRows']=file_ref(cell/primary/'app-evidence/ordinaryRead-rows.json')
+        references['downloads']=file_ref(cell/primary/'app-evidence/downloads.jsonl')
+        references['predicatePolicy']=file_ref(cell/primary/'predicate-fixture-policy.json')
+        references['grantTransitions']={p.parent.name:file_ref(p) for p in (cell/primary).glob('*/completed.json')}
+        references['serverRootProof']=file_ref(read_ref(references['ranger'])['rootProof'])
     result=dict(result,provenance=references)
     result['exits']=dict(result['exits'],outer=read_ref(references['outerExit'])['exitCode'])
     return result
@@ -198,9 +206,20 @@ def row_document(value):
     return value
 
 
+def verify_app_archive(manifest, receipt):
+    """Preserve both container identities when packaging reuses equal member bytes."""
+    from cdf_read_live_package import archive_entries
+    built=receipt['appBuildArtifact']
+    assert file_ref(built)['sha256']==receipt['artifacts'][built]
+    assert file_ref(manifest['app'])['sha256']==manifest['jarHashes'][manifest['app']]
+    assert archive_entries(manifest['app'])==archive_entries(built)
+
+
 def verify_evidence(result):
     """Re-read original processes, authenticated frontends, source files and immutable artifacts."""
     proof=result['provenance'];manifest=read_ref(proof['runtime']);binding=result['binding']
+    from cdf_read_live_package import verify_supplemental_artifacts
+    verify_supplemental_artifacts(manifest)
     assert canonical(manifest['sourceInputs'])==manifest['sourceInputDigest']==binding['source']
     assert binding['manifest']==proof['runtime']['sha256']
     assert binding['companion']==file_ref(manifest['changedRuntime'])['sha256']
@@ -218,7 +237,7 @@ def verify_evidence(result):
         assert json.loads(Path(receipt['before']).read_text())['files']==json.loads(Path(receipt['after']).read_text())['files']==manifest['sourceInputs']
         for path in [manifest['pythonZip'],manifest['changedRuntime']]:
             assert file_ref(path)['sha256']==receipt['artifacts'][path]
-        assert file_ref(manifest['app'])['sha256']==receipt['artifacts'][receipt['appBuildArtifact']]
+        verify_app_archive(manifest, receipt)
     assert (manifest['spark'],manifest['delta'])==(result['spark'],result['delta'])
     for path,digest_value in manifest['jarHashes'].items():assert file_ref(path)['sha256']==digest_value,'Runtime artifact changed'
     for path,target in manifest['runtimeJarLinks'].items():assert str(Path(path).resolve())==target and target in manifest['jarHashes']
@@ -304,7 +323,7 @@ def verify_evidence(result):
             prefix=plan['catalog']+'.'+plan['database']+'.'
             assert step['operation']['source']==prefix+step['source']
             assert step['operation']['target']==prefix+step['target']
-            assert step['operation']['end']==step['end']==1
+            if step['operation'].get('kind')!='ordinary-read':assert step['operation']['end']==step['end']==1
     ranger=read_ref(proof['ranger']);assert ranger['deployedRangerVersion']==result['ranger']=='2.8.0'
     assert plan['deployedRangerEvidenceSha256']==proof['ranger']['sha256']
     from cdf_merge_live import receipt_identity
@@ -319,8 +338,130 @@ def verify_evidence(result):
     assert len(rows)==len(persisted) and persisted==result['registration']['persisted']
 
 
+def verify_adaptive_observation(observation):
+    """Validate original payload diagnostics without treating them as authorization tokens."""
+    assert observation['isPayload'] is True, 'adaptive metadata is not payload'
+    assert observation['phase'] in ['ordinary','touched','write','cdf'], 'adaptive phase differs'
+    assert file_ref(observation['plan']['path'])==observation['plan'], 'adaptive original plan changed'
+    plan=Path(observation['plan']['path']).read_text()
+    operators=observation['operators']
+    assert observation['rootClass'].split('.')[-1] in operators
+    for name,operator in [('coalesced','AQEShuffleReadExec'),('local','AQEShuffleReadExec'),
+                          ('skew','SortMergeJoinExec'),('reuse','ReusedExchangeExec')]:
+        assert type(observation[name]) is bool
+        if observation[name]:assert operator in operators, 'adaptive operator claim differs'
+    for name,operator,text in [('materializedShuffle','ShuffleQueryStageExec','ShuffleQueryStage'),
+                               ('materializedBroadcast','BroadcastQueryStageExec','BroadcastQueryStage')]:
+        assert type(observation[name]) is int and observation[name]>=0
+        assert observation[name]<=operators.count(operator), 'adaptive stage count differs'
+        if observation[name]:assert text in plan, 'adaptive original operator absent'
+    if observation['phase']!='cdf':
+        assert observation['isFinalPlan'] is True and 'isFinalPlan=true' in plan, 'adaptive final plan absent'
+        assert 'AdaptiveSparkPlanExec' in operators
+        assert observation['materializedShuffle']+observation['materializedBroadcast']>0, 'adaptive forceApply-only witness'
+    else:
+        assert observation['outcome'] in ['exchange-free','adaptive-payload']
+        if observation['outcome']=='exchange-free':assert observation['materializedShuffle']==observation['materializedBroadcast']==0
+    if observation['coalesced']:assert 'AQEShuffleRead coalesced' in plan, 'adaptive coalescing claim differs'
+    if observation['local']:assert 'AQEShuffleRead local' in plan, 'adaptive local claim differs'
+    if observation['reuse']:assert 'ReusedExchange' in plan, 'adaptive reuse claim differs'
+
+
+def verify_adaptive_evidence(result):
+    """Bind final payloads, seven fresh calls, downloaded policy transitions and startup options."""
+    evidence=result.get('adaptiveEvidence');assert evidence, 'Missing adaptive payload evidence'
+    proof=result['provenance']
+    manifest=read_ref(proof['runtime'])
+    assert manifest.get('supplementalArtifacts'), 'Missing supplemental runtime artifacts'
+    with zipfile.ZipFile(manifest['providers']['org.apache.ranger.plugin.service.RangerBasePlugin']) as archive:
+        properties=archive.read('META-INF/maven/org.apache.ranger/ranger-plugins-common/pom.properties').decode()
+        assert 'version=2.8.0' in properties.splitlines(), 'Loaded Ranger client version differs'
+    assert read_ref(proof['adaptiveEvidence'])==evidence
+    primary='python' if result.get('profile')=='partitioned' else 'scala'
+    request=read_ref(proof['apps'][primary]['request'])
+    assert evidence['executionProfile']==request['executionProfile']=='adaptive-stock'
+    assert evidence['requestedSettings']==request['requestedSettings']==evidence['effectiveSettings']
+    assert evidence['effectiveSettings']['spark.sql.adaptive.enabled']=='true'
+    assert evidence['stockSettingsBefore']==evidence['stockSettingsAfter']
+    for key in ['adaptive.enabled','adaptive.coalescePartitions.enabled','adaptive.localShuffleReader.enabled',
+                'adaptive.skewJoin.enabled','optimizer.dynamicPartitionPruning.enabled',
+                'optimizer.runtime.bloomFilter.enabled','exchange.reuse','execution.reuseSubquery']:
+        assert evidence['stockSettingsBefore']['spark.sql.'+key]=='true', 'Stock optimization disabled'
+    assert evidence['stockSettingsBefore']['spark.sql.adaptive.forceApply']=='false'
+    assert evidence['stockSettingsBefore']['spark.sql.adaptive.customCostEvaluatorClass']=='<unset>'
+    outer=read_ref(proof['outerCommand'])['argv']
+    assert outer[outer.index('--execution-profile')+1]=='adaptive-stock'
+    observations=evidence['observations'];assert observations, 'Missing adaptive observations'
+    for observation in observations:verify_adaptive_observation(observation)
+    for name,phases in [('ordinaryRead',{'ordinary'}),('distinct',{'touched','write','cdf'}),('same',{'touched','write'})]:
+        selected=[o for o in observations if o['step']==name]
+        assert phases<={o['phase'] for o in selected}, 'Missing adaptive payload phase: '+name
+    assert any(o['coalesced'] for o in observations), 'Missing adaptive coalescing'
+    assert not any(o['step'] in ['predicateDenied','columnDenied','selectDenied','modifyDenied'] for o in observations)
+    expected=[[101,'MASKED'],[104,'MASKED']]+[[106,'MASKED']]*4
+    assert bag(read_ref(proof['readRows']))==bag(result['stages']['ordinaryRead']['rows'])==bag(expected)
+    for name in ['ordinaryRead','predicateDenied']:
+        stage=result['stages'][name]
+        if result.get('frontend','sql')=='dataframe':assert stage['operation']['kind']=='ordinary-read'
+        else:assert stage['sql'].startswith('SELECT ')
+        keys=['id','version','rows']+(['files','fileObjects','partitionColumns','schema'] if result.get('profile')=='partitioned' else [])
+        for key in keys:
+            assert row_document({key:stage['before'][key]})==row_document({key:stage['after'][key]})
+        assert not stage['after']['actions'] and not stage['cdc']
+        assert stage['checkpointBefore']==stage['checkpointAfter']==0
+        assert stage['outcome']==('success' if name=='ordinaryRead' else 'failed')
+        if name=='predicateDenied':assert any('SecurityException' in e for e in stage['errors'])
+    assert file_ref(proof['downloads']['path'])==proof['downloads']
+    downloads=[json.loads(line) for line in Path(proof['downloads']['path']).read_text().splitlines()]
+    from cdf_live_checks import exact_access, canonical_privileges
+    plan=read_ref(proof['plan'])
+    association=read_ref(proof['ranger']);root=read_ref(proof['serverRootProof'])
+    assert association['rootProofSha256']==proof['serverRootProof']['sha256']
+    assert root['webappMaven']['version']==association['deployedRangerVersion']=='2.8.0'
+    assert root['installedJarSha256']==association['installedJarHashesRechecked']
+    assert root['containerId']==association['containerId'] and root['imageId']==association['imageId']
+    policies=[]
+    for name in ['distinct','ordinaryRead','predicateDenied','columnDenied','selectDenied','modifyDenied','same']:
+        stage=result['stages'][name];policy=stage['policyEvidence']
+        state=read_ref(policy['state']);applied=read_ref(policy['applied']);ranger=read_ref(policy['rangerState'])
+        public=read_ref(policy['publicState'])
+        assert public['appUser']['roles']==[plan['appRole']]
+        assert public['metadataUser']['roles']==[plan['metaRole']]
+        grants={o['fullName']:canonical_privileges(o['privileges']) for o in public['appRole']['securableObjects']}
+        for table in result['nativeInitial']:
+            allowed=grants.get(plan['catalog']+'.'+plan['database']+'.'+table,set())
+            accesses=({'select'} if ('SELECT_TABLE','ALLOW') in allowed else set())|({'update','alter'} if ('MODIFY_TABLE','ALLOW') in allowed else set())
+            assert exact_access(ranger['policies']['policies'],plan['catalog'],plan['database'],table,plan['rangerAppRole'])==accesses
+        assert state['publicStateFile']==policy['publicState']['path'] and state['rangerStateFile']==policy['rangerState']['path']
+        assert applied['sameJvm'] is True and applied['stateSha256']==policy['state']['sha256']
+        assert state['policy']==applied['policy']==ranger['policies']['policyVersion']==stage['authorization']['policy']
+        assert state['role']==applied['role']==ranger['roles']['roleVersion']
+        assert applied['downloadSha256']==stage['authorization']['downloadSha256']
+        completed=[e for e in downloads if e.get('downstreamResponseCompleted') is True and e.get('responseSha256')==applied['downloadSha256']]
+        assert completed, 'Original policy download absent'
+        for event in completed:
+            downloaded=read_ref({'path':event['responseBodyFile'],'sha256':applied['downloadSha256']})
+            assert {k:v for k,v in downloaded.items() if k!='policyUpdateTime'}=={k:v for k,v in ranger['policies'].items() if k!='policyUpdateTime'}
+        policies.append(state['policy'])
+    assert policies[0]==policies[1]<policies[2]<policies[3]<policies[4]<policies[5]<policies[6]
+    required={'grant','select-revoke','select-regrant-modify-revoke','same-regrant'} if result.get('profile')=='partitioned' else {'grant','revoke','modify-regrant','select-regrant-modify-revoke','regrant'}
+    assert required<=set(proof['grantTransitions'])
+    for name in required:
+        transition=read_ref(proof['grantTransitions'][name])
+        assert transition['after']['policy']>transition['before']['policy']
+        assert transition['mutations'] and all(m['code']==0 for m in transition['mutations'])
+        assert any(t['method']=='PUT' and '/service/public/v2/api/policy/' in t['path'] for t in transition['callbacks'])
+    fixture=read_ref(proof['predicatePolicy'])
+    assert fixture['provenance']=='test-authored unique denial; not propagated grant'
+    assert fixture['policy']['resources']['column']['values']==['secret']
+    assert fixture['policy']['resources']['table']['values']==['source']
+    assert fixture['policy']['denyPolicyItems'][0]['accesses']==[{'type':'select','isAllowed':True}]
+
+
 def verify_result(result: dict) -> None:
     """Require consistent native semantics and original successful processes with bound provenance."""
+    if result.get("executionProfile") == "adaptive-stock":
+        verify_adaptive_evidence(result)
     verify_semantics(result)
     verify_evidence(result)
     assert all(value==0 for value in result['exits'].values()),'Original outer or child process failed'
@@ -385,7 +526,9 @@ def verify_partition_semantics(result):
         assert value['id'] and value['version']==(0 if name=='target' else 2)
         assert value['partitionColumns']==['part']
         assert bag(value['rows'])==bag(fresh if name=='target' else native_source)
-    order=['distinct','columnDenied','selectDenied','modifyDenied','same'];assert set(result['stages'])==set(order)
+    order=['distinct','columnDenied','selectDenied','modifyDenied','same']
+    extra={'ordinaryRead','predicateDenied'} if result.get('executionProfile')=='adaptive-stock' else set()
+    assert set(result['stages'])==set(order)|extra
     history=dict(initial)
     for name in order:
         stage=result['stages'][name];before=stage['before'];after=stage['after'];table='same' if name=='same' else 'target'

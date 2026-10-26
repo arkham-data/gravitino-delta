@@ -288,6 +288,8 @@ def steps(plan,python=False,frontend="sql"):
     if plan.get('partitioned'):
         assert python
         specs=[('distinct','target','source',1,1),('columnDenied','target','source',1,1),('selectDenied','target','source',1,1),('modifyDenied','target','source',1,1),('same','same','same',1,1)]
+    if plan.get('executionProfile')=='adaptive-stock' and (plan.get('partitioned') or not python):
+        specs[1:1]=[('ordinaryRead','target','source',0,0),('predicateDenied','target','source',0,0)]
     result=[]
     for name,target,source,start,end in specs:
         step={'name':name,'target':target,'source':source,'end':end,'sourceId':plan['nativeInitial']['tables'][source]['id']}
@@ -298,6 +300,13 @@ def steps(plan,python=False,frontend="sql"):
             step['operation']={'source':prefix+source,'target':prefix+target,'start':start,'end':end,
                 'clauseProfile':'partitioned-cdf','expressionMode':'columns-mixed' if name=='same' else 'strings'}
         else:step['sql']=merge_sql(plan,target,source,start,end,name=='ambiguous')
+        if name in ['ordinaryRead','predicateDenied']:
+            prefix=plan['catalog']+'.'+plan['database']+'.source'
+            sql=("SELECT l.id, r.secret FROM "+prefix+" l JOIN "+prefix+" r ON l.id=r.id"
+                 if name=='ordinaryRead' else "SELECT id FROM "+prefix+" WHERE secret='MASKED'")
+            if frontend=='dataframe':
+                step['operation']={'kind':'ordinary-read','source':prefix,'target':plan['catalog']+'.'+plan['database']+'.target','sql':sql}
+            else:step['sql']=sql
         result.append(step)
     return result
 
@@ -314,9 +323,24 @@ def registration(plan,output):
     save(output/'tables.private.json',rows);return rows
 
 
+def configure_execution_profile(request, profile):
+    """Write explicit startup options before launching a session or constructing a handle."""
+    assert profile in ['nonadaptive', 'adaptive-stock']
+    requested = {'spark.sql.adaptive.enabled': 'true' if profile == 'adaptive-stock' else 'false'}
+    if profile == 'adaptive-stock':
+        # A small deterministic shuffle fixture; stock AQE optimization switches retain defaults.
+        requested['spark.sql.shuffle.partitions'] = '8'
+    path = Path(request['sparkConfigurationFile'])
+    lines = [line for line in path.read_text().splitlines() if line.split('=', 1)[0] not in requested]
+    path.write_text('\n'.join(lines + [key+'='+value for key,value in sorted(requested.items())])+'\n')
+    request.update(executionProfile=profile, requestedSettings=requested)
+
+
 def application(plan,runtime,output,observer,python=False,frontend="sql"):
+
     output.mkdir(mode=0o700);initial=state_snapshot(plan,output/'initial')
     request=prepare_request(plan,runtime,initial,output/'request');request.update(output=str(output/'app-evidence'),steps=steps(plan,python,frontend),partitioned=plan.get('partitioned',False),frontend=frontend)
+    configure_execution_profile(request, plan.get('executionProfile','nonadaptive'))
     save(output/'request/request.private.json',request)
     env=clean_environment(plan);env.update(SPARK_HOME=runtime['sparkHome'],PYSPARK_PYTHON=plan['python'],SPARK_USER=plan['subject'],HADOOP_USER_NAME=plan['subject'])
     selected=[p for p in runtime['jarHashes'] if Path(p).name in runtime['addedJarNames']]
@@ -339,7 +363,19 @@ def application(plan,runtime,output,observer,python=False,frontend="sql"):
             if name=='distinct' and plan.get('partitioned'):state=privileges(plan,output/'grant',select=True,modify=True)
             if name=='distinct' and not plan.get('partitioned'):state=privileges(plan,output/'grant',modify=True,only='python_target');transition_evidence['grant']=state
             if name=='missing':observer.call('damage')
-            if name=='columnDenied':state=column_deny(plan,output/'column-deny',True)
+            if name=='predicateDenied':
+                ranger=Ranger(plan,output/'predicate-deny-trace');policy=deny_policy(plan)
+                policy['name']='predicate-select-deny-'+plan['nonce']
+                policy['resources']['table']['values']=['source']
+                policy['denyPolicyItems'][0]['accesses'][0]['type']='select'
+                predicate_policy=ranger.call('POST','/service/public/v2/api/policy',policy)
+                save(output/'predicate-fixture-policy.json',{'provenance':'test-authored unique denial; not propagated grant','policy':predicate_policy})
+                state=state_snapshot(plan,output/'predicate-deny-state')
+            if name=='columnDenied':
+                if plan.get('executionProfile')=='adaptive-stock':
+                    predicate_policy['isEnabled']=False
+                    ranger.call('PUT','/service/public/v2/api/policy/'+str(predicate_policy['id']),predicate_policy)
+                state=column_deny(plan,output/'column-deny',True)
             if name=='postHelperRevoked':state=column_deny(plan,output/'column-restore',False)
             if name=='selectDenied' and plan.get('partitioned'):
                 column_deny(plan,output/'column-restore',False)
@@ -368,11 +404,14 @@ def application(plan,runtime,output,observer,python=False,frontend="sql"):
             if plan.get('partitioned'):
                 value['nativeBefore']=file_ref(native_before);value['nativeAfter']=file_ref(observer.output/(str(observer.cursor-1)+'-result.json'))
                 value['consumerBefore']=file_ref(app/(name+'-checkpoint-before.json'));value['consumerAfter']=file_ref(app/(name+'-checkpoint-after.json'))
+            if name=='ordinaryRead' and outcome['outcome']=='success':value['rows']=read(app/(name+'-rows.json'))
+            value['policyEvidence']={'state':file_ref(Path(current_state['publicStateFile']).parent/'state-evidence.private.json'),
+                'publicState':file_ref(current_state['publicStateFile']),'rangerState':file_ref(current_state['rangerStateFile']),'applied':file_ref(app/(current_witness+'-applied.json'))}
             downloaded=read(current_state['rangerStateFile'])['policies']['policies'];witness=read(app/(current_witness+'-applied.json'))
             value['authorization']={'sourceAccess':sorted(exact_access(downloaded,plan['catalog'],plan['database'],step['source'],plan['rangerAppRole'])),'targetAccess':sorted(exact_access(downloaded,plan['catalog'],plan['database'],step['target'],plan['rangerAppRole'])),'policy':witness['policy'],'downloadSha256':witness['downloadSha256']}
             if step.get('txnAppId'):value['txnAppId']=step['txnAppId']
             observations[name]=value;save(output/(name+'-result.json'),value)
-            expected_success=name in ['python','distinct','duplicate','empty','regrant','same']
+            expected_success=name in ['python','distinct','duplicate','empty','regrant','same','ordinaryRead']
             assert (outcome['outcome']=='success')==expected_success,'Unexpected original '+name+' outcome; no replay'
             release(name+'-after')
         code=finish_process(process,log,output/'process');assert code==0
@@ -392,7 +431,7 @@ def application(plan,runtime,output,observer,python=False,frontend="sql"):
         if not (output/'process/exit.json').exists():finish_process(process,log,output/'process',process.poll() is None)
 
 
-def run_cell(runtime_path,inputs_path,output,partitioned=False,frontend="sql"):
+def run_cell(runtime_path,inputs_path,output,partitioned=False,frontend="sql",execution_profile="nonadaptive"):
     assert frontend in ["sql","dataframe"] and (frontend!="dataframe" or partitioned)
     output.mkdir(mode=0o700);runtime=read(runtime_path);runtime['manifestPath']=str(runtime_path);inputs=read(inputs_path)
     from cdf_read_live_package import verify_runtime
@@ -400,6 +439,7 @@ def run_cell(runtime_path,inputs_path,output,partitioned=False,frontend="sql"):
     try:
         association=verify_deployed(inputs,output/'deployed-ranger')
         plan,server,callbacks=provision(runtime,inputs,output/'fixture',association,handles,partitioned)
+        plan['executionProfile']=execution_profile
         plan['grants']={t['name']:([] if t['name'] in ['source','same','incomplete'] else ['SELECT_TABLE']) for t in plan['tables']}
         observer=handles['observer']
         py,_,py_observed,py_exit=application(plan,runtime,output/'python',observer,True,frontend)
@@ -420,12 +460,13 @@ def run_cell(runtime_path,inputs_path,output,partitioned=False,frontend="sql"):
         server.start();plan['gravitinoUrl']=server.uri;after=registration(plan,output/'registration-after-restart');assert before==after
         server.stop();assert columns==server.column_snapshot('merge-restart')
         native_exit=observer.close();assert native_exit==0;handles.pop('observer')
-        result={'profile':'partitioned' if partitioned else 'legacy','frontend':frontend,**{k:observed[k] for k in ['spark','java','scala']},'delta':runtime['delta'],'ranger':read(association)['deployedRangerVersion'],
+        result={'executionProfile':execution_profile,'profile':'partitioned' if partitioned else 'legacy','frontend':frontend,**{k:observed[k] for k in ['spark','java','scala']},'delta':runtime['delta'],'ranger':read(association)['deployedRangerVersion'],
             'exits':({'outer':0,'native':native_exit,'python':py_exit} if partitioned else {'outer':0,'child':child_exit,'python':py_exit}),'identities':{'setup':plan['serviceAdmin'],'metadata':plan['metadataPrincipal'],'application':plan['subject']},
             'origins':{k:{'jar':v['origin'],'sha256':v['sha256']} for k,v in plan['nativeInitial']['origins'].items()},
             'binding':{'source':runtime['sourceInputDigest'],'manifest':sha(runtime_path),'companion':sha(runtime['changedRuntime']),'app':sha(runtime['app']),'python':sha(ROOT/('delta/acceptance/cdf_merge_dataframe_pyspark.py' if frontend=='dataframe' else 'delta/acceptance/cdf_merge_pyspark.py')),**({'pythonZip':runtime['pythonZipSha256']} if frontend=='dataframe' else {})},
             'nativeInitial':plan['nativeInitial']['tables'],'sourceNative':plan['nativeInitial']['sourceNative'],'sourceGoverned':read(output/('python' if partitioned else 'scala')/'app-evidence/source-governed.json'),
             'stages':dict(scala,**py),'transitions':transitions,'registration':{'beforeRestart':receipt_identity(before),'afterRestart':receipt_identity(after),'persisted':stored},'postHelper':None if partitioned else read(output/'scala/post-helper.json')}
+        result['adaptiveEvidence']=read(output/('python' if partitioned else 'scala')/'app-evidence/adaptive-evidence.json')
         verify_runtime(runtime)
         save(output/'candidate-result.json',result)
         # Original outer exit is supplied by the parent process after this child returns.
@@ -443,11 +484,12 @@ def run_cell(runtime_path,inputs_path,output,partitioned=False,frontend="sql"):
 def main():
     parser=argparse.ArgumentParser()
     for key in ['runtime','inputs','out']:parser.add_argument('--'+key,required=True)
+    parser.add_argument('--execution-profile',choices=['nonadaptive','adaptive-stock'],default='nonadaptive')
     parser.add_argument('--frontend',choices=['sql','dataframe'],default='sql');parser.add_argument('--partitioned',action='store_true');parser.add_argument('--child',action='store_true');args=parser.parse_args();os.umask(0o077)
     runtime=Path(args.runtime).resolve();inputs=Path(args.inputs).resolve();output=Path(args.out).resolve()
-    if args.child:run_cell(runtime,inputs,output,args.partitioned,args.frontend);return
+    if args.child:run_cell(runtime,inputs,output,args.partitioned,args.frontend,args.execution_profile);return
     process_dir=output.parent/(output.name+'-outer')
-    argv=[sys.executable,__file__,'--child','--runtime',str(runtime),'--inputs',str(inputs),'--out',str(output),'--frontend',args.frontend]
+    argv=[sys.executable,__file__,'--child','--runtime',str(runtime),'--inputs',str(inputs),'--out',str(output),'--frontend',args.frontend,'--execution-profile',args.execution_profile]
     if args.partitioned:argv.append('--partitioned')
     process,log=start_process(argv,dict(os.environ),process_dir)
     try:code=process.wait(timeout=2400)

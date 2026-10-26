@@ -38,7 +38,11 @@ def main():
             failure=None
             try:
                 # The actual Python frontend call is the proof: no Scala SQL forwarding helper.
-                spark.sql(sql).collect()
+                frame=spark.sql(sql)
+                rows=frame.collect()
+                if step['name'] in ['ordinaryRead','predicateDenied']:
+                    bridge.observeRead(step['name'],frame._jdf)
+                    Path(request['output'],step['name']+'-rows.json').write_text(json.dumps([list(row) for row in rows])+'\n')
             except Py4JJavaError as error:
                 failure=error.java_exception
             except Exception as error:

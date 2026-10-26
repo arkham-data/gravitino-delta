@@ -24,6 +24,86 @@ Local qualification completed on Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 with
 actual Ranger 2.8.0, MinIO, JDK 17 and Scala 2.12.21. Separate-worker deployment
 remains unqualified.
 
+## Trusted stock adaptive execution
+
+The revised contract authorizes supported operations at their action boundaries
+and trusts the pinned stock Spark optimizer, planner and AQE execution. A running
+read may finish using its captured decisions. The next supported action rechecks
+the locally applied Ranger state; server revocation must first be downloaded and
+applied. MERGE also rechecks each source attempt, touched-file/write phase and
+precommit or known-commit reconciliation. There is no final-output or every-stage
+revocation guarantee, and no atomic Ranger/Delta revocation fence.
+
+Set `spark.sql.adaptive.enabled=true` explicitly at application startup, before
+constructing a session, source or table handle. The companion never toggles it.
+Keep the companion extension followed by Delta's extension, each exactly once;
+do not also install stock `RangerSparkExtension`. Foreign planner/columnar
+extensions, a custom adaptive cost evaluator and disabled authorization remain
+rejected. The public named builder API remains version 1, with the same packaged
+`gravitino_delta` facade and existing source/target semantics.
+
+Local qualification uses Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2, Ranger 2.8.0,
+Java 17, Scala 2.12.21 and MinIO. Installed tests exercise stock defaults,
+coalescing, static and adaptive broadcast, local shuffle reads, skew splitting,
+exchange reuse, runtime bloom filtering, native MERGE phases and recovery.
+Deterministic branch fixtures record their startup settings; they are not
+mandatory product configuration or hidden runtime toggles. The complete MERGE
+write join is FullOuter; broadcast hash joining and runtime bloom pruning are not
+claimed for that join. Native touched-file broadcast/bloom cases are qualified
+separately by the installed suites.
+
+Each pair's fresh live cell uses the packaged classic-Python DataFrame builder
+for partitioned distinct-target and same-registration MERGE, plus column UPDATE,
+source SELECT and target MODIFY denials. An ordinary named join succeeds and a
+fresh predicate-only SELECT fails after a uniquely scoped test-authored column
+denial. That denial is labeled as fixture policy, while table grant/revoke evidence
+retains actual Gravitino-to-Ranger propagation. Final ordinary and MERGE payload
+plans are bound to original files; coalescing is observed in native touched/write
+phases. Bounded source CDF is naturally exchange-free and is recorded that way.
+No metadata-only or forced adaptive wrapper counts as payload qualification.
+
+The evidence index is
+`.superpowers/sdd/2026-10-25-delta-trusted-spark-aqe/task-4/final-evidence-index.json`.
+It retains original exits, exact row/CDF/action bags, partition maps and untouched
+files, registration across restart, separate setup/metadata/application identities,
+policy downloads, source/class inventories and stock/supplemental archive hashes.
+Consumer checkpoint files advance only after synchronous success and remain
+unchanged on denial. These are actual caller-managed file observations after the
+application exits, not a new checkpoint API or a crash-durability guarantee.
+
+The former exact physical-stage/RDD-graph hardening claim is withdrawn. Historical
+restrictive-profile diagnostics and nonadaptive package records remain historical;
+they do not qualify this execution route. Broader logical operations, cross-action
+caches, policy subqueries, streaming, Spark Connect, feature-bearing write profiles,
+separate workers and catalog-demo integration remain outside this qualification.
+Concurrent writing jobs for one dataset remain excluded by the platform. Unrelated
+append and CDF-property AQE gates are unchanged. Integrated review and milestone
+closure are recorded separately from these local execution results.
+
+
+Known diagnostic limitation: the new adaptive observation labels/counts are
+qualified only for `adaptive-stock`. A newly run `nonadaptive` record can label
+a plan `exchange-free` when it has no adaptive wrapper even if ordinary shuffle
+operators exist. Inspect the retained operator plan; that label is not proof of
+absence of nonadaptive exchanges. This does not change legacy operation support
+or relabel historical evidence. The checker cannot use a nonadaptive record to
+qualify adaptive execution.
+
+### Original Task 4 execution records
+
+| Spark | Delta | Original installed execution | Final live phases | Outer / Python / native exits |
+| --- | --- | --- | --- | --- |
+| 3.5.4 | 3.3.0 | 79 tests, 1 obsolete expectation failure, exit 1; corrected method 1/1 passed, exit 0 | 7 checked | 0 / 0 / 0 |
+| 3.5.4 | 3.3.2 | 49 tests passed, exit 0 | 7 checked | 0 / 0 / 0 |
+| 3.5.6 | 3.3.0 | 49 tests passed, exit 0 | 7 checked | 0 / 0 / 0 |
+| 3.5.6 | 3.3.2 | 49 tests passed, exit 0 | 7 checked | 0 / 0 / 0 |
+
+The first baseline retains its original failed exit and 78 individually passing
+cases. Its corrected method now constructs the builder before changing AQE and
+checks settings drift; fresh AQE success is covered by the new suites. Every pair
+has the same 49 required new/affected cases passing. The remaining pairs omit
+unchanged blanket legacy suites. No run has skipped cases or setup-only passes.
+
 ## Named SQL and classic Python
 
 Use a canonical three-part target and a literal canonical source with inclusive
@@ -65,7 +145,7 @@ nor changes Spark settings. Keep zip/JAR source and API version bindings togethe
 from gravitino_delta import GravitinoDeltaTable
 from pyspark.sql import functions as F
 
-# Configure transaction identity and AQE=false in the application before handles.
+# Configure transaction identity and the selected AQE profile before session/handle construction.
 source = (spark.read.format("delta")
     .option("readChangeFeed", "true")
     .option("startingVersion", 12).option("endingVersion", 15)
@@ -111,8 +191,10 @@ expression whitelist is attributes, literals, aliases, casts, `=`, `<=>`, `>`, `
 this whitelist does not qualify every type/function combination. Reject consumed,
 actioned, cached/checkpointed, foreign-session, streaming, unnamed and path sources.
 Joins, windows, aggregation, cache, UDFs/subqueries and other expressions are outside
-this MERGE source grammar. AQE remains disabled and is never toggled implicitly.
+this MERGE source grammar. The caller selects the AQE profile before construction;
+the facade never changes it.
 
+The earlier nonadaptive API milestone retained the following evidence.
 Installed API tests cover unpartitioned and qualified partitioned targets. All four
 final packages passed five actual Python Ranger 2.8.0/MinIO phases each: distinct
 destination, column UPDATE/source SELECT/target MODIFY denials and same-table
@@ -139,8 +221,8 @@ Later documentation status changes have separate hash/diff records and do not
 relabel the original frozen packages.
 Stock `DeltaTable.forName`, Spark Connect, streaming, NOT MATCHED BY SOURCE, schema
 evolution, feature-bearing profiles and separate-worker deployment remain outside
-this API milestone. Catalog-demo still needs its separate integration plan and an
-explicit AQE scope decision; API qualification does not establish full Delta
+this API milestone. Catalog-demo still needs its separate integration plan and qualification of its
+broader operations and deployment model; API qualification does not establish full Delta
 compatibility. See the [API design](superpowers/specs/2026-10-25-delta-dataframe-merge-design.md)
 and [implementation status](superpowers/plans/2026-10-25-delta-dataframe-merge.md).
 
@@ -208,8 +290,8 @@ exactly-once sink guarantee.
 ## Bounded support and evidence
 
 The supported target profile includes unpartitioned and partitioned reader-1/classic
-tables, with fixed schema and partition metadata, AQE disabled and the explicitly
-owned native execution path. Native
+tables, with fixed schema and partition metadata, and explicit nonadaptive or
+trusted-stock adaptive execution. Native
 constraints, INSERT/UPDATE/DELETE clauses, native source materialization/retries,
 current authorization and known-commit reconciliation have focused local tests.
 The live acceptance entry point is `delta/acceptance/cdf_merge_live.py`; its result
@@ -262,7 +344,7 @@ and settings cases retain native limits: invalid UTF8 binary partition conversio
 is lossy, binary NUL fails on local filesystem, and mismatched session/JVM timestamp
 zones can shift instants. See the [partitioned plan](superpowers/plans/2026-10-24-delta-partitioned-merge.md)
 for exact cases. General scalar/timezone support, schema evolution, column mapping
-or defaults, deletion vectors, row tracking, AQE, builder/Connect, separate workers
+or defaults, deletion vectors, row tracking, Spark Connect, separate workers
 and deployment remain separate obligations.
 
 The original evidence index is

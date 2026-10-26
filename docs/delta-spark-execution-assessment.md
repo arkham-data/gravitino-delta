@@ -67,10 +67,32 @@ The [approved revised design](superpowers/specs/2026-10-25-delta-trusted-spark-a
 retains Delta semantic integration and defines authorization at action/command
 boundaries with trusted stock physical execution. The detailed timing and profile
 are approved; the [replacement implementation plan](superpowers/plans/2026-10-25-delta-trusted-spark-aqe.md)
-is ready for review. Existing Delta support and rejection remain unchanged until
-implementation and qualification succeed.
+implements that revised contract. The [current support contract and original
+execution records](delta-cdf-merge.md#trusted-stock-adaptive-execution) describe the
+four-pair installed and actual Delta/Ranger/MinIO/PySpark qualification. The earlier
+exact-stage candidate's rejection and Iceberg comparator remain historical evidence;
+they are not substituted for the actual Delta registration/grant chain.
 
-## Recommendation
+## Current bounded result
+
+The supported ordinary-read/CDF/MERGE route now uses trusted stock adaptive payload
+execution with checks at operation boundaries. The old every-stage physical-tree
+hardening claim is withdrawn. Actual default/coalesced and representative ordinary
+optimization variants, native MERGE phases and recovery are exercised on every
+pinned pair. The live DataFrame matrix retains real Gravitino registration and
+grant propagation, applied Ranger downloads, MinIO data/actions, original process
+identities/exits and immutable stock/supplemental artifacts. This is distinct from
+the earlier native-seeded Iceberg fixture with metadata authorization disabled.
+
+Remaining work is broader logical operations and deployment qualification for the
+intended pipelines. Catalog-demo, Connect/streaming, separate workers and unrelated
+append/CDF-property adaptive gates are not completed by this milestone. Integrated
+review and milestone closure are recorded separately from local qualification.
+
+The remaining assessment below records the pre-implementation constraints and
+recommendation; its source-line references and blanket AQE gates are historical.
+
+## Historical recommendation
 
 Qualify **real governed AQE in bounded stages**, then the ordinary read operations
 needed by the intended demo consumer, before activating catalog-demo integration.
