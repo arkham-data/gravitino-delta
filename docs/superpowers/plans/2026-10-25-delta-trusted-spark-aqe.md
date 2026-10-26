@@ -27,7 +27,7 @@
 
 **Spec:** [Approved design](../specs/2026-10-25-delta-trusted-spark-aqe-design.md). Read it before this plan.
 
-**Status:** Design approved by the user's “Proceed” after `f57759621`. Plan approved by the user’s “Yes”. Tasks 1–3 complete and independently reviewed; Task 4 starting. This supersedes the [exact-stage plan](2026-10-25-delta-governed-aqe.md); its failed probes remain historical evidence.
+**Status:** Design approved by the user's “Proceed” after `f57759621`. Plan approved by the user’s “Yes”. All four tasks and the final integrated review are complete. The bounded milestone qualifies named reads, inclusive CDF and native SQL/JVM/classic-PySpark MERGE with trusted stock AQE; catalog-demo and broader operations remain deferred. This supersedes the [exact-stage plan](2026-10-25-delta-governed-aqe.md); its failed probes remain historical evidence.
 
 ## Global Constraints
 
@@ -161,6 +161,10 @@ Before replacing any guard, record its existing symbol, semantic purpose, retain
 
 ## Task 4: Packaged Python and live four-pair qualification
 
+**Complete:** `722f21dd3`; task and integrated reviews are SPEC PASS / QUALITY APPROVED, with no Critical or Important findings. All four final packaged DataFrame live runs passed seven phases each, plus 12 fresh-query revocation records, against Ranger 2.8.0 and MinIO. Each pair has the 49 required installed cases; the first broader 79-case baseline retains its one obsolete assertion failure and separate passing correction, while the other three runs passed 49/49. Checker/facade/static checks passed. Original exits, source/class archives, runtime/supplemental JARs and the documentation-only delta are retained in `E/task-4/final-evidence-index.json`; final integrated review is `E/final-integrated-review.md`.
+
+**Nonblocking follow-ups:** bounded listener synchronization in installed phase-observation tests; the disclosed nonadaptive diagnostic outcome label; existing build-info/logging noise. These do not widen the qualified adaptive scope or justify replaying unchanged evidence.
+
 **Files:** Modify the acceptance harness units in the file map. Create `A/test_cdf_merge_trusted_aqe_checks.py`; extend `T/TestDeltaRangerLiveCdfMerge.scala` request tests if request shape changes. Update `docs/delta-spark-parity.md`, `docs/delta-cdf-merge.md`, `docs/delta-spark-execution-assessment.md`, `A/README.md` and this plan.
 
 **Interfaces:** Add CLI `--execution-profile nonadaptive|adaptive-stock`, default `nonadaptive`, preserving `--frontend sql|dataframe` and `--partitioned`. Set the selected profile before session/source/handle construction. `adaptive-stock` enables AQE without the old disable-list; deterministic branch fixtures are separately recorded. Extend existing `verify_evidence(result)` / `verify_result(result)` in `cdf_merge_live_checks.py`; keep legacy nonadaptive records valid without relabeling historical evidence.
@@ -175,7 +179,7 @@ New records include `executionProfile`, requested and effective settings, origin
 - [x] Run seven fresh live phases per pair using `adaptive-stock`, packaged DataFrame frontend and partitioned fixture: 28 original phase records plus explicit fresh-query revocation records. Require successful harness verdicts, expected application denials, actual final adaptive ordinary-read and MERGE payload stages, coalescing on each pair, exact rows/CDF/actions/partitions/checkpoints and stable settings. Preserve Gravitino registration/restart evidence and separate setup/metadata/application identities. Label naturally exchange-free phases honestly.
 - [x] Build a complete evidence index and run checkers against all frozen stock and supplemental artifacts, original exits, policy transitions and result bags. Retain failed attempts; mark unknown fields rather than infer them. After a fix, rebuild/rerun affected packages and scenarios only. Never repeat an unchanged matrix for documentation edits.
 - [x] Update support docs with the operation-boundary revocation contract, actual qualified variants, public API/setup instructions and remaining logical/deployment limitations. Identify withdrawn physical-hardening claims and superseded profile; retain historical diagnostics. Keep broader Spark operations and catalog-demo as pending user scope, not implied completed support.
-- [ ] Obtain final independent integrated SPEC/QUALITY review of code and original evidence. Resolve concrete findings, commit the qualified scope, verify branch/remote and push under the user's standing milestone-close instruction. Report exact commit/push result, supported scope and remaining work; continue locally only within already authorized scope.
+- [x] Obtain final independent integrated SPEC/QUALITY review of code and original evidence. Resolve concrete findings, commit the qualified scope, verify branch/remote and push under the user's standing milestone-close instruction. Report exact commit/push result, supported scope and remaining work; continue locally only within already authorized scope.
 
 Local Task 4 execution: four packages and 28 original live phases passed; the
 first installed baseline retains exit 1 for an obsolete blanket AQE expectation,
