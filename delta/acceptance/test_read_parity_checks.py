@@ -118,6 +118,87 @@ class TestReadParityChecks(unittest.TestCase):
         case["error"]["message"]="java.lang.SecurityException: unrelated denial"
         with self.assertRaises(AssertionError):verify_result(self.value)
 
+    def test_delta_payload_json_types_are_exact(self):
+        mutations=[("primitive-pandas-off",0,4,1),
+                   ("primitive-pandas-on",0,0,1.0),
+                   ("primitive-pandas-off",0,2,7),
+                   ("id-count",0,0,4.0)]
+        for name,row,column,replacement in mutations:
+            for field in ["observedRows","expectedRows"]:
+                with self.subTest(name=name,field=field,replacement=replacement):
+                    value=copy.deepcopy(self.value)
+                    case=next(case for case in value["cases"] if case["name"]==name)
+                    # The fixture initially shares expected/observed row objects.
+                    # Copy this field separately so the independent oracle stays intact.
+                    case[field]=copy.deepcopy(case[field]);case[field][row][column]=replacement
+                    with self.assertRaisesRegex(AssertionError,"exact rows/order"):
+                        verify_result(value)
+
+    def test_comparator_producer_and_validator_preserve_type_difference(self):
+        # Synthetic runner doubles exercise classification only, never native transport proof.
+        import types
+        from unittest.mock import MagicMock
+        from read_parity_pyspark import execute_cases
+        from read_parity_checks import PRIMITIVE_ROWS, verify_comparator_cases
+        root=Path(self.directory.name);settings={"spark.sql.session.timeZone":"UTC"}
+        primitive_rows=copy.deepcopy(PRIMITIVE_ROWS);primitive_rows[0][4]=1
+        dtypes={mode:self.case("primitive-pandas-"+mode)["arrow"]["dtypes"] for mode in ["off","on"]}
+        class Conf:
+            def set(self,key,value):settings[key]=value
+            def get(self,key):return settings[key]
+        class Frame:
+            def __init__(self,primitive=False):self.primitive=primitive;self._jdf=self
+            def select(self,*args):return self
+            def filter(self,*args):return self
+            def orderBy(self,*args):return self
+            def limit(self,*args):return self
+            def distinct(self,*args):return self
+            def alias(self,*args):return self
+            def join(self,*args):return self
+            def createTempView(self,*args):pass
+            def collect(self):return [[1,"M"]]
+            def count(self):return 4
+            def show(self,*args,**kwargs):print("|id|email|\n|1|M|\n|2|M|\nonly showing top 2 rows")
+            def toPandas(self):
+                mode="on" if settings["spark.sql.execution.arrow.pyspark.enabled"]=="true" else "off"
+                rows=primitive_rows if self.primitive else [[1,"M"],[2,"M"]]
+                dtype=dtypes[mode] if self.primitive else {"id":"int64","email":"object"}
+                return types.SimpleNamespace(dtypes=dtype,itertuples=lambda **kwargs:[tuple(row) for row in rows])
+        class Bridge:
+            def begin(self,name):pass
+            def phase(self,name):pass
+            def finish(self,name,frame,allowed):
+                path=root/(name+"-typed-observer.json");path.write_text('{}');return str(path)
+            def close(self):pass
+        spark=types.SimpleNamespace(conf=Conf(),table=lambda name:Frame(name.endswith(".primitive")),sql=lambda *args:Frame())
+        sql=types.ModuleType("pyspark.sql");sql.functions=MagicMock()
+        parent=types.ModuleType("pyspark");parent.sql=sql
+        modules={"pyspark":parent,"pyspark.sql":sql,"pandas":types.SimpleNamespace(__version__="2.2.3"),
+                 "pyarrow":types.SimpleNamespace(__version__="17.0.0",RecordBatch=type("RecordBatch",(),{}))}
+        output=root/"typed-runner-evidence"
+        with patch.dict("sys.modules",modules),patch.dict("os.environ",{"TZ":"UTC"}):
+            execute_cases(spark,Bridge(),{"catalog":"catalog","database":"db","pythonOutput":str(output),"identityProfile":"table-wide","comparator":True})
+        produced=json.loads((output/"primitive-pandas-off.json").read_text())
+        self.assertEqual("allowed",produced["outcome"])
+        self.assertIs(type(produced["expectedRows"][0][4]),bool)
+        self.assertIs(type(produced["observedRows"][0][4]),int)
+        self.assertEqual("measured-difference",produced["comparison"])
+        cases=self.comparator_cases();case=next(case for case in cases if case["name"]==produced["name"])
+        case.update(observedRows=produced["observedRows"],comparison=produced["comparison"])
+        verify_comparator_cases(cases,[])
+        case["comparison"]="matches-delta-contract"
+        with self.assertRaisesRegex(AssertionError,"classification"):
+            verify_comparator_cases(cases,[])
+        case.update(comparison="measured-difference",expectedRows=copy.deepcopy(produced["observedRows"]))
+        with self.assertRaisesRegex(AssertionError,"oracle"):
+            verify_comparator_cases(cases,[])
+
+        cases=self.comparator_cases();aqe=next(case for case in cases if case["name"]=="aqe-join")
+        aqe["observedRows"]=copy.deepcopy(aqe["observedRows"]);aqe["observedRows"][0][0]=True
+        aqe["comparison"]="measured-difference"
+        with self.assertRaisesRegex(AssertionError,"AQE payload"):
+            verify_comparator_cases(cases,[])
+
     def test_comparator_applied_policy_uses_verified_reference(self):
         from read_parity_checks import verify_comparator_policy
         case=self.case("id-count")

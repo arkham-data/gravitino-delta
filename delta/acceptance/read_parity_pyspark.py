@@ -153,7 +153,7 @@ def execute_cases(spark,bridge,request):
     from pyspark.sql import functions as F
     import pandas
     import pyarrow
-    from read_parity_checks import CASE_SPECS, PRIMITIVE_COLUMNS
+    from read_parity_checks import CASE_SPECS, PRIMITIVE_COLUMNS, same_json_value
     table=request["catalog"]+"."+request["database"]+".source"
     output=Path(request["pythonOutput"]);output.mkdir()
     cases=[];prerequisites=[]
@@ -214,7 +214,7 @@ def execute_cases(spark,bridge,request):
         if arrow is not None:case["arrow"]=arrow
         if display is not None:case["display"]=ref(output/(name+".stdout"))
         if request.get("comparator"):
-            case["comparison"]="matches-delta-contract" if observed==expected and (error is not None)==(expected is None) else "measured-difference"
+            case["comparison"]="matches-delta-contract" if same_json_value(observed,expected) and (error is not None)==(expected is None) else "measured-difference"
             if CASE_SPECS[name][1]=="ranger-outcome":case["comparison"]="measured-policy-outcome"
         if request.get("comparator") and baseline is not None and baseline["outcome"]!="allowed":
             case.update(qualification="unqualified",comparison="measured-difference",
@@ -226,7 +226,7 @@ def execute_cases(spark,bridge,request):
             verify_comparator_failure(name,error)
         if not request.get("comparator"):
             assert (error is not None)==(expected is None), (name,error)
-            assert observed==expected,(name,observed,expected)
+            assert same_json_value(observed,expected),(name,observed,expected)
         return case
 
     def create_view(name,factory,view):

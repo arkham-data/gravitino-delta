@@ -80,6 +80,12 @@ def read_ref(reference):
     return json.loads(Path(reference["path"]).read_text())
 
 
+def same_json_value(actual, expected):
+    """Compare normalized JSON without equating booleans, integers and floats."""
+    options={"sort_keys":True,"allow_nan":False,"separators":(",", ":")}
+    return json.dumps(actual, **options)==json.dumps(expected, **options)
+
+
 def verify_pandas_transport(case):
     """Require measured native Python transport and the finite UTC dtype profile."""
     arrow = case["arrow"]
@@ -166,7 +172,7 @@ def verify_result(result: dict) -> None:
             assert access and len(set(access))==1, "missing consistent wildcard outcome"
             rows=[[4]] if access[0] else None
         assert case["outcome"] == ("denied" if rows is None else "allowed"), "outcome"
-        assert case["expectedRows"] == rows and case["observedRows"] == rows, "exact rows/order"
+        assert same_json_value(case["expectedRows"], rows) and same_json_value(case["observedRows"], rows), "exact rows/order"
         assert case.get("listenerQueuesDrained") is True, "actual action query drain absent"
         if rows is not None:
             assert case.get("actualActionQueries",0)>0 and case.get("callbacks"), "actual action query absent"
@@ -295,9 +301,9 @@ def verify_comparator_cases(cases,prerequisites):
         api,expected,columns=CASE_SPECS[case["name"]]
         wildcard=expected=="ranger-outcome"
         if wildcard:
-            assert case["expectedRows"] in [None,[[4]]], "wildcard observed outcome"
+            assert any(same_json_value(case["expectedRows"], value) for value in [None,[[4]]]), "wildcard observed outcome"
         else:
-            assert case["expectedRows"]==expected, "independent comparator oracle"
+            assert same_json_value(case["expectedRows"], expected), "independent comparator oracle"
         assert case["api"]==api and case["expectedColumns"]==sorted(columns), "comparator API/demand declaration"
         if case["outcome"]!="not-executed":
             assert case["actionRoute"]=="native-pyspark", "native comparator action route"
@@ -311,15 +317,17 @@ def verify_comparator_cases(cases,prerequisites):
                 assert file_ref(case[key]["path"])==case[key], "comparator plan reference"
             if api=="toPandas" and case["outcome"]=="allowed":verify_pandas_transport(case)
             if wildcard:
-                assert case["observedRows"]==([[4]] if case["outcome"]=="allowed" else None), "wildcard actual payload"
+                assert same_json_value(case["observedRows"], [[4]] if case["outcome"]=="allowed" else None), "wildcard actual payload"
                 comparison="measured-policy-outcome"
             else:
-                comparison="matches-delta-contract" if case["observedRows"]==expected and (case["outcome"]=="denied")== (expected is None) else "measured-difference"
+                comparison="matches-delta-contract" if same_json_value(case["observedRows"], expected) and (case["outcome"]=="denied")== (expected is None) else "measured-difference"
             baseline_denied=case["name"]=="retained-revoked" and next(value for value in cases if value["name"]=="id-retained-warmup")["outcome"]!="allowed"
             if baseline_denied:
                 assert case.get("qualification")=="unqualified", "denied baseline cannot prove revoke-on-reuse"
                 comparison="measured-difference"
             assert case["comparison"]==comparison, "independent comparator classification"
+            if case["name"]=="aqe-join":
+                assert case["outcome"]=="allowed" and same_json_value(case["observedRows"], expected), "comparator AQE payload"
         if case["outcome"]=="allowed":
             assert case.get("error") is None and case["observedRows"] is not None, "allowed comparator action failure"
         elif case["outcome"]=="denied":
