@@ -40,7 +40,7 @@ class TestAppendAqeChecks(unittest.TestCase):
         p.write_text(json.dumps(value))
         return file_ref(p)
 
-    def fixture(self):
+    def fixture(self, supplemental=False):
         original = [[0, "seed", "original", True]]
         after = original + [
             [1, "east", "M", True],
@@ -110,6 +110,37 @@ class TestAppendAqeChecks(unittest.TestCase):
                             jobs=[1],
                         )
                     )
+        profiles = ["allowed", "source-denied", "target-denied"]
+        if supplemental:
+            profiles.append("id-only")
+            cases.append(
+                dict(
+                    name="id_only_probe",
+                    target="id_only_probe",
+                    identity="id-only",
+                    outcome="denied",
+                    error="Permission denied: org.apache.kyuubi.plugin.spark.authz.AccessControlException",
+                    before=dict(snapshot=1, rows=[[0]]),
+                    after=dict(snapshot=1, rows=[[0]]),
+                    callbacks=[],
+                    rangerRequests=[
+                        dict(
+                            reqUser="id-only",
+                            resource="db/source/id",
+                            access="QUERY",
+                            action="select",
+                            result=1,
+                        ),
+                        dict(
+                            reqUser="id-only",
+                            resource="db/source/region",
+                            access="QUERY",
+                            action="select",
+                            result=0,
+                        ),
+                    ],
+                )
+            )
         for case in cases:
             for event in case["rangerRequests"]:
                 event.update(
@@ -200,7 +231,7 @@ class TestAppendAqeChecks(unittest.TestCase):
             )
         )
         runtimes = []
-        for identity in ["allowed", "source-denied", "target-denied"]:
+        for identity in profiles:
             runtimes += [
                 self.artifact(
                     dict(
@@ -220,21 +251,15 @@ class TestAppendAqeChecks(unittest.TestCase):
             spark="3.5.4",
             catalogRoute="native",
             database="db",
-            cases=cases,
+            cases=[c for c in cases if c["identity"] != "id-only"],
+            supplementalCases=[c for c in cases if c["identity"] == "id-only"],
             processExits={
                 n: self.artifact(dict(exitCode=0, terminated=False))
-                for n in [
-                    "seed",
-                    "allowed",
-                    "source-denied",
-                    "target-denied",
-                    "verify",
-                    "supervisor",
-                ]
+                for n in ["seed", "verify", "supervisor", *profiles]
             },
             catalogClass="org.apache.iceberg.spark.SparkCatalog",
             verificationSubject="setup",
-            subjects={n: n for n in ["allowed", "source-denied", "target-denied"]},
+            subjects={n: n for n in profiles},
             artifacts=[self.artifact(dict(source="original"))],
             service="fixture-service",
             runtimeManifest=runtime_manifest,
@@ -360,6 +385,21 @@ class TestAppendAqeChecks(unittest.TestCase):
         with self.assertRaises(AssertionError):
             run("3.5.4", "native", self.root / "absent-private-inputs", self.root)
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_supplemental_identity_requires_its_original_process_exit(self):
+        result = self.fixture(supplemental=True)
+        verify_iceberg_append(result)
+        del result["processExits"]["id-only"]
+        with self.assertRaisesRegex(AssertionError, "missing original exit"):
+            verify_iceberg_append(result)
+
+    def test_supplemental_identity_failed_exit_cannot_qualify(self):
+        result = self.fixture(supplemental=True)
+        result["processExits"]["id-only"] = self.artifact(
+            dict(exitCode=7, terminated=False)
+        )
+        with self.assertRaisesRegex(AssertionError, "original process failed"):
+            verify_iceberg_append(result)
 
     def test_valid_exact_multiset(self):
         verify_iceberg_append(self.fixture())

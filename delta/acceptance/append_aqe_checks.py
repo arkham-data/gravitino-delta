@@ -90,7 +90,18 @@ def verify_iceberg_append(result: dict) -> None:
     assert result["verificationSubject"] not in result["subjects"].values(), (
         "independent readback identity"
     )
-    required = {"seed", "verify", "supervisor", *IDENTITIES}
+    executed_profiles = {
+        case["identity"]
+        for case in result["cases"] + result.get("supplementalCases", [])
+    }
+    required = {
+        "seed",
+        "verify",
+        "supervisor",
+        *IDENTITIES,
+        *result["subjects"],
+        *executed_profiles,
+    }
     assert required <= set(result["processExits"]), "missing original exit"
     for ref in result["processExits"].values():
         value = read_ref(ref)
