@@ -30,9 +30,9 @@ import xml.etree.ElementTree as ET
 
 from cdf_live import ROOT, JAVA, Ranger, Public, Server, RecordingProxy, envfile, read, save, sha, verify_deployed
 from cdf_merge_live import await_file
-from read_parity_live import start, finish
+from read_parity_live import start, finish, fixture_select_grants
 from cdf_merge_live_checks import file_ref
-from read_parity_checks import CASE_SPECS, verify_audit_slice
+from read_parity_checks import CASE_SPECS, verify_audit_slice, verify_policy_http, verify_jar_property
 from package_binding import capture_sources, canonical_digest
 
 CACHE=Path.home()/'.gradle/caches/modules-2/files-2.1'
@@ -88,8 +88,8 @@ def run(spark,route,inputs_path,out):
         item={'users':users,'groups':[],'roles':[],'accesses':[{'type':'select','isAllowed':True}]}
         return body,item
     allows={}
-    for profile,columns in [('id-only',['id']),('table-wide',['*']),('denied-email',['*'])]:
-        body,item=policy('allow_'+profile,0,columns,[subjects[profile]]);body['policyItems']=[item]
+    for profile,columns,users in fixture_select_grants(subjects):
+        body,item=policy('allow_'+profile,0,columns,users);body['policyItems']=[item]
         allows[profile]=ranger.call('POST','/service/public/v2/api/policy',body)
     body,item=policy('deny_email',0,['email'],[subjects['denied-email']]);body['denyPolicyItems']=[item]
     ranger.call('POST','/service/public/v2/api/policy',body)
@@ -111,10 +111,11 @@ def run(spark,route,inputs_path,out):
     (security/'ranger-spark-audit.xml').write_text('<configuration><property><name>xasecure.audit.is.enabled</name><value>false</value></property></configuration>')
     home=runtime(spark,out);server=None;server_proxy=None;wrapper_config={}
     warehouse='s3a://delta-fixtures/iceberg-read-parity-'+nonce
-    mask=None
+    mask=None;wire_policies={}
     def snapshot(name):
         result=ranger.call('GET','/service/plugins/secure/policies/download/'+service+'?lastKnownVersion=-1&pluginId=iceberg-read-supervisor',download=True)
         path=out/(name+'-policies.json');save(path,result)
+        wire_policies[str(path)]=file_ref(ranger.out/(f'{ranger.count:04d}.response.private.bin'))
         return result,file_ref(path)
     try:
         if route=='gravitino':
@@ -159,14 +160,22 @@ def run(spark,route,inputs_path,out):
         def launch(mode,subject,profile=None):
             target=out/mode;target.mkdir()
             initial,reference=snapshot(mode+'-initial')
+            proxy.wait_drained(30)
+            first_byte=proxy.events.stat().st_size if proxy.events.exists() else 0
+            proxy.disarm()
             request={'mode':'seed' if mode=='seed' else 'application','spark':spark,'output':str(target),
                 'pythonOutput':str(target/'python-evidence'),'credentials':inputs['minioCredentialsFile'],
                 'warehouse':warehouse,'endpoint':endpoints['minio'],'database':database,'identityProfile':profile,
-                'minPolicy':initial['policyVersion'],'initialPolicySnapshot':reference}
+                'minPolicy':initial['policyVersion'],'initialPolicySnapshot':reference,'pluginHttpFirstByte':first_byte}
             if mode!='seed':request.update(wrapper_config)
             audit=target/'audit';audit.mkdir()
             request['auditDirectory']=str(audit)
             local_security=target/'security';shutil.copytree(security,local_security)
+            local_cache=target/'policy-cache';local_cache.mkdir()
+            security_xml=ET.parse(local_security/'ranger-spark-security.xml')
+            for prop in security_xml.getroot().findall('property'):
+                if prop.findtext('name')=='ranger.plugin.spark.policy.cache.dir':prop.find('value').text=str(local_cache)
+            security_xml.write(local_security/'ranger-spark-security.xml',encoding='utf-8',xml_declaration=True)
             audit_values={'xasecure.audit.is.enabled':'true','xasecure.audit.destination.file':'true',
                           'xasecure.audit.destination.file.dir':str(audit),
                           'xasecure.audit.destination.file.filename.format':'permission.log',
@@ -211,8 +220,19 @@ def run(spark,route,inputs_path,out):
             finally:code=finish(process,stdout,stderr,out/profile/'process',process.poll() is None)
             assert code==0,'Original Iceberg application failed: '+profile
             exits[profile]=file_ref(out/profile/'process/exit.json')
+            proxy.wait_drained(30)
+            request=read(out/profile/'request.private.json');raw_http=proxy.events.read_bytes()
+            selected_http=raw_http[request['pluginHttpFirstByte']:]
+            http_slice=out/profile/'plugin-http.jsonl';http_slice.write_bytes(selected_http)
+            events=[json.loads(line) for line in selected_http.splitlines()]
+            save(out/profile/'plugin-http-range.json',{'firstByte':request['pluginHttpFirstByte'],'endByte':len(raw_http),'slice':file_ref(http_slice)})
+            proxy.disarm()
             for case in read(out/profile/'python-evidence/cases.json'):
-                case['policySnapshot']=states[case['policyPhase']];cases.append(case)
+                case['policySnapshot']=states[case['policyPhase']]
+                wire=wire_policies[case['policySnapshot']['path']]
+                case['policyDownload']={'event':verify_policy_http(events,wire,service,case['pluginPolicyVersion']),
+                                        'rawPolicy':wire,'processHttp':file_ref(http_slice)}
+                cases.append(case)
         assert len(cases)==len(CASE_SPECS) and {case['name'] for case in cases}==set(CASE_SPECS),'Comparator case inventory differs'
         aqe=next(case for case in cases if case['name']=='aqe-join')
         assert aqe['outcome']=='allowed' and aqe['observedRows']==aqe['expectedRows'],'Comparator AQE payload failed'
@@ -228,6 +248,12 @@ def run(spark,route,inputs_path,out):
             observed=read(out/profile/'runtime.json')
             assert observed['spark']==spark and observed['scala']=='2.12.21'
             assert observed['sparkUser']==subjects[profile]
+            assert observed['java'].startswith('17.'),'Actual Java pin differs'
+            for cls,member,key,version in [
+                ('org.apache.ranger.plugin.service.RangerBasePlugin','META-INF/maven/org.apache.ranger/ranger-plugins-common/pom.properties','version','2.8.0'),
+                ('org.apache.iceberg.spark.SparkCatalog','iceberg-build.properties','git.build.version','1.11.0'),
+                ('org.apache.kyuubi.plugin.spark.authz.ranger.RangerSparkExtension','META-INF/maven/org.apache.kyuubi/kyuubi-spark-authz_2.12/pom.properties','version','1.10.2')]:
+                verify_jar_property(observed['origins'][cls]['artifact']['path'],member,key,version)
             for origin in observed['origins'].values():
                 assert artifacts[origin['artifact']['path']]==origin['artifact']['sha256'],'Actual comparator provider differs'
             actual=read(out/profile/'catalog.json')['actualClass']
@@ -237,7 +263,7 @@ def run(spark,route,inputs_path,out):
         assert capture_sources(ROOT)==sources,'Source changed during comparator'
         save(out/'result.json',{'schemaVersion':1,'spark':spark,'engine':'iceberg','iceberg':'1.11.0','kyuubi':'1.10.2',
             'catalogRoute':route,'runtimeManifest':file_ref(out/'runtime-manifest.json'),'rangerServerVersion':'2.8.0','rangerClientVersion':'2.8.0',
-            'deployedRanger':file_ref(association),'auditSinks':{profile:[file_ref(path) for path in (out/profile/'audit').glob('*.log')] for profile in subjects},'cases':cases,'processExits':exits,'database':database,
+            'deployedRanger':file_ref(association),'pluginHttp':file_ref(proxy.events),'auditSinks':{profile:[file_ref(path) for path in (out/profile/'audit').glob('*.log')] for profile in subjects},'cases':cases,'processExits':exits,'database':database,
             'differences':[case['name'] for case in cases if case['comparison']=='measured-difference'],
             'deploymentExclusions':['native seeding','metadata authorization disabled for wrapper','fixture-authored policies; no grant propagation claim']})
     finally:

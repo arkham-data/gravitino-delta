@@ -80,6 +80,13 @@ def read_ref(reference):
     return json.loads(Path(reference["path"]).read_text())
 
 
+def verify_jar_property(path,member,key,expected):
+    """Check embedded version metadata in the actual class-provider JAR."""
+    with zipfile.ZipFile(path) as archive:
+        lines=archive.read(member).decode().splitlines()
+    assert [line for line in lines if line.startswith(key+"=")]==[key+"="+expected], "actual provider version differs"
+
+
 def verify_result(result: dict) -> None:
     """Reject absent observations, incorrect semantics and mismatched immutable provenance."""
     assert result.get("schemaVersion") == 1, "schemaVersion"
@@ -105,9 +112,7 @@ def verify_result(result: dict) -> None:
         assert observed["classSha256"] == runtime["providerClasses"][name], "provider class differs"
     ranger_key="org.apache.ranger.plugin.service.RangerBasePlugin"
     assert ranger_key in runtime["providers"], "actual Ranger client provider missing"
-    with zipfile.ZipFile(runtime["providers"][ranger_key]) as archive:
-        properties=archive.read("META-INF/maven/org.apache.ranger/ranger-plugins-common/pom.properties").decode()
-        assert "version=2.8.0" in properties.splitlines(), "actual Ranger client version differs"
+    verify_jar_property(runtime["providers"][ranger_key],"META-INF/maven/org.apache.ranger/ranger-plugins-common/pom.properties","version","2.8.0")
     assert set(result["profiles"])==set(result["subjects"])==set(child_exits), "identity profile inventory"
     assert len(set(result["subjects"].values()) | {result["metadataPrincipal"],result["setupIdentity"]})==6, "separate identities"
     for profile, references in result["profiles"].items():
@@ -229,3 +234,14 @@ def verify_audit_slice(case, sinks):
     assert selected==raw[start:end], "audit slice differs from original"
     events=[dict(json.loads(line),observationKind="audited-permission-event") for line in selected.splitlines()]
     assert events==case["rangerRequests"], "actual audit event fields differ"
+
+
+def verify_policy_http(events, raw_policy, service, version):
+    """Join a stock client's delivered response hash to retained actual policy bytes."""
+    assert read_ref(raw_policy)["policyVersion"]==version, "policy wire version differs"
+    matching=[event for event in events if event.get("method")=="GET"
+              and event.get("path","").startswith("/service/plugins/secure/policies/download/"+service+"?")
+              and event.get("completion")=="confirmed" and event.get("downstream")=="sent"
+              and event.get("upstream_status")==200 and event.get("response_sha256")==raw_policy["sha256"]]
+    assert matching, "actual completed client policy download absent"
+    return matching[0]

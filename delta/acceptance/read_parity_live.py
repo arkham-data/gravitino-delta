@@ -77,6 +77,12 @@ def seed(plan,runtime,output):
     return result
 
 
+def fixture_select_grants(subjects):
+    """Ranger requires one policy per matching resource; keep the revocable id grant separate."""
+    return [("id-only",["id"],[subjects["id-only"]]),
+            ("table-wide",["*"],[subjects["table-wide"],subjects["denied-email"]])]
+
+
 def fixture_resources(kind,plan,columns):
     """Resources for explicitly fixture-authored SELECT/filter/mask policies only."""
     assert kind in (0,1,2)
@@ -152,8 +158,8 @@ def provision(runtime,inputs,output,association,handles):
         item={"users":users,"roles":[],"groups":[],"accesses":[{"type":"select","isAllowed":True}]}
         return body,item
     ids={}
-    for profile,columns in [("id-only",["id"]),("table-wide",["*"]),("denied-email",["*"])]:
-        body,item=policy("allow_"+profile,0,columns,[subjects[profile]]);body["policyItems"]=[item]
+    for profile,columns,users in fixture_select_grants(subjects):
+        body,item=policy("allow_"+profile,0,columns,users);body["policyItems"]=[item]
         ids[profile]=create("fixture-policy","/service/public/v2/api/policy",body)["id"]
     body,item=policy("deny_email",0,["email"],[subjects["denied-email"]]);body["denyPolicyItems"]=[item]
     ids["deny-email"]=create("fixture-policy","/service/public/v2/api/policy",body)["id"]

@@ -162,6 +162,24 @@ class TestReadParityChecks(unittest.TestCase):
         self.assertNotIn("column",fixture_resources(2,plan,[]))
         with self.assertRaises(AssertionError):fixture_resources(3,plan,[])
 
+    def test_fixture_grants_avoid_duplicate_ranger_resources(self):
+        from read_parity_live import fixture_select_grants
+        subjects={name:name+"-user" for name in ["id-only","table-wide","denied-email","no-grant"]}
+        grants=fixture_select_grants(subjects)
+        self.assertEqual(2,len(grants))
+        self.assertEqual(("id-only",["id"],[subjects["id-only"]]),grants[0])
+        self.assertEqual(("table-wide",["*"],[subjects["table-wide"],subjects["denied-email"]]),grants[1])
+
+    def test_comparator_download_requires_actual_completed_response(self):
+        from read_parity_checks import verify_policy_http
+        from cdf_merge_live_checks import file_ref
+        raw=Path(self.directory.name)/"policy-wire.json";raw.write_text('{"policyVersion":9}')
+        event={"method":"GET","path":"/service/plugins/secure/policies/download/fixture?lastKnownVersion=-1",
+               "completion":"confirmed","downstream":"sent","upstream_status":200,"response_sha256":file_ref(raw)["sha256"]}
+        self.assertEqual(event,verify_policy_http([event],file_ref(raw),"fixture",9))
+        event["downstream"]="dropped"
+        with self.assertRaises(AssertionError):verify_policy_http([event],file_ref(raw),"fixture",9)
+
     def case(self, name):
         return next(case for case in self.value["cases"] if case["name"] == name)
 
@@ -258,7 +276,7 @@ class TestReadParityChecks(unittest.TestCase):
         origin_path=Path(self.value["origins"]["path"]);origins=json.loads(origin_path.read_text())
         origins[self.provider]["jarSha256"]=digest;origin_path.write_text(json.dumps(origins))
         self.value["origins"]=file_ref(origin_path)
-        with self.assertRaisesRegex(AssertionError,"actual Ranger client version"):
+        with self.assertRaisesRegex(AssertionError,"actual provider version"):
             verify_result(self.value)
 
     def test_setup_failure_cannot_pass_as_denial(self):
