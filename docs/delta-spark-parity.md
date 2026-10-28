@@ -173,3 +173,19 @@ references/hashes, sources against the frozen Git revision, installed-to-package
 class identity, original exits and the subsequent documentation-only delta.
 Documentation updates do not relabel package metadata or claim that historical
 packages were rebuilt.
+
+### Permission-evidence validator supplement
+
+Runtime qualification remains at `f0c43aa3e`; the original packages, executions
+and final evidence index are unchanged. Validator fix `b2ed60551` adds a pure
+permission-outcome gate: grant-denial cases require an attributed denied SELECT
+result and the exact Delta authorization error. Allowed cases reject contradictory
+SELECT denials. Stale-publication and dropped-view failures have separate checks.
+
+The gate passed all 168 immutable original Delta records. This supplements the
+original full validation; it is not a new Spark run or a new full-checker run.
+The exact AST/source proof preserves all prior checker semantics and all producer,
+observer, compiled-class and runtime inputs. Focused tests passed 40/40 and full
+acceptance passed 104/104. The supplement index is
+`.superpowers/sdd/2026-10-26-delta-spark-read-parity/task-5/fix-round-1/supplemental-index.json`.
+Controller re-review remains pending.
