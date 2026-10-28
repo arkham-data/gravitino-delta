@@ -138,3 +138,48 @@ catalog/client artifacts; only client build-info metadata changed. The old clien
 JAR is retained for original container-hash verification. This does not claim a
 fresh build of the prebuilt server distribution. Owned local servers/proxies were
 stopped; shared Ranger/MinIO services and unique evidence/resources were retained.
+
+## Ordinary-read comparison candidate — 2026-10-28
+
+The later ordinary-read matrix uses Iceberg 1.11.0, Kyuubi 1.10.2, Java 17,
+Scala 2.12.21 and actual Ranger server/client 2.8.0 on both Spark patches. All
+original seed/application/supervisor/outer exits are 0. These measurements extend
+the historical AQE baseline; they do not revise its original records.
+
+| Spark | Catalog route | Executed | Blocked view probes | Observed action differences | Unqualified revoke transitions* |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 3.5.4 | native | 36 | 6 | 11 | 1 |
+| 3.5.4 | gravitino | 36 | 6 | 11 | 1 |
+| 3.5.6 | native | 36 | 6 | 11 | 1 |
+| 3.5.6 | gravitino | 36 | 6 | 11 | 1 |
+
+*The unqualified transition is included among observed action differences: both
+attempts ran, but an id-only warmup denied, so a later denial after SELECT revoke
+does not prove revoke-on-reuse. Six blocked view probes are not counted as executed
+actions or successful comparisons. Each points to the actual createTempView denial
+on policy-injected region, with original error, analyzed plan and audit evidence.
+
+Native count can return 4 without a SELECT audit for id-only bare, explicit-star,
+authored-region or no-grant probes. Composed id collection denies on policy-only
+region. Retained masked frames/views and a fresh lookup of the old view return M
+after confirmed NULL-mask refresh. The denied-email fixture returns four masked
+NULL values. These are measured outcomes under the retained policies. The wildcard
+COUNT is separately labelled measured-policy-outcome, not an independently
+predicted grant or proof of permission parity.
+
+Each cell’s four successful native Pandas probes retain actual transport/fallback flags,
+Pandas/PyArrow versions, primitive dtypes and UTC settings. The separate join proves
+final materialized AQE with a positive SELECT-audit control. Kyuubi's unchanged
+handler supplies audited permission events; listener drain and bounded audit
+submitted/complete-line counters bind raw offsets to serial actions. Zero events
+are measured absence. Mask/filter evaluation requests and their policy IDs are
+unobserved; actual plans/values and downloaded policy snapshots provide semantic
+evidence. Hive resources retain their lack of a catalog dimension.
+
+Each cell uses an isolated database and fixture-authored policies. Native seeding,
+local simple identities and metadata authorization disabled for the Gravitino
+wrapper do not establish production authentication or grant propagation. Delta's
+supported-action rechecks and original occurrence demands remain independent.
+See the [candidate support boundary](delta-spark-parity.md#ordinary-spark-read-candidate--2026-10-28)
+and private final evidence index for exact artifacts. Final integrated review and
+production deployment remain separate gates.

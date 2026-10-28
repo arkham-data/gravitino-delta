@@ -237,3 +237,20 @@ The completed [DataFrame API plan](superpowers/plans/2026-10-25-delta-dataframe-
 and the deferred [demo plan](superpowers/plans/2026-10-22-delta-cdf-merge-demo.md)
 remain the baseline. This assessment does not reopen completed milestones or claim
 new compatibility.
+
+## Subsequent ordinary-read candidate — 2026-10-28
+
+The approved [ordinary-read design](superpowers/specs/2026-10-26-delta-spark-read-parity-design.md)
+has a frozen local qualification candidate at `f0c43aa3e5c84b0fcc9252e767ccbcff4b0bafc5`. All four pinned
+Spark/Delta pairs execute the finite classic PySpark count/distinct/order/limit/show,
+local DataFrame view and UTC primitive Pandas profiles, including native Arrow off
+and required-on with fallback disabled. The [support table](delta-spark-parity.md#ordinary-spark-read-candidate--2026-10-28)
+records exact counts, original exits, class/package provenance and the limitations.
+
+Iceberg/Kyuubi remains a separately measured comparator. Its rewritten-plan
+policy-only-region requirement blocks id-only view creation; six dependent probes
+per cell are explicitly unexecuted. Counts without SELECT audit and retained mask
+behavior are observations, not grounds to change Delta's original-demand rules.
+The denied warmup does not establish revoke-on-reuse. Independent final review is
+still a separate gate. Catalog-demo, append AQE and separate-worker deployment
+remain separate plans; the historical recommendations above do not reopen them.

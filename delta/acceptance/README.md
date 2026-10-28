@@ -120,7 +120,6 @@ lifecycle operation or observational adoption. Full Delta conformance, downstrea
 owner-hook fault injection, exact CAS barriers, Ranger 2.8 enforcement, and the
 catalog demo retain their separately documented evidence and follow-up scopes.
 
-
 ## Focused replacement base admission
 
 The review regression uses the same prepared production packages and launches only
@@ -237,7 +236,6 @@ pair also has a forced shadow-only assembly with complete archive-entry equality
 to its immutable live artifact; dependencies keep their normal Gradle checks. No closed append or
 CDF enablement matrix is repeated.
 
-
 ## Governed CDF-to-MERGE local lane
 
 `cdf_merge_live.py --runtime <manifest> --inputs <private-inputs> --out <fresh-directory>`
@@ -270,7 +268,6 @@ indexed by `.superpowers/sdd/2026-10-22-delta-cdf-merge/task-5-final-evidence-in
 Historical failed attempts and pre-fix successes remain separate from these
 corrected final packages. See [governed MERGE](../../docs/delta-cdf-merge.md)
 and [remaining compatibility work](../../docs/delta-spark-parity.md).
-
 
 ### Partitioned qualification
 
@@ -309,7 +306,6 @@ parity preserves native invalid-UTF8 binary loss, localFS binary-NUL failure and
 mismatched timestamp-zone shifts. See the [tracked plan](../../docs/superpowers/plans/2026-10-24-delta-partitioned-merge.md)
 and [bounded MERGE support](../../docs/delta-cdf-merge.md) for qualified cases and
 remaining protocol, SQL, worker and deployment boundaries.
-
 
 ### Packaged DataFrame qualification
 
@@ -389,3 +385,57 @@ operators exist. Inspect the retained operator plan; that label is not proof of
 absence of nonadaptive exchanges. This does not change legacy operation support
 or relabel historical evidence. The checker cannot use a nonadaptive record to
 qualify adaptive execution.
+
+## Bounded ordinary-read qualification
+
+The `read-parity` package profile contains the evidence bridge only. Classic
+PySpark itself calls native count, finite SQL count expressions, distinct,
+orderBy/limit, show, toPandas and local DataFrame temporary-view APIs. The bridge
+observes actual action QueryExecutions and delegates the installed Ranger audit
+handler without changing decisions. Do not replace Python transport with bridge
+payloads or change captured session settings after constructing a fresh frame.
+
+```bash
+python delta/acceptance/cdf_read_live_package.py --app read-parity \
+  --base <verified-fresh-shared-manifest> --out <fresh-package-dir> \
+  --spark <3.5.4-or-3.5.6> --delta <3.3.0-or-3.3.2>
+python delta/acceptance/read_parity_live.py --runtime <package-manifest> \
+  --inputs <verified-private-inputs> --out <fresh-live-dir>
+python delta/acceptance/iceberg_read_parity.py --spark <3.5.4-or-3.5.6> \
+  --catalog <native-or-gravitino> --inputs <verified-private-inputs> \
+  --out <fresh-comparator-dir>
+```
+
+Use Java 17/Scala 2.12.21, actual Ranger server/client 2.8.0 and the manifested
+Hadoop/S3A 3.3.6 MinIO profile. Pandas 2.2.3/PyArrow 17.0.0 run in classic Python 3.11
+with Python/session UTC; Arrow fallback is disabled. Required-on transport must be
+observed. Primitive dtype bounds and unsupported surfaces are in the
+[support table](../../docs/delta-spark-parity.md#ordinary-spark-read-candidate--2026-10-28).
+
+Private input references retain the original endpoint/credential files and verified
+Ranger deployment proof. A changed local port needs a new derived endpoint/input
+record; never overwrite original inputs or bypass deployment validation. The
+comparator additionally requires sharedAssemblyManifest pointing to the original
+assembly/assembly.json. Its server/backend and wrapper driver dependencies are
+separate; preserve the verified catalog-common, Caffeine 2.9.3 and
+scala-java8-compat 1.0.2 driver providers.
+
+Freeze and commit code before assembly so common-JAR Git metadata identifies the
+actual candidate. Run installed tests, packages and live cells serially. Gate every
+phase on its original exit, nonzero exact inventory and absence of errors/skips;
+retain failures and use fresh output paths. Independent checks reject missing
+original occurrences, wrong observed permission columns, replaced artifacts,
+incorrect policy downloads and fabricated comparator prerequisite/action evidence.
+
+Version 2 diagnostic records distinguish adaptive-payload, nonadaptive-exchange and
+exchange-free observations. This repairs the historical new-record limitation
+noted above; old version 1 evidence remains unchanged. Submitted-job waits are
+bounded and cannot treat zero observed jobs as proof that no action ran.
+
+The final index at
+.superpowers/sdd/2026-10-26-delta-spark-read-parity/final-evidence-index.json
+joins the four Delta 42-case cells, four comparator inventories, installed tests,
+original exits, source/class/package identities and retained JARs. Comparator
+blocked probes and denied-baseline transitions remain explicitly unqualified;
+fixture-authored policies do not prove Gravitino grant propagation. Final review,
+append AQE, catalog-demo and production deployment remain separate work.

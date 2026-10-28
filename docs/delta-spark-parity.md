@@ -82,3 +82,94 @@ labeled explicitly. The full legacy baseline and focused per-pair coverage are
 distinct in the [original execution table](delta-cdf-merge.md#original-task-4-execution-records).
 Broader logical grammar, caches, Connect/streaming, separate workers and catalog-demo
 remain pending scope; no API version or deployment claim follows from this change.
+
+## Ordinary Spark read candidate — 2026-10-28
+
+The bounded ordinary-read candidate covers Spark 3.5.4/3.5.6 × Delta
+3.3.0/3.3.2 with Java 17, Scala 2.12.21, Ranger server/client 2.8.0,
+and the manifested local Hadoop/S3A 3.3.6 MinIO profile. Final independent
+review remains a separate gate; this does not qualify catalog-demo or production
+deployment.
+
+Native classic PySpark performs count, finite COUNT(*)/COUNT(1)/COUNT(column),
+distinct, orderBy with deterministic limits, show, toPandas and local DataFrame
+temporary-view operations. Original authored references survive pruning and
+count optimization: an id projection needs id SELECT, explicit inner SELECT-star
+retains every authored column, and a columnless occurrence uses Ranger column="*".
+Policy-only filter/mask dependencies do not become user SELECT demands. Each
+original self-join occurrence retains its own registration and column set.
+
+Filters and masks precede user operations. The five-row fixture has four east
+rows; email COUNT is 3 unmasked, 4 under constant 'M', and 0 under typed NULL.
+Distinct produces one M or one NULL. Sorted/zero limits, false predicates and
+metadata-only count retain authorization obligations even when execution removes
+the scan. A separate exchange-bearing join proves final materialized AQE.
+
+Every supported Delta action rechecks captured context and locally applied policy.
+Already-planned stale decisions reject; accepted in-flight work may finish with
+captured decisions. Local createTempView/createOrReplaceTempView/dropTempView
+preserve original intent and bound definitions; replacing a name does not silently
+rebind an existing frame. This is not atomic revocation or per-stage reauthorization.
+
+Pandas is limited to classic Python 3.11, Pandas 2.2.3, PyArrow 17.0.0 and recorded
+UTC Python/session timezones. Arrow off and required-on run through native APIs;
+fallback is disabled and actual Arrow RecordBatch transport is observed. The
+primitive profile covers long, nullable string/boolean/double, decimal, date and
+timestamp. Dtypes are recorded separately: id=int64, nullable long/double=float64,
+nullable string/boolean/decimal/date=object, timestamp=datetime64[ns] with Arrow
+off and datetime64[us] with Arrow on. Other timezones, nested types, Connect,
+streaming and separate workers remain unqualified.
+
+Cache/persist/checkpoint, global/permanent/SQL-text views, general aggregates,
+windows/UDFs and broader CDF/MERGE/append grammars remain outside this milestone.
+No write surface or production authentication/grant-propagation claim is added.
+
+Comparator observation uses the unchanged Kyuubi audit handler and actual SELECT
+audit events, not one direct Ranger callback per original occurrence. Serial Spark
+listener drain and bounded audit submitted-count/complete-file-line checks bracket
+each case. Zero events are measured absence, not evidence of a fresh permission
+grant. Hive mapping has no catalog dimension, so each cell uses a unique database.
+Mask/filter evaluation requests and their policy IDs remain unobserved; actual
+plans, values and downloaded policy snapshots establish the measured semantics.
+
+Under id-only permissions Kyuubi denies composed collection and createTempView
+because the rewritten plan references policy-only region. Six dependent view
+probes are explicitly not executed/unqualified, linked to the captured actual
+prerequisite denial. A denied retained-frame warmup means its later actual denial
+after revoke does not qualify a revoke-on-reuse transition. Independent operations
+continue. Counts can succeed with no SELECT audit even for no-grant or authored
+references; this is a measured difference. Retained masked frames/views keep M
+after refresh to NULL, including a fresh lookup of the previously defined view.
+An explicit denied-email collect returns masked NULLs in the comparator fixture.
+Delta keeps its original-demand and supported-action freshness contract.
+
+The wildcard COUNT case records the actual Ranger policy outcome and exact
+allowed value 4 or denial shape. It is not an independently predicted grant or proof
+of Delta/Iceberg permission parity.
+
+Frozen source: `f0c43aa3e5c84b0fcc9252e767ccbcff4b0bafc5`. The fresh shared common JAR reports that exact Git
+revision. Each package binds the same source inventory to original build exits,
+compiled classes, loaded providers and retained runtime/supplemental JARs. The
+candidate has 102 passing acceptance tests. The 736 installed
+methods executed at `0030902e16037bc143ec95357e65163f786b294c` and are reused for this candidate through
+an explicit equality proof: only the semantic checker, shared live Python runner
+and checker tests changed. Installed action-runner, module main/test, init/build
+sources, unshaded compiled classes and captured pinned dependencies are unchanged.
+Original execution receipts retain their original revision. The common JAR's
+build-info resource intentionally changes to the new revision; whole-JAR equality
+across revisions is not claimed.
+
+| Spark | Delta | Installed tests | Native Python live cases | Result |
+| --- | --- | ---: | ---: | --- |
+| 3.5.4 | 3.3.0 | 184 | 42 | 0 failures/errors/skips; original exits 0 |
+| 3.5.4 | 3.3.2 | 184 | 42 | 0 failures/errors/skips; original exits 0 |
+| 3.5.6 | 3.3.0 | 184 | 42 | 0 failures/errors/skips; original exits 0 |
+| 3.5.6 | 3.3.2 | 184 | 42 | 0 failures/errors/skips; original exits 0 |
+
+The private evidence index is
+`.superpowers/sdd/2026-10-26-delta-spark-read-parity/final-evidence-index.json`.
+It retains all original failures separately. Final index verification rechecks
+references/hashes, sources against the frozen Git revision, installed-to-package
+class identity, original exits and the subsequent documentation-only delta.
+Documentation updates do not relabel package metadata or claim that historical
+packages were rebuilt.
