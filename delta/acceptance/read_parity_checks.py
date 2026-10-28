@@ -80,6 +80,21 @@ def read_ref(reference):
     return json.loads(Path(reference["path"]).read_text())
 
 
+def verify_pandas_transport(case):
+    """Require measured native Python transport and the finite UTC dtype profile."""
+    arrow = case["arrow"]
+    enabled = case["name"].endswith("-on")
+    assert arrow["enabled"] is enabled and arrow["fallback"] is False, "Arrow flags"
+    assert arrow["observed"] is enabled, "actual Arrow transport"
+    assert arrow["pandas"] == "2.2.3" and arrow["pyarrow"] == "17.0.0", "Python versions"
+    dtypes={"id":"int64", "email":"object"}
+    if case["name"].startswith("primitive-"):
+        dtypes.update(nlong="float64",text="object",flag="object",number="float64",money="object",day="object",
+                      stamp="datetime64[us]" if enabled else "datetime64[ns]")
+    assert arrow["dtypes"] == dtypes, "Pandas dtypes"
+    assert arrow["pythonTZ"] == arrow["sessionTZ"] == "UTC", "qualified UTC environment"
+
+
 def verify_comparator_policy(case):
     """Bind the applied client version to the immutable policy snapshot."""
     assert case["pluginPolicyVersion"] == read_ref(case["policySnapshot"])["policyVersion"], "Comparator policy application differs"
@@ -202,17 +217,7 @@ def verify_result(result: dict) -> None:
         for key in ["analyzedPlan", "finalPlan"]:
             assert file_ref(case[key]["path"]) == case[key], "original plan artifact"
         if api == "toPandas":
-            arrow = case["arrow"]
-            enabled = case["name"].endswith("-on")
-            assert arrow["enabled"] is enabled and arrow["fallback"] is False, "Arrow flags"
-            assert arrow["observed"] is enabled, "actual Arrow transport"
-            assert arrow["pandas"] == "2.2.3" and arrow["pyarrow"] == "17.0.0", "Python versions"
-            dtypes={"id":"int64", "email":"object"}
-            if case["name"].startswith("primitive-"):
-                dtypes.update(nlong="float64",text="object",flag="object",number="float64",money="object",day="object",
-                              stamp="datetime64[us]" if enabled else "datetime64[ns]")
-            assert arrow["dtypes"] == dtypes, "Pandas dtypes"
-            assert arrow["pythonTZ"] == arrow["sessionTZ"] == "UTC", "qualified UTC environment"
+            verify_pandas_transport(case)
         if case["name"] == "aqe-join":
             verify_adaptive_observation(case["execution"])
     verify_supplemental_artifacts(runtime)
@@ -287,6 +292,34 @@ def verify_comparator_cases(cases,prerequisites):
                 blocked[name]=reference
     for case in cases:
         assert case["outcome"] in ["allowed","denied","not-executed"], "comparator outcome"
+        api,expected,columns=CASE_SPECS[case["name"]]
+        wildcard=expected=="ranger-outcome"
+        if wildcard:
+            assert case["expectedRows"] in [None,[[4]]], "wildcard observed outcome"
+        else:
+            assert case["expectedRows"]==expected, "independent comparator oracle"
+        assert case["api"]==api and case["expectedColumns"]==sorted(columns), "comparator API/demand declaration"
+        if case["outcome"]!="not-executed":
+            assert case["actionRoute"]=="native-pyspark", "native comparator action route"
+            assert case["listenerQueuesDrained"] is True, "comparator listener drain"
+            assert case["actualActionQueries"]==len(case["callbacks"]), "comparator callback count"
+            if case["outcome"]=="allowed":
+                assert case["callbacks"], "successful action callback absent"
+            for callback in case["callbacks"]:
+                assert callback["case"]==case["name"] and callback["caseSequence"]==case["caseSequence"], "comparator callback attribution"
+            for key in ["analyzedPlan","finalPlan"]:
+                assert file_ref(case[key]["path"])==case[key], "comparator plan reference"
+            if api=="toPandas" and case["outcome"]=="allowed":verify_pandas_transport(case)
+            if wildcard:
+                assert case["observedRows"]==([[4]] if case["outcome"]=="allowed" else None), "wildcard actual payload"
+                comparison="measured-policy-outcome"
+            else:
+                comparison="matches-delta-contract" if case["observedRows"]==expected and (case["outcome"]=="denied")== (expected is None) else "measured-difference"
+            baseline_denied=case["name"]=="retained-revoked" and next(value for value in cases if value["name"]=="id-retained-warmup")["outcome"]!="allowed"
+            if baseline_denied:
+                assert case.get("qualification")=="unqualified", "denied baseline cannot prove revoke-on-reuse"
+                comparison="measured-difference"
+            assert case["comparison"]==comparison, "independent comparator classification"
         if case["outcome"]=="allowed":
             assert case.get("error") is None and case["observedRows"] is not None, "allowed comparator action failure"
         elif case["outcome"]=="denied":

@@ -215,6 +215,7 @@ def execute_cases(spark,bridge,request):
         if display is not None:case["display"]=ref(output/(name+".stdout"))
         if request.get("comparator"):
             case["comparison"]="matches-delta-contract" if observed==expected and (error is not None)==(expected is None) else "measured-difference"
+            if CASE_SPECS[name][1]=="ranger-outcome":case["comparison"]="measured-policy-outcome"
         if request.get("comparator") and baseline is not None and baseline["outcome"]!="allowed":
             case.update(qualification="unqualified",comparison="measured-difference",
                         qualificationReason="Baseline action denied; this attempt does not prove revoke-on-reuse",
