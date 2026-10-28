@@ -207,6 +207,13 @@ def change_policy(plan,phase,output):
     return snapshot(plan,output/"after")
 
 
+def application_command(runtime,request,request_path):
+    """Expose the generated Ranger resource directory in the real driver class path."""
+    return [runtime["sparkHome"]+"/bin/spark-submit","--driver-memory","3g","--master","local[2]",
+            "--properties-file",request["sparkConfigurationFile"],"--driver-class-path",request["driverSecurityDirectory"],
+            ROOT/"delta/acceptance/read_parity_pyspark.py",request_path]
+
+
 def application(plan,runtime,profile,output):
     output.mkdir(mode=0o700);application_plan=dict(plan,subject=plan["subjects"][profile])
     initial=snapshot(plan,output/"initial")
@@ -222,7 +229,7 @@ def application(plan,runtime,profile,output):
     save(output/"request/request.private.json",request)
     environment=clean_environment(application_plan);environment.update(TZ="UTC",SPARK_HOME=runtime["sparkHome"],PYSPARK_PYTHON=plan["python"],
         SPARK_USER=application_plan["subject"],HADOOP_USER_NAME=application_plan["subject"])
-    argv=[runtime["sparkHome"]+"/bin/spark-submit","--driver-memory","3g",ROOT/"delta/acceptance/read_parity_pyspark.py",output/"request/request.private.json"]
+    argv=application_command(runtime,request,output/"request/request.private.json")
     process,out,err=start(argv,environment,output/"process")
     states={"initial":initial}
     try:

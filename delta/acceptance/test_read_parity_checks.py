@@ -135,6 +135,15 @@ class TestReadParityChecks(unittest.TestCase):
         self.case("id-count")["rangerRequests"][0]["user"]="metadata"
         with self.assertRaisesRegex(AssertionError,"actual request subject"):verify_result(self.value)
 
+    def test_native_launcher_exposes_generated_security_to_ranger(self):
+        from read_parity_live import application_command
+        request={"sparkConfigurationFile":"/fixture/spark.properties","driverSecurityDirectory":"/fixture/driver-security"}
+        argv=list(map(str,application_command({"sparkHome":"/runtime"},request,Path("/fixture/request.json"))))
+        self.assertEqual("/fixture/driver-security",argv[argv.index("--driver-class-path")+1])
+        self.assertEqual("/fixture/spark.properties",argv[argv.index("--properties-file")+1])
+        self.assertTrue(argv[-2].endswith("/read_parity_pyspark.py"))
+        self.assertEqual("/fixture/request.json",argv[-1])
+
     def case(self, name):
         return next(case for case in self.value["cases"] if case["name"] == name)
 
