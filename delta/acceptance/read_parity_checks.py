@@ -113,6 +113,55 @@ def verify_jar_property(path,member,key,expected):
     assert [line for line in lines if line.startswith(key+"=")]==[key+"="+expected], "actual provider version differs"
 
 
+def verify_permission_outcome(case, catalog, database, subject):
+    """Join a Delta action outcome to independently captured SELECT decisions.
+
+    This pure supplemental gate does not replace verify_result's source, runtime,
+    policy-download, occurrence, payload or action-observation checks. Exceptions
+    contain no resource identity, so attribution comes from the observer's case,
+    subject and canonical resource fields, never from the exception alone.
+    """
+    name = case["name"]
+    requests = case["rangerRequests"]
+    message = (case.get("error") or {}).get("message", "")
+    lines = {line.strip() for line in message.splitlines()}
+    stale = {"retained-revoked", "retained-mask-denied", "view-retained-mask-denied"}
+    if name == "view-dropped":
+        assert case["outcome"] == "denied" and "[TABLE_OR_VIEW_NOT_FOUND]" in message, "actual dropped view lookup"
+        assert not requests, "dropped lookup cannot claim permission evaluation"
+        return
+    if name in stale:
+        reason = "java.lang.SecurityException: Delta Ranger publication changed; reanalyze the query"
+        assert case["outcome"] == "denied" and lines & {reason, ": " + reason}, "missing Ranger requests without early publication denial"
+        assert not requests and case.get("requestObservation") == "no evaluation observed", "early publication denial cannot claim permission evaluation"
+        return
+
+    columns = set(CASE_SPECS[name][2])
+    table = "primitive" if name.startswith("primitive-") else "source"
+    permissions = []
+    for request in requests:
+        assert type(request["policyType"]) is int, "permission policy type"
+        assert type(request["allowed"]) is bool, "permission decision boolean"
+        assert request["case"] == name, "actual request case"
+        assert request["user"] == subject, "actual request subject"
+        resource = request["resource"]
+        assert resource["catalog"] == catalog, "canonical catalog"
+        assert resource["database"] == database, "canonical database"
+        assert resource["table"] == table, "view alias Ranger resource"
+        if request["policyType"] == 0:
+            assert request["accessType"] == "select", "actual SELECT access type"
+            assert resource.get("column") in columns, "unexpected permission column"
+            permissions.append(request)
+    assert permissions, "actual SELECT permission result absent"
+    if case["outcome"] == "allowed":
+        assert all(request["allowed"] for request in permissions), "allowed action contradicts denied SELECT"
+    else:
+        assert case["outcome"] == "denied", "permission action outcome"
+        reason = "java.lang.SecurityException: Delta Ranger access denied"
+        assert lines & {reason, ": " + reason}, "actual permission denial absent"
+        assert any(not request["allowed"] for request in permissions), "actual denied SELECT result absent"
+
+
 def verify_result(result: dict) -> None:
     """Reject absent observations, incorrect semantics and mismatched immutable provenance."""
     assert result.get("schemaVersion") == 1, "schemaVersion"
@@ -166,6 +215,7 @@ def verify_result(result: dict) -> None:
     assert len(cases) == len(CASE_SPECS) and {c["name"] for c in cases} == set(CASE_SPECS), "case inventory"
     for case in cases:
         api, rows, columns = CASE_SPECS[case["name"]]
+        verify_permission_outcome(case, result["catalog"], result["database"], result["subjects"][case["identityProfile"]])
         assert case["api"] == api and case["actionRoute"] == "native-pyspark", "native action route"
         if rows == "ranger-outcome":
             access=[r["allowed"] for r in case["rangerRequests"] if r["policyType"]==0 and r["resource"].get("column")=="*"]

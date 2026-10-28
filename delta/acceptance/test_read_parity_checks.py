@@ -76,11 +76,15 @@ class TestReadParityChecks(unittest.TestCase):
             case = {"name":name,"api":api,"actionRoute":"native-pyspark",
                     "listenerQueuesDrained":True,"actualActionQueries":1,"caseSequence":1,
                     "callbacks":[{"case":name,"caseSequence":1,"queryId":7,"function":api}],
-                    "error":None if rows is not None else {"class":"Py4JJavaError","message":"TABLE_OR_VIEW_NOT_FOUND" if name=="view-dropped" else "java.lang.SecurityException: Delta Ranger access denied"},
+                    "error":None if rows is not None else {"class":"Py4JJavaError","message":"[TABLE_OR_VIEW_NOT_FOUND]" if name=="view-dropped" else "java.lang.SecurityException: Delta Ranger access denied"},
                     "outcome":"denied" if rows is None else "allowed","expectedRows":rows,"observedRows":rows,
                     "expectedColumns":sorted(columns),"originalDemands":[{"catalog":"c","database":"db","table":"primitive" if name.startswith("primitive-") else "source","columns":value} for value in ([columns] if name!="aqe-join" else [["id","email"],["id"]])],
-                    "rangerRequests":[{"resource":{"catalog":"c","database":"db","table":"primitive" if name.startswith("primitive-") else "source","column":column},"allowed":rows is not None,"policyType":0} for column in columns],
+                    "rangerRequests":[{"resource":{"catalog":"c","database":"db","table":"primitive" if name.startswith("primitive-") else "source","column":column},"allowed":rows is not None,"policyType":0,"accessType":"select","case":name} for column in columns],
                     "policySnapshot":policy,"appliedPolicy":applied,"analyzedPlan":ref,"finalPlan":ref}
+            if name in {"retained-revoked","retained-mask-denied","view-retained-mask-denied"}:
+                case["rangerRequests"]=[]
+                case["error"]["message"]="java.lang.SecurityException: Delta Ranger publication changed; reanalyze the query"
+                case["requestObservation"]="no evaluation observed"
             if api == "toPandas":
                 case["arrow"] = {"enabled":name.endswith("-on"),"fallback":False,"observed":name.endswith("-on"),
                                  "pandas":"2.2.3","pyarrow":"17.0.0","dtypes":{"id":"int64","email":"object"},
@@ -117,6 +121,38 @@ class TestReadParityChecks(unittest.TestCase):
         verify_result(self.value)
         case["error"]["message"]="java.lang.SecurityException: unrelated denial"
         with self.assertRaises(AssertionError):verify_result(self.value)
+
+    def test_permission_outcome_mutations_are_rejected(self):
+        mutations=[
+            ("email-denied","allowed-only",lambda c:c["rangerRequests"][0].update(allowed=True)),
+            ("email-denied","filter-only",lambda c:c["rangerRequests"][0].update(policyType=2)),
+            ("email-denied","unrelated-security",lambda c:c["error"].update(message="java.lang.SecurityException: unrelated configuration failure")),
+            ("email-denied","embedded-error-text",lambda c:c["error"].update(message="java.lang.SecurityException: unrelated failure mentions java.lang.SecurityException: Delta Ranger access denied")),
+            ("email-denied","wrong-access",lambda c:c["rangerRequests"][0].update(accessType="update")),
+            ("email-denied","boolean-policy-type",lambda c:c["rangerRequests"][0].update(policyType=False)),
+            ("email-denied","nonboolean-decision",lambda c:c["rangerRequests"][0].update(allowed=0)),
+            ("email-denied","wrong-case",lambda c:c["rangerRequests"][0].update(case="other")),
+            ("email-denied","wrong-user",lambda c:c["rangerRequests"][0].update(user="other")),
+            ("email-denied","wrong-table",lambda c:c["rangerRequests"][0]["resource"].update(table="other")),
+            ("email-denied","wrong-column",lambda c:c["rangerRequests"][0]["resource"].update(column="id")),
+            ("id-count","contradictory-denial",lambda c:c["rangerRequests"][0].update(allowed=False)),
+            ("id-count","nonboolean-grant",lambda c:c["rangerRequests"][0].update(allowed=1)),
+            ("retained-revoked","wrong-stale-reason",lambda c:c["error"].update(message="java.lang.SecurityException: unrelated configuration failure")),
+            ("retained-revoked","fabricated-stale-evaluation",lambda c:c["rangerRequests"].append(copy.deepcopy(self.case("id-count")["rangerRequests"][0]))),
+            ("view-dropped","fabricated-lookup-evaluation",lambda c:c["rangerRequests"].append(copy.deepcopy(self.case("id-count")["rangerRequests"][0]))),
+            ("view-dropped","wrong-lookup-reason",lambda c:c["error"].update(message="java.lang.SecurityException: Delta Ranger access denied")),
+        ]
+        for name,label,mutate in mutations:
+            with self.subTest(case=name,mutation=label):
+                value=copy.deepcopy(self.value)
+                mutate(next(c for c in value["cases"] if c["name"]==name))
+                with self.assertRaises(AssertionError):verify_result(value)
+
+    def test_full_checker_invokes_permission_outcome_gate(self):
+        with patch("read_parity_checks.verify_permission_outcome",create=True,
+                   side_effect=AssertionError("permission gate invoked")):
+            with self.assertRaisesRegex(AssertionError,"permission gate invoked"):
+                verify_result(self.value)
 
     def test_delta_payload_json_types_are_exact(self):
         mutations=[("primitive-pandas-off",0,4,1),
