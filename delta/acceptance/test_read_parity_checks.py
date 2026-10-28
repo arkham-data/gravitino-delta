@@ -78,8 +78,8 @@ class TestReadParityChecks(unittest.TestCase):
                     "callbacks":[{"case":name,"caseSequence":1,"queryId":7,"function":api}],
                     "error":None if rows is not None else {"class":"Py4JJavaError","message":"TABLE_OR_VIEW_NOT_FOUND" if name=="view-dropped" else "java.lang.SecurityException: Delta Ranger access denied"},
                     "outcome":"denied" if rows is None else "allowed","expectedRows":rows,"observedRows":rows,
-                    "expectedColumns":sorted(columns),"originalDemands":[{"columns":columns}],
-                    "rangerRequests":[{"resource":{"catalog":"c","database":"db","table":"source","column":"*"},"allowed":True,"policyType":0}],
+                    "expectedColumns":sorted(columns),"originalDemands":[{"catalog":"c","database":"db","table":"primitive" if name.startswith("primitive-") else "source","columns":value} for value in ([columns] if name!="aqe-join" else [["id","email"],["id"]])],
+                    "rangerRequests":[{"resource":{"catalog":"c","database":"db","table":"primitive" if name.startswith("primitive-") else "source","column":column},"allowed":rows is not None,"policyType":0} for column in columns],
                     "policySnapshot":policy,"appliedPolicy":applied,"analyzedPlan":ref,"finalPlan":ref}
             if api == "toPandas":
                 case["arrow"] = {"enabled":name.endswith("-on"),"fallback":False,"observed":name.endswith("-on"),
@@ -143,6 +143,24 @@ class TestReadParityChecks(unittest.TestCase):
         self.assertEqual("/fixture/spark.properties",argv[argv.index("--properties-file")+1])
         self.assertTrue(argv[-2].endswith("/read_parity_pyspark.py"))
         self.assertEqual("/fixture/request.json",argv[-1])
+
+    def test_dropped_original_join_occurrence_is_rejected(self):
+        self.case("aqe-join")["originalDemands"]=self.case("aqe-join")["originalDemands"][:1]
+        with self.assertRaisesRegex(AssertionError,"occurrence"):verify_result(self.value)
+
+    def test_wrong_observed_permission_column_is_rejected(self):
+        self.case("id-count")["rangerRequests"][0]["resource"]["column"]="region"
+        with self.assertRaisesRegex(AssertionError,"permission column"):verify_result(self.value)
+
+    def test_isolated_fixture_resources_include_select(self):
+        from read_parity_live import fixture_resources
+        plan={"catalog":"catalog","database":"database"}
+        resources=fixture_resources(0,plan,["id"])
+        self.assertEqual(["id"],resources["column"]["values"])
+        self.assertEqual(["source","primitive"],resources["table"]["values"])
+        self.assertEqual(["catalog"],resources["catalog"]["values"])
+        self.assertNotIn("column",fixture_resources(2,plan,[]))
+        with self.assertRaises(AssertionError):fixture_resources(3,plan,[])
 
     def case(self, name):
         return next(case for case in self.value["cases"] if case["name"] == name)

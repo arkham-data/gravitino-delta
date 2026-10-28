@@ -32,7 +32,7 @@ from urllib.parse import quote
 
 from cdf_live import (ROOT, JAVA, Public, Ranger, Server, RecordingProxy, envfile, save, sha, read,
                       clean_environment, catalog_properties, submit, command, identity, RECEIPT,
-                      source_resources, verify_deployed, prepare_request)
+                      verify_deployed, prepare_request)
 from cdf_merge_live import await_file, registration
 from cdf_merge_live_checks import file_ref
 from cdf_read_live_package import verify_runtime
@@ -75,6 +75,14 @@ def seed(plan,runtime,output):
     result=read(output/"result.json")
     assert all(runtime["jarHashes"].get(origin["path"])==origin["sha256"] for origin in result["origins"].values())
     return result
+
+
+def fixture_resources(kind,plan,columns):
+    """Resources for explicitly fixture-authored SELECT/filter/mask policies only."""
+    assert kind in (0,1,2)
+    values={"catalog":[plan["catalog"]],"database":[plan["database"]],"table":["source","primitive"]}
+    if kind in (0,1):values["column"]=columns
+    return {key:{"values":value,"isExcludes":False,"isRecursive":False} for key,value in values.items()}
 
 
 def provision(runtime,inputs,output,association,handles):
@@ -138,8 +146,7 @@ def provision(runtime,inputs,output,association,handles):
         rest.call("PUT",base+"/permissions/users/"+quote(user,safe="")+"/grant/",{"roleNames":[role]})
     plan["roles"]=roles
     def policy(name,kind,columns,users):
-        resource=source_resources(kind,plan);resource["table"]["values"]=["source","primitive"]
-        if "column" in resource:resource["column"]["values"]=columns
+        resource=fixture_resources(kind,plan,columns)
         body={"service":plan["resourceService"],"name":name+"_"+nonce,"policyType":kind,"isEnabled":True,"isAuditEnabled":True,
               "policyLabels":["read-parity-fixture-authored"],"resources":resource}
         item={"users":users,"roles":[],"groups":[],"accesses":[{"type":"select","isAllowed":True}]}
@@ -197,7 +204,7 @@ def change_policy(plan,phase,output):
         if "mask" in plan["policyIds"]:
             policy=ranger.call("GET","/service/public/v2/api/policy/"+str(plan["policyIds"]["mask"]))
         else:
-            resources=source_resources(1,plan);resources["table"]["values"]=["source","primitive"];resources["column"]["values"]=["email"]
+            resources=fixture_resources(1,plan,["email"])
             policy={"service":plan["resourceService"],"name":"read_mask_"+plan["nonce"],"policyType":1,"isEnabled":True,"isAuditEnabled":True,
                     "policyLabels":["read-parity-fixture-authored"],"resources":resources,"dataMaskPolicyItems":[]}
         policy["dataMaskPolicyItems"]=[{"users":list(plan["subjects"].values()),"roles":[],"groups":[],

@@ -17,6 +17,7 @@
 
 """Independent checks for finite native ordinary-read qualification evidence."""
 import json
+from collections import Counter
 from pathlib import Path
 import zipfile
 
@@ -156,6 +157,17 @@ def verify_result(result: dict) -> None:
             assert case["originalDemands"], "missing original demand"
             demanded = set().union(*(set(d["columns"]) for d in case["originalDemands"]))
             assert demanded == set(columns), "original demand differs"
+            table="primitive" if case["name"].startswith("primitive-") else "source"
+            expected_occurrences=[set(columns)] if case["name"]!="aqe-join" else [{"id","email"},{"id"}]
+            expected_keys=Counter((result["catalog"],result["database"],table,tuple(sorted(value))) for value in expected_occurrences)
+            actual_keys=Counter((value["catalog"],value["database"],value["table"],tuple(sorted(value["columns"]))) for value in case["originalDemands"])
+            assert actual_keys==expected_keys, "original occurrence binding differs"
+            permissions=[record for record in case["rangerRequests"] if record["policyType"]==0]
+            actual_columns={record["resource"].get("column") for record in permissions}
+            assert actual_columns<=set(columns), "unexpected permission column"
+            if rows is not None:
+                assert actual_columns==set(columns), "missing permission column"
+
             if not case["rangerRequests"]:
                 assert case["name"] in {"retained-revoked","retained-mask-denied","view-retained-mask-denied"}, "missing Ranger requests"
                 assert "Delta Ranger publication changed; reanalyze the query" in case["error"]["message"], "missing Ranger requests without early publication denial"
@@ -165,7 +177,7 @@ def verify_result(result: dict) -> None:
                 assert request["user"]==result["subjects"][case["identityProfile"]], "actual request subject"
                 assert request["resource"]["catalog"] == result["catalog"], "canonical catalog"
                 assert request["resource"]["database"] == result["database"], "canonical database"
-                assert request["resource"]["table"] in ["source", "primitive"], "view alias Ranger resource"
+                assert request["resource"]["table"] == table, "view alias Ranger resource"
         assert read_ref(case["policySnapshot"])["policyVersion"] >= 0, "policy snapshot"
         applied = read_ref(case["appliedPolicy"])
         assert applied["policy"] == read_ref(case["policySnapshot"])["policyVersion"], "applied policy differs"
