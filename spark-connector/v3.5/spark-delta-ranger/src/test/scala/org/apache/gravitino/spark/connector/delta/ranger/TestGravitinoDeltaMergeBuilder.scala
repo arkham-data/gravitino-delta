@@ -316,6 +316,16 @@ class TestGravitinoDeltaMergeBuilder {
     new TestDeltaRangerInstalledMerge().withPolicies { (spark, _) =>
       GravitinoDeltaTable.forName(spark, "b.db.t")
       val settings = spark.sessionState.conf.getAllConfs
+      spark.table("a.db.t").createTempView("ordinary_builder_view")
+      reject(spark) {
+        GravitinoDeltaTable
+          .forName(spark, "b.db.t")
+          .alias("t")
+          .merge(spark.table("ordinary_builder_view").alias("s"), "t.id = s.id")
+          .whenMatchedDelete()
+          .execute()
+      }
+      reject(spark) { source(spark).createTempView("cdf_builder_view") }
       def target = GravitinoDeltaTable.forName(spark, "b.db.t").alias("t")
       Seq("t.missing = s.id", "id = id", "t.id = (SELECT 1L)", "rand() > 0.5").foreach {
         predicate =>

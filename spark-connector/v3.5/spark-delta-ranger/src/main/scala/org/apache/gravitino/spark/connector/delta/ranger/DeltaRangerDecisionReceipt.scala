@@ -277,6 +277,7 @@ private[ranger] object DeltaRangerDecisionReceipt {
     classOf[AggregateExpression],
     classOf[Count],
     classOf[SortOrder],
+    classOf[ToPrettyString],
     classOf[AttributeReference],
     classOf[Literal],
     classOf[Alias],
@@ -411,6 +412,9 @@ private[ranger] object DeltaRangerDecisionReceipt {
             )
           case _ => denied("source changed")
         }
+      case view: View if view.getClass == classOf[View] =>
+        DeltaRangerOrdinaryViews.validateDefinition(view)
+        Vector(new Identity(view.desc), view.desc, view.isTempView)
       case project: Project if project.getClass == classOf[Project] =>
         project.projectList.map(expression).toVector
       case filter: Filter if filter.getClass == classOf[Filter] => expression(filter.condition)

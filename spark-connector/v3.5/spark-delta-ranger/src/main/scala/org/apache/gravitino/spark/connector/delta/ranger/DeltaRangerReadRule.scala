@@ -30,6 +30,7 @@ import scala.collection.mutable
 
 import org.apache.kyuubi.plugin.spark.authz.{OperationType, PrivilegeObjectType, PrivilegesBuilder}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.expressions.Cast
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -55,6 +56,11 @@ private[ranger] class DeltaRangerReadRule(
 
   override def apply(plan: LogicalPlan): LogicalPlan = {
     DeltaRangerNativeOperation.requireNoRawSelection()
+    DeltaRangerOrdinaryViews.resolve(plan, spark).foreach { resolved =>
+      if (DeltaRangerOrdinaryViews.check(resolved, spark) || !readyForOrigin(resolved))
+        return resolved
+      return DeltaRangerOrdinaryRead.stage(resolved, spark, catalogs)
+    }
     if (DeltaRangerMergeWrite.analysis(plan, spark)) return plan
     if (DeltaRangerMergeNative.analysis(plan, spark)) return plan
     if (DeltaRangerMergeSource.analysis(plan, spark)) return plan
@@ -95,6 +101,7 @@ private[ranger] class DeltaRangerReadRule(
     if (DeltaRangerAppendHelper.analysis(plan, spark)) return plan
     if (!plan.resolved || nativeAdmission(plan, spark) != DeltaRangerNativeProvenance.UserPlan)
       return plan
+    if (!readyForOrigin(plan)) return plan
     // Our pre-CBO ordering also places this resolution rule before Delta's native V1 fallback.
     // Defer only native intermediate relations; the final check never admits an unmarked V2 plan.
     if (
@@ -155,7 +162,7 @@ private[ranger] class DeltaRangerReadRule(
     }
     if (configuration.getAllConfs != spark.sessionState.conf.getAllConfs)
       throw new SecurityException("Delta decision receipt rejected: configuration changed")
-    val rewritten = SQLConf.withExistingConf(configuration) {
+    val rewrittenWithAliases = SQLConf.withExistingConf(configuration) {
       obligations.foreach { obligation =>
         val scan = obligation.scan
         val columns = obligation.columns
@@ -168,13 +175,18 @@ private[ranger] class DeltaRangerReadRule(
       val masked = RuleEliminateMarker(RuleApplyDataMaskingStage1(spark)(stage0))
       // Full-output nonstreaming deduplication is DISTINCT. Lower only after capturing
       // all authored key demands; Spark's ReplaceDeduplicateWithAggregate drops root tags.
-      masked.transformUp { case deduplicate: Deduplicate =>
-        val distinct = Distinct(deduplicate.child)
-        if (distinct.output != deduplicate.output)
-          throw new SecurityException("Ordinary deduplication output changed")
-        distinct
+      masked.transformUp {
+        // Only the complete ordinary path unwraps local definitions, after retaining
+        // original demands. Typed append/CDF/MERGE consumers still see the original View.
+        case view: View => view.child
+        case deduplicate: Deduplicate =>
+          val distinct = Distinct(deduplicate.child)
+          if (distinct.output != deduplicate.output)
+            throw new SecurityException("Ordinary deduplication output changed")
+          distinct
       }
     }
+    val rewritten = DeltaRangerOrdinaryViews.executableRoot(rewrittenWithAliases)
     DeltaRangerDecisionReceipt.attach(
       rewritten,
       spark,
@@ -188,6 +200,14 @@ private[ranger] class DeltaRangerReadRule(
     DeltaRangerDecisionReceipt.retainOrdinarySortReceipt(rewritten)
     rewritten
   }
+
+  // ResolveTimeZone fills even timezone-independent Cast fields on the next analyzer
+  // iteration. Do not freeze a provisional cast before that native rule has finished.
+  private def readyForOrigin(plan: LogicalPlan): Boolean =
+    plan.resolved && !plan.exists(_.expressions.exists(_.exists {
+      case cast: Cast => cast.timeZoneId.isEmpty
+      case _          => false
+    }))
 }
 
 private[ranger] object DeltaRangerReadRule {
@@ -214,6 +234,7 @@ private[ranger] object DeltaRangerReadRule {
   }
 
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
+    if (DeltaRangerOrdinaryViews.check(plan, spark)) return
     if (DeltaRangerMergeWrite.analysis(plan, spark)) return
     if (DeltaRangerMergeNative.analysis(plan, spark)) return
     if (DeltaRangerMergeSource.analysis(plan, spark)) return
@@ -245,6 +266,7 @@ private[ranger] object DeltaRangerReadRule {
 
   def prepare(plan: LogicalPlan, spark: SparkSession): LogicalPlan = {
     DeltaRangerMergeWrite.forbidConstructionAction()
+    if (DeltaRangerOrdinaryViews.check(plan, spark)) return plan
     plan match {
       case result: DeltaRangerMergeResult.Carrier => result.owner; return result
       case writer: DeltaRangerMergeWrite.Carrier  => writer.owner; return writer

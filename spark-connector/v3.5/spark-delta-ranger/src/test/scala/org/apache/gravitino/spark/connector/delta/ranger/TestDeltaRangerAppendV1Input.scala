@@ -1047,8 +1047,8 @@ class TestDeltaRangerAppendV1Input {
   @Test
   def qualifiedInventoryRejectsExcludedFrontends(): Unit = {
     val cases = Seq(
-      "values" -> "missing receipt",
-      "insert-select" -> "missing receipt",
+      "values" -> "missing original pending source",
+      "insert-select" -> "missing original pending source",
       "raw-append" -> "unnamed target",
       "raw-select" -> "Raw Delta paths are not admitted",
       "streaming" -> "Unqualified Delta Ranger route: unresolved or streaming plan",
@@ -1065,7 +1065,7 @@ class TestDeltaRangerAppendV1Input {
 
   @Test
   def qualifiedWriteToIsExcluded(): Unit =
-    qualifiedFrontend("writeTo", "Delta decision receipt rejected: missing receipt")
+    qualifiedFrontend("writeTo", "Delta append input rejected: missing original pending source")
 
   private def qualifiedFrontend(route: String, expected: String): Unit =
     withCase("qualified-" + route) { c =>

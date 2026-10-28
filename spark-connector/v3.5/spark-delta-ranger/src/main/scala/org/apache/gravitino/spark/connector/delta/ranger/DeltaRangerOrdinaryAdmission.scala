@@ -24,6 +24,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression,
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, LongType}
 
 /** Ordinary reads have their own admission boundary; shared policy grammar stays finite. */
@@ -37,6 +38,8 @@ private[ranger] object DeltaRangerOrdinaryAdmission {
     if (!plan.resolved || plan.isStreaming) denied("unresolved or streaming plan")
     plan.foreach {
       case _: LogicalRelation =>
+      case view: View         => DeltaRangerOrdinaryViews.validateDefinition(view)
+      case project: Project if displayProjection(project) =>
       case node @ (_: Project | _: Filter | _: SubqueryAlias) =>
         node.expressions.foreach(DeltaRangerPlanAdmission.expression)
       case join: Join if join.joinType == Inner && (pending || join.condition.nonEmpty) =>
@@ -82,6 +85,22 @@ private[ranger] object DeltaRangerOrdinaryAdmission {
     }
   }
 
+  // Dataset.getRows formats each selected value once, preserving output order. This
+  // private display projection does not expand shared policy/CDF/MERGE expressions.
+  private def displayProjection(project: Project): Boolean =
+    project.projectList.nonEmpty && project.projectList.size == project.child.output.size &&
+      project.projectList.zip(project.child.output).forall {
+        case (alias: Alias, input) =>
+          alias.child match {
+            case pretty: ToPrettyString =>
+              pretty.child == input &&
+              pretty.timeZoneId
+                .forall(_ == SQLConf.get.sessionLocalTimeZone)
+            case _ => false
+          }
+        case _ => false
+      }
+
   private def literalLimit(expression: Expression): Unit = expression match {
     case Literal(value: Int, IntegerType) if value >= 0 =>
     case _                                              => denied("limit expression")
@@ -104,7 +123,13 @@ private[ranger] object DeltaRangerOrdinaryAdmission {
     val visible = originalIds ++ authored.collect { case node @ (_: Project | _: Aggregate) =>
       node.output.map(_.exprId)
     }.flatten
-    val represented = authored.transformUp {
+    // Native display returns strings only at execution. Demand extraction keeps its
+    // already-selected input values, before adding hidden original-demand carriers.
+    val extraction = authored.transformDown {
+      case project: Project if displayProjection(project) => project.child
+    }
+    val represented = extraction.transformUp {
+      case view: View => view.child
       case project: Project =>
         val existing = project.projectList.map(_.exprId).toSet
         val carried = project.child.output.filter(a => visible(a.exprId) && !existing(a.exprId))

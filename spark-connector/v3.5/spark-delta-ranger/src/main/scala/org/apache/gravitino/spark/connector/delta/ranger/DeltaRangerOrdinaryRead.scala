@@ -71,7 +71,8 @@ private[ranger] object DeltaRangerOrdinaryRead {
         if (
           actual != intent && actual != cleanedIntent &&
           (!remap || !sameAfterIdRemap(candidate))
-        ) denied("original intent changed")
+        )
+          denied("original intent changed")
       }
       unchanged()
       registrations.foreach(_.recheckPublication())
@@ -131,6 +132,18 @@ private[ranger] object DeltaRangerOrdinaryRead {
   def check(plan: LogicalPlan, spark: SparkSession): Unit = {
     admit(plan)
     plan.getTagValue(tag).getOrElse(denied("missing origin")).origin.validate(plan, spark)
+  }
+
+  // Native DeduplicateRelations can rename a stored local definition's right-hand
+  // occurrence. Resolution uses the same full bijection/context validation as stage;
+  // completed origins and command definitions continue to use strict check above.
+  def checkResolvedViewDefinition(plan: LogicalPlan, spark: SparkSession): Unit = {
+    admit(plan)
+    plan
+      .getTagValue(tag)
+      .getOrElse(denied("missing origin"))
+      .origin
+      .validate(plan, spark, remap = true)
   }
 
   def normalize(plan: LogicalPlan, spark: SparkSession): Option[LogicalPlan] = {

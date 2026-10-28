@@ -33,6 +33,45 @@ import org.apache.spark.sql.SparkSession
 
 class TestDeltaRangerReadActions {
   @Test
+  def nativePythonLocalViews(): Unit =
+    DeltaRangerReadParityFixture.withOperators { (spark, policy) =>
+      runPythonSession("views", spark, policy)
+    }
+
+  @Test
+  def showFormatsGovernedValues(): Unit =
+    DeltaRangerReadParityFixture.withOperators { (spark, policy) =>
+      runPythonSession("show", spark, policy)
+    }
+
+  @Test
+  def pandasPrimitiveNullsAndTimezone(): Unit = {
+    val policy = new TestDeltaRangerNativeSelect.Fixture
+    policy.filter = "region = 'east'"
+    policy.maskColumn = "email"
+    policy.mask = "'M'"
+    try
+      NativeSelectFixture.withSpark(
+        spark => runPythonSession("primitives", spark, policy),
+        Some(NativeSelectFixture.extension(policy)),
+        startupOptions = Map("spark.sql.session.timeZone" -> "UTC"),
+        beforeExtension = spark => {
+          val location = NativeSelectFixture.locations("a")
+          spark
+            .sql(
+              "SELECT 1L id, 'east' region, 'raw' email, 7L number, 'visible' text, true flag, 1.5D value, CAST(12.30 AS DECIMAL(10,2)) amount, DATE '2026-10-26' day, TIMESTAMP '2026-10-26 12:34:56.123456' stamp UNION ALL SELECT 2L, 'east', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL UNION ALL SELECT 3L, 'west', 'hidden', 9L, 'hidden', false, 9D, 99.00, DATE '2026-10-27', TIMESTAMP '2026-10-27 00:00:00'"
+            )
+            .write
+            .format("delta")
+            .mode("overwrite")
+            .option("overwriteSchema", "true")
+            .save(location)
+        }
+      )
+    finally policy.engine.close()
+  }
+
+  @Test
   def nativeArrowAggregateAndZeroLimitReauthorize(): Unit = runPython("operators")
 
   @Test
@@ -185,6 +224,10 @@ class TestDeltaRangerReadActions {
       .get("READ_ACTION_EVIDENCE")
       .map(Paths.get(_))
       .getOrElse(Files.createTempDirectory("delta-read-actions-"))
+    val artifactName =
+      if (mode == "views" || mode == "show")
+        mode + "-adaptive-" + spark.sessionState.conf.adaptiveExecutionEnabled
+      else mode
     val token = java.util.UUID.randomUUID().toString
     val gateway = new GatewayServer.GatewayServerBuilder()
       .entryPoint(providedProbe.getOrElse(new DeltaRangerReadActionProbe(spark, policy)))
@@ -207,20 +250,21 @@ class TestDeltaRangerReadActions {
         mode
       )
       command.environment().put("PYSPARK_PIN_THREAD", "false")
+      if (mode == "primitives") command.environment().put("TZ", "UTC")
       command.environment().put("READ_ACTION_TOKEN", token)
-      command.redirectOutput(evidence.resolve(mode + ".stdout").toFile)
-      command.redirectError(evidence.resolve(mode + ".stderr").toFile)
+      command.redirectOutput(evidence.resolve(artifactName + ".stdout").toFile)
+      command.redirectError(evidence.resolve(artifactName + ".stderr").toFile)
       Files.write(
-        evidence.resolve(mode + ".argv.json"),
+        evidence.resolve(artifactName + ".argv.json"),
         new ObjectMapper().writeValueAsBytes(command.command())
       )
       process = command.start()
       assertTrue(process.waitFor(180, TimeUnit.SECONDS), "Python probe timed out")
       Files.write(
-        evidence.resolve(mode + ".exit"),
+        evidence.resolve(artifactName + ".exit"),
         process.exitValue().toString.getBytes("UTF-8")
       )
-      assertEquals(0, process.exitValue(), "See " + evidence.resolve(mode + ".stderr"))
+      assertEquals(0, process.exitValue(), "See " + evidence.resolve(artifactName + ".stderr"))
     } finally {
       if (process != null && process.isAlive) {
         process.destroyForcibly()

@@ -39,6 +39,7 @@ class TestDeltaRangerCdfReadOwnership {
   def ordinaryOperatorsDoNotWidenCdfSources(): Unit = {
     val fixture = new DeltaRangerCdfReadFixture
     DeltaRangerCdfReadFixture.withGoverned(fixture.prepare) { spark =>
+      assertThrows(classOf[SecurityException], () => fixture.read(spark).createTempView("cdf_view"))
       Seq[org.apache.spark.sql.DataFrame => org.apache.spark.sql.DataFrame](
         _.selectExpr("count(id)"),
         _.selectExpr("1 AS one"),

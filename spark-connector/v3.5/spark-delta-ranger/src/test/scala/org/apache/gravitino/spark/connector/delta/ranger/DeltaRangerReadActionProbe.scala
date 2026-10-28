@@ -81,6 +81,7 @@ class DeltaRangerReadActionProbe(
   def setSelectAllowed(allowed: Boolean): Unit = {
     if (allowed) policy.denied.clear() else policy.denied.add("a:secret")
   }
+  def denyColumn(column: String): Unit = { policy.denied.add("a:" + column) }
   def setMask(expression: String): Unit = { policy.mask = expression }
   def setFilter(expression: String): Unit = { policy.filter = expression }
   def setRegistrationChanged(changed: Boolean): Unit = {
@@ -109,6 +110,8 @@ class DeltaRangerReadActionProbe(
   def observations(): String = new ObjectMapper().writeValueAsString(
     Map[String, Object](
       "spark" -> spark.version,
+      "javaTimezone" -> java.util.TimeZone.getDefault.getID,
+      "sessionTimezone" -> spark.sessionState.conf.sessionLocalTimeZone,
       "caller" -> UserGroupInformation.getCurrentUser.getShortUserName,
       "events" -> events.asScala.toVector.asJava
     ).asJava

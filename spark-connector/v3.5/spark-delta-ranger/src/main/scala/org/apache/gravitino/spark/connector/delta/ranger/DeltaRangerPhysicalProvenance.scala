@@ -319,6 +319,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
   def capture(plan: SparkPlan, spark: SparkSession): SparkPlan = {
     DeltaRangerMergeWrite.forbidConstructionAction()
     DeltaRangerNativeOperation.requireNoRawSelection()
+    if (DeltaRangerOrdinaryViews.checkExecution(plan, spark)) return plan
     plan match {
       case result: DeltaRangerMergeResult.Exec        => result.verify(); return result
       case writer: DeltaRangerMergeWrite.Exec         => writer.verify(); return writer
@@ -418,6 +419,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
 
   def finish(plan: SparkPlan, spark: SparkSession = SparkSession.active): SparkPlan = {
     DeltaRangerNativeOperation.requireNoRawSelection()
+    if (DeltaRangerOrdinaryViews.checkExecution(plan, spark)) return plan
     plan match {
       case result: DeltaRangerMergeResult.Exec        => result.verify(); return result
       case writer: DeltaRangerMergeWrite.Exec         => writer.verify(); return writer

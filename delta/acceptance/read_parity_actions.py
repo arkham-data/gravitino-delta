@@ -74,7 +74,104 @@ def denied(frame, fresh=False):
 mode = sys.argv[2]
 if mode.startswith("legacy"):
     expected = Counter([(1, "a-one-masked", None), (3, None, None)])
-if mode == "legacy":
+if mode == "views":
+    bridge.denyColumn("secret")
+    bridge.denyColumn("email")
+    bridge.denyColumn("region")
+    spark.table("a.db.t").createTempView("python_view")
+    assert spark.table("python_view").select("id").count() == 4
+    bridge.setSelectAllowed(True)
+    source = spark.table("a.db.t").select("id", "email").where("id = 1L")
+    assert [tuple(row) for row in source.collect()] == [(1, "M")]
+    source.createOrReplaceTempView("python_view")
+    retained = spark.table("python_view")
+    spark.table("a.db.t").select("id", "email").where("id = 2L").createOrReplaceTempView("python_view")
+    assert list(spark.table("python_view").toPandas().itertuples(index=False, name=None)) == [(2, "M")]
+    assert list(retained.toPandas().itertuples(index=False, name=None)) == [(1, "M")]
+    assert spark.catalog.dropTempView("python_view")
+    try:
+        spark.table("python_view")
+    except Exception as failure:
+        assert "TABLE_OR_VIEW_NOT_FOUND" in str(failure), str(failure)
+    else:
+        raise AssertionError("Dropped view resolved")
+    assert [tuple(row) for row in retained.collect()] == [(1, "M")]
+    bridge.denyColumn("email")
+    try:
+        retained.toPandas()
+    except Exception as failure:
+        assert "SecurityException" in str(failure), str(failure)
+    else:
+        raise AssertionError("Revoked retained view returned data")
+elif mode == "show":
+    import contextlib
+    import io
+    frame = spark.table("a.db.t").select("id", "email").orderBy("id")
+    settings = spark.conf.get("spark.sql.session.timeZone")
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        frame.show(2, truncate=False)
+    shown = output.getvalue()
+    assert "|1  |M    |" in shown and "|2  |M    |" in shown, shown
+    assert "only showing top 2 rows" in shown, shown
+    assert not any(value in shown for value in ("hidden", "secret", "s1", "s2")), shown
+    print(json.dumps(dict(action="show", output=shown)), flush=True)
+    bridge.denyColumn("secret")
+    for selected in (spark.table("a.db.t").select("secret"), spark.table("a.db.t").where("secret = 's1'").select("id")):
+        try:
+            selected.show(2, truncate=False)
+        except Exception as failure:
+            assert "SecurityException" in str(failure), str(failure)
+        else:
+            raise AssertionError("Forbidden show returned values")
+    assert spark.conf.get("spark.sql.session.timeZone") == settings
+    assert frame.toPandas()["email"].tolist() == ["M"] * 4
+elif mode == "primitives":
+    import datetime
+    import decimal
+    import time
+    assert spark.conf.get("spark.sql.session.timeZone") == "UTC"
+    def normalized(row, collected=False):
+        values = []
+        for value in row:
+            if value is None or pandas.isna(value):
+                values.append(None)
+            elif isinstance(value, (datetime.datetime, pandas.Timestamp)):
+                if collected:
+                    value = value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+                values.append(value.isoformat(timespec="microseconds"))
+            elif isinstance(value, datetime.date):
+                values.append(value.isoformat())
+            elif isinstance(value, decimal.Decimal):
+                values.append(str(value))
+            else:
+                values.append(value)
+        return values
+    expected_values = [[1, "M", 7, "visible", True, 1.5, "12.30", "2026-10-26", "2026-10-26T12:34:56.123456"], [2, "M", None, None, None, None, None, None, None]]
+    for enabled in ("false", "true"):
+        spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", enabled)
+        frame = spark.table("a.db.t").select("id", "email", "number", "text", "flag", "value", "amount", "day", "stamp").orderBy("id")
+        before = {key: spark.conf.get(key) for key in ("spark.sql.execution.arrow.pyspark.enabled", "spark.sql.execution.arrow.pyspark.fallback.enabled", "spark.sql.session.timeZone")}
+        collected = frame.collect()
+        print(json.dumps(dict(action="primitive-collect", host_timezone=time.tzname, session_timezone=spark.conf.get("spark.sql.session.timeZone"), raw_rows=[repr(row) for row in collected])), flush=True)
+        governed = [normalized(row, collected=True) for row in collected]
+        assert governed == expected_values, governed
+        for _ in range(2):
+            result = frame.toPandas()
+            actual = [normalized(row) for row in result.itertuples(index=False, name=None)]
+            assert actual == governed, actual
+            print(json.dumps(dict(action="primitive-toPandas", arrow=enabled, rows=actual, raw_rows=[repr(row) for row in result.itertuples(index=False, name=None)], dtypes={key: str(value) for key, value in result.dtypes.items()}, settings=before)), flush=True)
+        assert [normalized(row, collected=True) for row in frame.collect()] == governed
+        assert before == {key: spark.conf.get(key) for key in before}
+        bridge.denyColumn("amount")
+        try:
+            frame.toPandas()
+        except Exception as failure:
+            assert "SecurityException" in str(failure), str(failure)
+        else:
+            raise AssertionError("Denied primitive conversion returned values")
+        bridge.setSelectAllowed(True)
+elif mode == "legacy":
     df = planned()
     bridge.setSelectAllowed(False)
     denied(df, fresh=True)
