@@ -42,6 +42,17 @@ def artifact(group, name, version):
     assert len(matches) == 1, (group,name,version)
     return matches[0]
 
+def wrapper_dependencies():
+    """Retain the working wrapper driver dependency set, separate from server libraries."""
+    return [ROOT/'spark-connector/v3.5/spark/build/libs/gravitino-spark-3.5_2.12-2.0.0-SNAPSHOT.jar',
+                    ROOT/'spark-connector/v3.4/spark/build/libs/gravitino-spark-3.4_2.12-2.0.0-SNAPSHOT.jar',
+                    ROOT/'spark-connector/spark-common/build/libs/gravitino-spark-common-2.0.0-SNAPSHOT.jar',
+                    ROOT/'clients/client-java-runtime/build/libs/gravitino-client-java-runtime-2.0.0-SNAPSHOT.jar',
+            ROOT/'catalogs/catalog-common/build/libs/gravitino-catalog-common-2.0.0-SNAPSHOT.jar',
+            artifact('com.github.ben-manes.caffeine','caffeine','2.9.3'),
+            artifact('org.scala-lang.modules','scala-java8-compat_2.12','1.0.2')]
+
+
 def runtime(spark, out):
     stock = ROOT/f'.superpowers/runtime-20260914/spark-{spark}/lib/python3.11/site-packages/pyspark'
     home = out/'spark-home';home.mkdir()
@@ -138,10 +149,7 @@ def run(spark,route,inputs_path,out):
             for key,value in hadoop.items():
                 prop=ET.SubElement(core,'property');ET.SubElement(prop,'name').text=key;ET.SubElement(prop,'value').text=value
             ET.ElementTree(core).write(server.home/'conf/core-site.xml',encoding='utf-8',xml_declaration=True)
-            extras=[ROOT/'spark-connector/v3.5/spark/build/libs/gravitino-spark-3.5_2.12-2.0.0-SNAPSHOT.jar',
-                    ROOT/'spark-connector/v3.4/spark/build/libs/gravitino-spark-3.4_2.12-2.0.0-SNAPSHOT.jar',
-                    ROOT/'spark-connector/spark-common/build/libs/gravitino-spark-common-2.0.0-SNAPSHOT.jar',
-                    ROOT/'clients/client-java-runtime/build/libs/gravitino-client-java-runtime-2.0.0-SNAPSHOT.jar']
+            extras=wrapper_dependencies()
             supplemental=out/'supplemental';supplemental.mkdir()
             for jar in extras:
                 retained=supplemental/jar.name;shutil.copyfile(jar,retained);(home/'jars'/jar.name).symlink_to(retained)

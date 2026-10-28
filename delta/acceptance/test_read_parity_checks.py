@@ -247,6 +247,17 @@ class TestReadParityChecks(unittest.TestCase):
         clear_job_group(types.SimpleNamespace(sparkContext=python_context))
         jvm_context.clearJobGroup.assert_called_once_with()
 
+    def test_wrapper_dependency_set_contains_required_providers(self):
+        import zipfile
+        from iceberg_read_parity import wrapper_dependencies
+        members=set()
+        for jar in wrapper_dependencies():
+            with zipfile.ZipFile(jar) as archive:members.update(archive.namelist())
+        for member in ["com/github/benmanes/caffeine/cache/Caffeine.class",
+                       "scala/compat/java8/FutureConverters.class",
+                       "org/apache/gravitino/credential/CredentialConstants.class"]:
+            self.assertIn(member,members)
+
     def comparator_cases(self):
         cases=copy.deepcopy(self.value["cases"])
         for case in cases:
