@@ -32,7 +32,7 @@ from cdf_live import ROOT, JAVA, Ranger, Public, Server, RecordingProxy, envfile
 from cdf_merge_live import await_file
 from read_parity_live import start, finish, fixture_select_grants
 from cdf_merge_live_checks import file_ref
-from read_parity_checks import CASE_SPECS, verify_audit_slice, verify_policy_http, verify_jar_property, verify_comparator_cases
+from read_parity_checks import CASE_SPECS, verify_audit_slice, verify_policy_http, verify_jar_property, verify_comparator_cases, verify_comparator_policy
 from package_binding import capture_sources, canonical_digest
 
 CACHE=Path.home()/'.gradle/caches/modules-2/files-2.1'
@@ -255,7 +255,7 @@ def run(spark,route,inputs_path,out):
             if case['outcome']=='not-executed':continue
             sinks=[file_ref(path) for path in (out/case['identityProfile']/'audit').glob('*.log')]
             verify_audit_slice(case,sinks)
-            assert case['pluginPolicyVersion']==read(case['policySnapshot'])['policyVersion'],'Comparator policy application differs'
+            verify_comparator_policy(case)
         artifacts={str(path.resolve()):sha(path) for path in (home/'jars').iterdir()}
         for profile in subjects:
             observed=read(out/profile/'runtime.json')

@@ -118,6 +118,19 @@ class TestReadParityChecks(unittest.TestCase):
         case["error"]["message"]="java.lang.SecurityException: unrelated denial"
         with self.assertRaises(AssertionError):verify_result(self.value)
 
+    def test_comparator_applied_policy_uses_verified_reference(self):
+        from read_parity_checks import verify_comparator_policy
+        case=self.case("id-count")
+        case["pluginPolicyVersion"]=10
+        verify_comparator_policy(case)
+        case["pluginPolicyVersion"]=11
+        with self.assertRaisesRegex(AssertionError,"policy application"):
+            verify_comparator_policy(case)
+        case["pluginPolicyVersion"]=10
+        Path(case["policySnapshot"]["path"]).write_text('{"policyVersion":10,"changed":true}')
+        with self.assertRaisesRegex(AssertionError,"artifact changed"):
+            verify_comparator_policy(case)
+
     def test_audit_slice_must_match_original_sink(self):
         from read_parity_checks import verify_audit_slice
         from cdf_merge_live_checks import file_ref

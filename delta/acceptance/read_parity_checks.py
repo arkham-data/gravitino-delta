@@ -80,6 +80,11 @@ def read_ref(reference):
     return json.loads(Path(reference["path"]).read_text())
 
 
+def verify_comparator_policy(case):
+    """Bind the applied client version to the immutable policy snapshot."""
+    assert case["pluginPolicyVersion"] == read_ref(case["policySnapshot"])["policyVersion"], "Comparator policy application differs"
+
+
 def verify_jar_property(path,member,key,expected):
     """Check embedded version metadata in the actual class-provider JAR."""
     with zipfile.ZipFile(path) as archive:
