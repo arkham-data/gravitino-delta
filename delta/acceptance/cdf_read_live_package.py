@@ -132,7 +132,11 @@ def verify_runtime(runtime):
 
 
 def app_profile(app):
-    assert app in ['read','merge'], 'Unknown thin application'
+    assert app in ['read','merge','read-parity'], 'Unknown thin application'
+    if app=='read-parity':
+        return {'init':'delta/acceptance/read_parity_live.gradle','task':'readParityLiveThinJar',
+                'property':'readParityLiveAppOut','jar':'read-parity-live.jar',
+                'class':APP.replace('CdfRead','ReadParity')}
     stem='cdf-'+app+'-live'
     return {'init':'delta/acceptance/'+stem.replace('-','_')+'.gradle','task':'cdf'+app.title()+'LiveThinJar', 'property':'cdf'+app.title()+'LiveAppOut','jar':stem+'.jar','class':APP if app=='read' else APP.replace('CdfRead','CdfMerge')}
 
@@ -180,8 +184,8 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     shutil.copyfile(built_python,python_zip)
     artifacts={str(p):sha(p) for p in [changed,built_app,python_zip,output/'compiled-classes.json']}
     supplemental={}
-    if application=='merge':
-        build_inputs=output/'app/cdf-merge-build-inputs.json'
+    if application in ['merge','read-parity']:
+        build_inputs=output/('app/read-parity-build-inputs.json' if application=='read-parity' else 'app/cdf-merge-build-inputs.json')
         artifacts[str(build_inputs)]=sha(build_inputs)
         resolved=read(build_inputs)
         dependencies=output/'supplemental';dependencies.mkdir()
@@ -208,7 +212,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     oldstock=base['stockJarHashes'];oldjars={Path(p).name:Path(p) for p in base['jarHashes']}
     omitted=set(oldstock)-set(oldjars)
     sources={p.name:p for p in (stock/'jars').glob('*.jar') if p.name not in omitted}
-    selected={n:p for n,p in oldjars.items() if n not in oldstock and not n.startswith(('gravitino-spark-connector-delta-ranger-runtime','public-grants-live-append','cdf-read-live','cdf-merge-live','delta-spark_2.12-','delta-storage-'))}
+    selected={n:p for n,p in oldjars.items() if n not in oldstock and not n.startswith(('gravitino-spark-connector-delta-ranger-runtime','public-grants-live-append','cdf-read-live','cdf-merge-live','read-parity-live','delta-spark_2.12-','delta-storage-'))}
     selected[changed.name]=changed;selected[app.name]=app
     for artifact in ['delta-spark_2.12','delta-storage']:
         matches=list((Path.home()/'.gradle/caches/modules-2/files-2.1/io.delta'/artifact/delta).glob('*/*.jar'));assert len(matches)==1
@@ -242,7 +246,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base',required=True);parser.add_argument('--out',required=True)
-    parser.add_argument('--app',choices=['read','merge'],default='read');parser.add_argument('--spark',default='3.5.4');parser.add_argument('--delta',default='3.3.0')
+    parser.add_argument('--app',choices=['read','merge','read-parity'],default='read');parser.add_argument('--spark',default='3.5.4');parser.add_argument('--delta',default='3.3.0')
     args=parser.parse_args();os.umask(0o077)
     build_package(Path(args.base).resolve(),Path(args.out).resolve(),args.spark,args.delta,args.app)
 

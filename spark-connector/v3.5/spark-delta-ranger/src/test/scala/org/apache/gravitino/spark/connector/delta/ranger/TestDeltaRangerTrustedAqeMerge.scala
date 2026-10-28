@@ -83,17 +83,21 @@ class TestDeltaRangerTrustedAqeMerge {
               .mkString
             org.slf4j.LoggerFactory
               .getLogger(getClass)
-              .warn(
+              .info(
                 "TRUSTED_MERGE_CLASS " + kind.getName +
                   " " + kind.getProtectionDomain.getCodeSource.getLocation + " sha256=" + sha
               )
           }
           val executions = new ConcurrentLinkedQueue[QueryExecution]()
+          val observedJobs = java.util.concurrent.ConcurrentHashMap.newKeySet[Integer]()
+          val jobGroup = "phase-observation-" + java.util.UUID.randomUUID().toString
+          spark.sparkContext.setJobGroup(jobGroup, jobGroup)
           spark.sparkContext.addSparkListener(new SparkListener {
             override def onJobStart(event: SparkListenerJobStart): Unit = {
               Option(event.properties.getProperty(SQLExecution.EXECUTION_ID_KEY)).foreach { id =>
                 Option(SQLExecution.getQueryExecution(id.toLong)).foreach(executions.add)
               }
+              observedJobs.add(event.jobId)
             }
           })
           val before = version
@@ -124,6 +128,12 @@ class TestDeltaRangerTrustedAqeMerge {
             ),
             PartitionedMergeFixture.rows(spark)
           )
+          DeltaRangerTrustedAqeFixture.awaitSubmittedJobs(
+            spark.sparkContext.statusTracker.getJobIdsForGroup(jobGroup).toSet,
+            id => observedJobs.contains(id),
+            30000
+          )
+          spark.sparkContext.clearJobGroup()
           val phases = executions.asScala.toVector.distinct.flatMap { execution =>
             val plan = execution.executedPlan
             val native = DeltaRangerTrustedAqeFixture.nodes(plan).collect {
@@ -142,7 +152,7 @@ class TestDeltaRangerTrustedAqeMerge {
             assertTrue(nodes.exists(_.isInstanceOf[QueryStageExec]), phase + plan)
             org.slf4j.LoggerFactory
               .getLogger(getClass)
-              .warn("TRUSTED_MERGE_PHASE " + phase + "\n" + plan)
+              .info("TRUSTED_MERGE_PHASE " + phase + "\n" + plan)
           }
           val changes = spark
             .sql("SELECT id, secret, region, _change_type FROM table_changes('b.db.t', 1, 1)")
@@ -450,8 +460,8 @@ class TestDeltaRangerTrustedAqeMerge {
         val before = version
         val files = PartitionedMergeFixture.files()
         var checkpoint = 4L
-        // Spark's native cache setup clones its session. Existing action/recipe admission
-        // rejects that unsupported application cache before it can become a MERGE input.
+        // Ordinary origin admission rejects cache construction before it can become
+        // a reusable payload or a MERGE input.
         val failure = assertThrows(
           classOf[Exception],
           () => {
@@ -460,7 +470,9 @@ class TestDeltaRangerTrustedAqeMerge {
           }
         )
         assertTrue(
-          PartitionedMergeFixture.messages(failure).contains("session changed"),
+          PartitionedMergeFixture
+            .messages(failure)
+            .contains("ordinary cache construction is not qualified"),
           failure.toString
         )
         assertEquals(before, version); assertEquals(4L, checkpoint)

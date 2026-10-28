@@ -59,7 +59,7 @@ private[ranger] object DeltaRangerTrustedAqeFixture {
       NativeSelectFixture.withSpark(
         spark => {
           val log = org.slf4j.LoggerFactory.getLogger(getClass)
-          log.warn(
+          log.info(
             "TRUSTED_AQE_RUNTIME spark=" + spark.version + " java=" + System.getProperty(
               "java.version"
             ) +
@@ -72,7 +72,7 @@ private[ranger] object DeltaRangerTrustedAqeFixture {
             classOf[DeltaRangerColumnarRule]
           )
             .foreach(c =>
-              log.warn(
+              log.info(
                 "TRUSTED_AQE_ORIGIN " + c.getName + " " + c.getProtectionDomain.getCodeSource.getLocation
               )
             )
@@ -96,6 +96,14 @@ private[ranger] object DeltaRangerTrustedAqeFixture {
         }
       )
     finally { people.engine.close(); dimension.engine.close() }
+  }
+
+  def awaitSubmittedJobs(jobs: Set[Int], observed: Int => Boolean, timeoutMillis: Long): Unit = {
+    require(timeoutMillis >= 0, "Negative listener timeout")
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+    while (!jobs.forall(observed) && System.nanoTime() < deadline) Thread.sleep(5)
+    if (!jobs.forall(observed))
+      throw new IllegalStateException("Payload listener did not drain submitted jobs")
   }
 
   def nodes(plan: SparkPlan): Vector[SparkPlan] = {

@@ -360,8 +360,21 @@ def verify_adaptive_observation(observation):
         assert 'AdaptiveSparkPlanExec' in operators
         assert observation['materializedShuffle']+observation['materializedBroadcast']>0, 'adaptive forceApply-only witness'
     else:
-        assert observation['outcome'] in ['exchange-free','adaptive-payload']
-        if observation['outcome']=='exchange-free':assert observation['materializedShuffle']==observation['materializedBroadcast']==0
+        version=observation.get('diagnosticVersion',1)
+        assert version in [1,2], 'Unknown diagnostic version'
+        outcomes=['exchange-free','adaptive-payload'] + (['nonadaptive-exchange'] if version==2 else [])
+        assert observation['outcome'] in outcomes
+        if observation['outcome'] in ['exchange-free','nonadaptive-exchange']:
+            assert observation['materializedShuffle']==observation['materializedBroadcast']==0
+            if version==2:
+                assert 'AdaptiveSparkPlanExec' not in operators and observation['isFinalPlan'] is False
+                has_exchange=bool(set(operators)&{'ShuffleExchangeExec','BroadcastExchangeExec','ReusedExchangeExec'})
+                assert has_exchange==(observation['outcome']=='nonadaptive-exchange'), 'Nonadaptive exchange label differs'
+                if has_exchange:assert 'Exchange' in plan
+        elif version==2:
+            assert observation['isFinalPlan'] is True and 'isFinalPlan=true' in plan
+            assert 'AdaptiveSparkPlanExec' in operators
+            assert observation['materializedShuffle']+observation['materializedBroadcast']>0
     if observation['coalesced']:assert 'AQEShuffleRead coalesced' in plan, 'adaptive coalescing claim differs'
     if observation['local']:assert 'AQEShuffleRead local' in plan, 'adaptive local claim differs'
     if observation['reuse']:assert 'ReusedExchange' in plan, 'adaptive reuse claim differs'

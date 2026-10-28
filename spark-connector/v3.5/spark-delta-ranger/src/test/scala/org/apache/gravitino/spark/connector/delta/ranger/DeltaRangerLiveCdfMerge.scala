@@ -44,7 +44,7 @@ import org.apache.spark.sql.execution.adaptive.{
   ShuffleQueryStageExec,
   BroadcastQueryStageExec
 }
-import org.apache.spark.sql.execution.exchange.ReusedExchangeExec
+import org.apache.spark.sql.execution.exchange.{Exchange, ReusedExchangeExec}
 import org.apache.spark.sql.execution.joins.SortMergeJoinExec
 
 import scala.collection.JavaConverters._
@@ -399,7 +399,14 @@ final class DeltaRangerLiveCdfMerge(requestPath: String) extends AutoCloseable {
       "phase" -> phase,
       "isPayload" -> true,
       "rootClass" -> plan.getClass.getName,
-      "outcome" -> (if (adaptive.isEmpty) "exchange-free" else "adaptive-payload"),
+      "diagnosticVersion" -> 2,
+      "outcome" -> (if (adaptive.nonEmpty) "adaptive-payload"
+                    else if (
+                      all.exists(node =>
+                        node.isInstanceOf[Exchange] || node.isInstanceOf[ReusedExchangeExec]
+                      )
+                    ) "nonadaptive-exchange"
+                    else "exchange-free"),
       "isFinalPlan" -> (adaptive.nonEmpty && adaptive.forall(_.isFinalPlan)),
       "materializedShuffle" -> all.count {
         case stage: ShuffleQueryStageExec => stage.isMaterialized; case _ => false

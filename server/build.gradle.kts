@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import java.io.ByteArrayOutputStream
 plugins {
   `maven-publish`
   id("java")
@@ -71,22 +72,25 @@ dependencies {
 }
 
 fun getGitCommitId(): String {
-  var gitCommitId: String
-  try {
-    val gitFolder = rootDir.path + "/.git/"
-    val head = File(gitFolder + "HEAD").readText().split(":")
-    val isCommit = head.size == 1
-    gitCommitId = if (isCommit) {
-      head[0].trim()
-    } else {
-      val refHead = File(gitFolder + head[1].trim())
-      refHead.readText().trim()
+  // Git resolves linked worktrees, packed refs and detached HEADs. Source archives or
+  // environments without Git retain the historical empty commit-id fallback.
+  return try {
+    val output = ByteArrayOutputStream()
+    val result = exec {
+      workingDir(rootDir)
+      commandLine("git", "rev-parse", "HEAD")
+      standardOutput = output
+      errorOutput = ByteArrayOutputStream()
+      isIgnoreExitValue = true
+    }
+    check(result.exitValue == 0) { "git rev-parse HEAD failed" }
+    output.toString("UTF-8").trim().also {
+      check(it.matches(Regex("[0-9a-f]{40}|[0-9a-f]{64}"))) { "Invalid Git commit id" }
     }
   } catch (e: Exception) {
-    println("WARN: Unable to get Git commit id : ${e.message}")
-    gitCommitId = ""
+    logger.warn("Unable to get Git commit id; using empty build metadata", e)
+    ""
   }
-  return gitCommitId
 }
 
 tasks {

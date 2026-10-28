@@ -177,7 +177,7 @@ class TestDeltaRangerTrustedAqeVariants {
         )
         org.slf4j.LoggerFactory
           .getLogger(getClass)
-          .warn("TRUSTED_AQE_BLOOM_IN_FLIGHT\n" + frame.queryExecution.executedPlan)
+          .info("TRUSTED_AQE_BLOOM_IN_FLIGHT\n" + frame.queryExecution.executedPlan)
         spark.sparkContext.setJobGroup("bloom-stale-action", "bloom-stale-action")
         try {
           assertThrows(classOf[SecurityException], () => frame.collect())
@@ -236,11 +236,15 @@ class TestDeltaRangerTrustedAqeVariants {
         val policies = new TestDeltaRangerMergePolicies
         if (filtered) policies.publish(plugin, filter = Some("region = 'keep'"))
         val executions = new ConcurrentLinkedQueue[QueryExecution]()
+        val observedJobs = java.util.concurrent.ConcurrentHashMap.newKeySet[Integer]()
+        val jobGroup = "phase-observation-" + java.util.UUID.randomUUID().toString
+        spark.sparkContext.setJobGroup(jobGroup, jobGroup)
         spark.sparkContext.addSparkListener(new SparkListener {
           override def onJobStart(event: SparkListenerJobStart): Unit = {
             Option(event.properties.getProperty(SQLExecution.EXECUTION_ID_KEY)).foreach { id =>
               Option(SQLExecution.getQueryExecution(id.toLong)).foreach(executions.add)
             }
+            observedJobs.add(event.jobId)
           }
         })
         spark.sql(TestDeltaRangerMergeSource.sql).collect()
@@ -305,7 +309,13 @@ class TestDeltaRangerTrustedAqeVariants {
         assertEquals(if (filtered) "2" else "1", metrics("numTargetRowsCopied"))
         org.slf4j.LoggerFactory
           .getLogger(getClass)
-          .warn("TRUSTED_NATIVE_ACTIONS " + name + "\n" + actions.map(_.json).mkString("\n"))
+          .info("TRUSTED_NATIVE_ACTIONS " + name + "\n" + actions.map(_.json).mkString("\n"))
+        DeltaRangerTrustedAqeFixture.awaitSubmittedJobs(
+          spark.sparkContext.statusTracker.getJobIdsForGroup(jobGroup).toSet,
+          id => observedJobs.contains(id),
+          30000
+        )
+        spark.sparkContext.clearJobGroup()
         val phases = executions.asScala.toVector.distinct.flatMap { execution =>
           nodes(execution.executedPlan).collect {
             case phase: DeltaRangerMergeNative.Exec => "touched" -> phase.child
@@ -323,7 +333,7 @@ class TestDeltaRangerTrustedAqeVariants {
           )
           org.slf4j.LoggerFactory
             .getLogger(getClass)
-            .warn(
+            .info(
               "TRUSTED_NATIVE_VARIANT " + name +
                 " phase=" + phase + " bloom=" + bloom + " settings=" + options.toSeq.sorted
                   .mkString(",") + "\n" + plan
@@ -368,7 +378,7 @@ class TestDeltaRangerTrustedAqeVariants {
       assertTrue(plans.exists { case a: AdaptiveSparkPlanExec => a.isFinalPlan; case _ => false })
       org.slf4j.LoggerFactory
         .getLogger(getClass)
-        .warn(
+        .info(
           "TRUSTED_AQE_VARIANT " + name +
             " settings=" + options.toSeq.sorted
               .mkString(",") + "\n" + frame.queryExecution.executedPlan

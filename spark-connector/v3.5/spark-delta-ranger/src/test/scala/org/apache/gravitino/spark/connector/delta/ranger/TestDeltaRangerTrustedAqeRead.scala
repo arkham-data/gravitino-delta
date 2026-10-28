@@ -39,6 +39,35 @@ import org.junit.jupiter.api.Test
 
 class TestDeltaRangerTrustedAqeRead {
   @Test
+  def phaseObservationsWaitForSubmittedJobs(): Unit = {
+    val observed = java.util.concurrent.ConcurrentHashMap.newKeySet[Integer]()
+    observed.add(99)
+    val executor = Executors.newSingleThreadScheduledExecutor()
+    try {
+      executor.schedule(
+        new Runnable {
+          override def run(): Unit = { observed.add(7); observed.add(8) }
+        },
+        100,
+        TimeUnit.MILLISECONDS
+      )
+      DeltaRangerTrustedAqeFixture.awaitSubmittedJobs(Set(7, 8), id => observed.contains(id), 5000)
+      assertTrue(
+        observed.contains(7) && observed.contains(8),
+        "Returned before submitted jobs arrived"
+      )
+      val start = System.nanoTime()
+      assertThrows(
+        classOf[IllegalStateException],
+        () =>
+          DeltaRangerTrustedAqeFixture.awaitSubmittedJobs(Set(10), id => observed.contains(id), 30)
+      )
+      assertTrue(System.nanoTime() - start < TimeUnit.SECONDS.toNanos(2), "Unbounded drain")
+      DeltaRangerTrustedAqeFixture.awaitSubmittedJobs(Set.empty, _ => false, 0)
+    } finally executor.shutdownNow()
+  }
+
+  @Test
   def namedJoinUsesStockAqe(): Unit =
     DeltaRangerTrustedAqeFixture.withSpark(DeltaRangerTrustedAqeFixture.coalescing) {
       (spark, _, _) =>
@@ -67,7 +96,7 @@ class TestDeltaRangerTrustedAqeRead {
         assertTrue(coalescedPayloadReadCount > 0)
         org.slf4j.LoggerFactory
           .getLogger(getClass)
-          .warn(
+          .info(
             "TRUSTED_AQE_FINAL shuffles=" +
               materializedPayloadShuffleCount + " coalesced=" + coalescedPayloadReadCount + "\n" +
               frame.queryExecution.executedPlan.treeString

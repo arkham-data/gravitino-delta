@@ -108,6 +108,45 @@ class TestTrustedAqeChecks(unittest.TestCase):
         plan['partitioned']=False;plan['nonce']='fixture';plan['nativeInitial']['tables']['incomplete']={'id':'incomplete'}
         self.assertTrue(all('sql' in s for s in steps(plan,False,'sql')))
 
+    def test_nonadaptive_exchange_has_truthful_label(self):
+        from cdf_merge_live_checks import verify_adaptive_observation, file_ref
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plan.txt"
+            path.write_text("Exchange hashpartitioning(id, 2)")
+            value = {"step": "cdf", "phase": "cdf", "isPayload": True,
+                     "diagnosticVersion": 2, "outcome": "nonadaptive-exchange",
+                     "rootClass": "ShuffleExchangeExec", "operators": ["ShuffleExchangeExec"],
+                     "isFinalPlan": False, "materializedShuffle": 0, "materializedBroadcast": 0,
+                     "coalesced": False, "local": False, "skew": False, "reuse": False,
+                     "plan": file_ref(path)}
+            verify_adaptive_observation(value)
+            value["outcome"] = "exchange-free"
+            with self.assertRaises(AssertionError):
+                verify_adaptive_observation(value)
+            # Historical v1 used this label for either kind of nonadaptive plan.
+            value.pop("diagnosticVersion")
+            verify_adaptive_observation(value)
+            value["diagnosticVersion"] = 2
+            value["outcome"] = "nonadaptive-exchange"
+            value["operators"] = ["LocalTableScanExec"]
+            value["rootClass"] = "LocalTableScanExec"
+            with self.assertRaises(AssertionError):
+                verify_adaptive_observation(value)
+            value["outcome"] = "exchange-free"
+            path.write_text("LocalTableScan")
+            value["plan"] = file_ref(path)
+            verify_adaptive_observation(value)
+
+    def test_read_parity_package_profile(self):
+        from cdf_read_live_package import app_profile
+        profile = app_profile("read-parity")
+        self.assertEqual("readParityLiveThinJar", profile["task"])
+        self.assertEqual("readParityLiveAppOut", profile["property"])
+        self.assertEqual("delta/acceptance/read_parity_live.gradle", profile["init"])
+        self.assertTrue(profile["class"].endswith("/DeltaRangerLiveReadParity"))
+        self.assertEqual("cdfReadLiveThinJar", app_profile("read")["task"])
+        self.assertEqual("cdfMergeLiveThinJar", app_profile("merge")["task"])
+
     def test_legacy_nonadaptive_evidence_stays_valid(self):
         verify_result(partition_fixture(frontend="dataframe"))
 
