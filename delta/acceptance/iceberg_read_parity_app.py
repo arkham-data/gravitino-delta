@@ -174,7 +174,7 @@ class Bridge:
         query=self.queries[-1] if self.queries else (frame.queryExecution() if frame is not None else None)
         analyzed=out/(name+'-analyzed.txt');final=out/(name+'-final.txt')
         analyzed.write_text(str(query.analyzed()) if query is not None else 'Lookup rejected before analyzed plan')
-        final.write_text(str(query.executedPlan()) if allowed and query is not None else 'Rejected before final payload plan')
+        final.write_text(str(query.executedPlan()) if allowed and self.queries and query is not None else 'Rejected before final payload plan')
         value={'originalDemands':[], 'demandBasis':'actual rewritten-plan Ranger requests; no Delta original-occurrence claim',
                'rangerRequests':[dict(event,observationKind='audited-permission-event') for event in selected_events],
                'auditEvidence':ref(audit_path),'auditRange':{'firstEvent':self.audit_start,'endEvent':len(events),'firstByte':self.audit_start_bytes,'endByte':len(self.audit_bytes),'submittedTotal':int(audit_provider.getTotalCount()),'failedTotal':int(audit_provider.getTotalFailedCount()),'deferredTotal':int(audit_provider.getTotalDeferredCount())},
@@ -183,7 +183,7 @@ class Bridge:
                'callbacks':self.callbacks,'caseSequence':self.sequence,
                'listenerQueuesDrained':True,'actualActionQueries':len(self.queries),
                'analyzedPlan':ref(analyzed),'finalPlan':ref(final),'pluginPolicyVersion':int(plugin.getPoliciesVersion())}
-        if allowed and query is not None:value['planNodes']=plan_nodes(query.executedPlan())
+        if allowed and self.queries and query is not None:value['planNodes']=plan_nodes(query.executedPlan())
         save(name+'-observations.json',value)
         return str(out/(name+'-observations.json'))
 

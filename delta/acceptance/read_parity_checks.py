@@ -245,3 +245,61 @@ def verify_policy_http(events, raw_policy, service, version):
               and event.get("upstream_status")==200 and event.get("response_sha256")==raw_policy["sha256"]]
     assert matching, "actual completed client policy download absent"
     return matching[0]
+
+
+VIEW_PREREQUISITES={
+    "id-view-created":{"view-count","view-replaced","view-retained","view-dropped","view-after-drop"},
+    "explicit-view-created":{"view-explicit-denied"},
+}
+
+
+def verify_comparator_failure(name,error):
+    """Never relabel transport/setup failures as measured authorization differences."""
+    message=(error or {}).get("message","")
+    if name=="view-dropped":
+        assert "TABLE_OR_VIEW_NOT_FOUND" in message, "unexpected comparator lookup failure"
+    else:
+        assert "org.apache.kyuubi.plugin.spark.authz.AccessControlException" in message and "Permission denied:" in message, "unexpected comparator action failure"
+
+
+def verify_comparator_cases(cases,prerequisites):
+    """Keep observed comparator denials distinct from causally unexecuted terminal actions."""
+    assert len(cases)==len(CASE_SPECS) and {case["name"] for case in cases}==set(CASE_SPECS), "comparator inventory"
+    blocked={}
+    for reference in prerequisites:
+        value=read_ref(reference)
+        assert value["name"] in VIEW_PREREQUISITES, "unsupported prerequisite"
+        assert value["api"]==value["actualApi"]=="createTempView" and value["operationInvoked"] is True, "actual prerequisite operation absent"
+        assert value["actionRoute"]=="native-pyspark", "prerequisite route"
+        assert value["outcome"] in ["allowed","denied"], "prerequisite outcome"
+        if value["outcome"]=="denied":
+            message=value.get("error",{}).get("message","")
+            assert "org.apache.kyuubi.plugin.spark.authz.AccessControlException" in message and "Permission denied:" in message, "unsupported prerequisite failure"
+            assert value["rangerRequests"], "prerequisite actual audit absent"
+            assert file_ref(value["analyzedPlan"]["path"])==value["analyzedPlan"], "prerequisite plan absent"
+            for name in VIEW_PREREQUISITES[value["name"]]:
+                assert name not in blocked, "duplicate prerequisite"
+                blocked[name]=reference
+    for case in cases:
+        assert case["outcome"] in ["allowed","denied","not-executed"], "comparator outcome"
+        if case["outcome"]=="allowed":
+            assert case.get("error") is None and case["observedRows"] is not None, "allowed comparator action failure"
+        elif case["outcome"]=="denied":
+            verify_comparator_failure(case["name"],case.get("error"))
+            assert case["observedRows"] is None, "denied comparator payload"
+        if case["name"] in blocked:
+            assert case["outcome"]=="not-executed" and case.get("blockedBy")==blocked[case["name"]], "dependent case falsely executed"
+        if case["outcome"]=="not-executed":
+            assert case["name"] in blocked, "missing prerequisite"
+            assert case["qualification"]=="unqualified" and case["comparison"]=="measured-difference", "unexecuted qualification"
+            assert case["actionRoute"]=="not-executed" and case["actualApi"] is None, "fabricated action route"
+            assert case["observedRows"] is None and case["originalDemands"]==case["rangerRequests"]==case["callbacks"]==[], "fabricated action observation"
+            assert case["actualActionQueries"]==0 and not any(case.get(key) for key in ["analyzedPlan","finalPlan","execution","arrow"]), "fabricated action plan/transport"
+        if case["name"]=="retained-revoked":
+            baseline=next(value for value in cases if value["name"]=="id-retained-warmup")
+            if baseline["outcome"]!="allowed":
+                assert case.get("qualification")=="unqualified" and case["comparison"]=="measured-difference", "denied baseline cannot prove revoke-on-reuse"
+                observed=read_ref(case["baseline"])
+                assert observed["name"]==baseline["name"] and observed["outcome"]==baseline["outcome"], "retained baseline reference differs"
+    not_executed=sum(case["outcome"]=="not-executed" for case in cases)
+    return {"total":len(cases),"executed":len(cases)-not_executed,"notExecuted":not_executed}

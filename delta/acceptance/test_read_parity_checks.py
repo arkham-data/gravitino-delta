@@ -234,6 +234,65 @@ class TestReadParityChecks(unittest.TestCase):
         clear_job_group(types.SimpleNamespace(sparkContext=python_context))
         jvm_context.clearJobGroup.assert_called_once_with()
 
+    def test_comparator_unexecuted_cases_require_captured_cause(self):
+        from read_parity_checks import verify_comparator_cases, VIEW_PREREQUISITES
+        from cdf_merge_live_checks import file_ref
+        root=Path(self.directory.name);path=root/"prerequisite.json"
+        observation={"name":"id-view-created","api":"createTempView","actualApi":"createTempView","operationInvoked":True,
+                     "outcome":"denied","actionRoute":"native-pyspark","error":{"message":"org.apache.kyuubi.plugin.spark.authz.AccessControlException: Permission denied: region"},
+                     "rangerRequests":[{"resource":"db/source/region"}],"analyzedPlan":self.case("view-count")["analyzedPlan"]}
+        path.write_text(json.dumps(observation));reference=file_ref(path)
+        cases=copy.deepcopy(self.value["cases"])
+        for case in cases:
+            if case["outcome"]=="denied" and case["name"]!="view-dropped":case["error"]["message"]="org.apache.kyuubi.plugin.spark.authz.AccessControlException: Permission denied: id"
+            if case["name"] in VIEW_PREREQUISITES["id-view-created"]:
+                for key in ["analyzedPlan","finalPlan","execution"]:case.pop(key,None)
+                case.update(outcome="not-executed",qualification="unqualified",comparison="measured-difference",blockedBy=reference,
+                            observedRows=None,originalDemands=[],rangerRequests=[],callbacks=[],actualActionQueries=0,actualApi=None,actionRoute="not-executed")
+        counts=verify_comparator_cases(cases,[reference]);self.assertEqual(5,counts["notExecuted"])
+        with self.assertRaises(AssertionError):verify_comparator_cases(cases,[])
+        changed=copy.deepcopy(cases);next(case for case in changed if case["name"]=="view-count").update(outcome="allowed",observedRows=[[4]],actualApi="count",actionRoute="native-pyspark",actualActionQueries=1)
+        with self.assertRaises(AssertionError):verify_comparator_cases(changed,[reference])
+        observation["name"]="unsupported-prerequisite";path.write_text(json.dumps(observation));new_reference=file_ref(path)
+        for case in cases:
+            if "blockedBy" in case:case["blockedBy"]=new_reference
+        with self.assertRaises(AssertionError):verify_comparator_cases(cases,[new_reference])
+
+    def test_prerequisite_capture_does_not_hide_transport_failure(self):
+        import types
+        from read_parity_pyspark import record_view_prerequisite
+        root=Path(self.directory.name)
+        class Bridge:
+            def begin(self,name):pass
+            def finish(self,name,frame,allowed):
+                path=root/(name+"-observation.json");path.write_text('{}');return str(path)
+        frame=types.SimpleNamespace(_jdf=None)
+        def denied(frame):raise RuntimeError("org.apache.kyuubi.plugin.spark.authz.AccessControlException: Permission denied: region")
+        observed,reference=record_view_prerequisite(Bridge(),"id-view-created",lambda:frame,denied,root,"initial")
+        self.assertEqual("denied",observed["outcome"]);self.assertTrue(Path(reference["path"]).exists())
+        def transport(frame):raise RuntimeError("transport failed")
+        with self.assertRaisesRegex(RuntimeError,"transport failed"):
+            record_view_prerequisite(Bridge(),"transport",lambda:frame,transport,root,"initial")
+
+    def test_comparator_setup_error_is_not_a_denial(self):
+        from read_parity_checks import verify_comparator_failure
+        with self.assertRaisesRegex(AssertionError,"unexpected comparator action failure"):
+            verify_comparator_failure("id-count",{"message":"Py4JNetworkError: transport closed"})
+
+    def test_denied_warmup_cannot_prove_revocation(self):
+        from read_parity_checks import verify_comparator_cases
+        from cdf_merge_live_checks import file_ref
+        cases=copy.deepcopy(self.value["cases"])
+        for case in cases:
+            if case["outcome"]=="denied" and case["name"]!="view-dropped":case["error"]["message"]="org.apache.kyuubi.plugin.spark.authz.AccessControlException: Permission denied: id"
+        baseline=next(case for case in cases if case["name"]=="id-retained-warmup")
+        baseline.update(outcome="denied",observedRows=None,error={"message":"org.apache.kyuubi.plugin.spark.authz.AccessControlException: Permission denied: region"})
+        path=Path(self.directory.name)/"baseline.json";path.write_text(json.dumps(baseline))
+        case=next(case for case in cases if case["name"]=="retained-revoked")
+        with self.assertRaisesRegex(AssertionError,"cannot prove revoke-on-reuse"):verify_comparator_cases(cases,[])
+        case.update(qualification="unqualified",comparison="measured-difference",baseline=file_ref(path))
+        self.assertEqual(0,verify_comparator_cases(cases,[])["notExecuted"])
+
     def case(self, name):
         return next(case for case in self.value["cases"] if case["name"] == name)
 

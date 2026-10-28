@@ -63,6 +63,24 @@ def ref(path):
     return {"path":str(path), "sha256":hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
+def record_view_prerequisite(bridge,name,factory,operation,output,phase):
+    """Retain an actual comparator view operation; only Kyuubi authorization denial is bounded."""
+    bridge.begin(name);frame=None;failure=None;invoked=False
+    try:
+        frame=factory();invoked=True;operation(frame)
+    except Exception as error:failure=error
+    observation=json.loads(Path(str(bridge.finish(name,None if frame is None else frame._jdf,failure is None))).read_text())
+    value={"name":name,"api":"createTempView","actualApi":"createTempView" if invoked else None,
+           "operationInvoked":invoked,"actionRoute":"native-pyspark","policyPhase":phase,
+           "outcome":"allowed" if failure is None else "denied",
+           "error":None if failure is None else {"class":type(failure).__name__,"message":str(failure)},**observation}
+    path=output/(name+".json");save(path,value)
+    if failure is not None and (not invoked or "org.apache.kyuubi.plugin.spark.authz.AccessControlException" not in str(failure)
+                                or "Permission denied:" not in str(failure)):
+        raise failure
+    return value,ref(path)
+
+
 def native_seed(request):
     from pyspark.sql import SparkSession
     from harness import credentials
@@ -138,7 +156,7 @@ def execute_cases(spark,bridge,request):
     from read_parity_checks import CASE_SPECS, PRIMITIVE_COLUMNS
     table=request["catalog"]+"."+request["database"]+".source"
     output=Path(request["pythonOutput"]);output.mkdir()
-    cases=[]
+    cases=[];prerequisites=[]
     phase="initial"
 
     def transition(name):
@@ -146,7 +164,7 @@ def execute_cases(spark,bridge,request):
         bridge.phase(name)
         phase=name
 
-    def run(name, factory, action=None):
+    def run(name, factory, baseline=None):
         api, expected, columns=CASE_SPECS[name]
         if api=="toPandas":
             enabled=name.endswith("-on")
@@ -197,10 +215,35 @@ def execute_cases(spark,bridge,request):
         if display is not None:case["display"]=ref(output/(name+".stdout"))
         if request.get("comparator"):
             case["comparison"]="matches-delta-contract" if observed==expected and (error is not None)==(expected is None) else "measured-difference"
+        if request.get("comparator") and baseline is not None and baseline["outcome"]!="allowed":
+            case.update(qualification="unqualified",comparison="measured-difference",
+                        qualificationReason="Baseline action denied; this attempt does not prove revoke-on-reuse",
+                        baseline=ref(output/(baseline["name"]+".json")))
         cases.append(case);save(output/(name+".json"),case)
+        if request.get("comparator") and error is not None:
+            from read_parity_checks import verify_comparator_failure
+            verify_comparator_failure(name,error)
         if not request.get("comparator"):
             assert (error is not None)==(expected is None), (name,error)
             assert observed==expected,(name,observed,expected)
+        return case
+
+    def create_view(name,factory,view):
+        if not request.get("comparator"):
+            factory().createTempView(view);return None
+        value,reference=record_view_prerequisite(bridge,name,factory,lambda frame:frame.createTempView(view),output,phase)
+        prerequisites.append(reference)
+        return reference if value["outcome"]=="denied" else None
+
+    def unavailable(name,prerequisite):
+        api,expected,columns=CASE_SPECS[name]
+        case={"name":name,"api":api,"actualApi":None,"identityProfile":request["identityProfile"],
+              "outcome":"not-executed","qualification":"unqualified","comparison":"measured-difference",
+              "qualificationReason":"Prerequisite createTempView denied; requested action was not invoked",
+              "blockedBy":prerequisite,"actionRoute":"not-executed","expectedRows":expected,"observedRows":None,
+              "expectedColumns":sorted(columns),"originalDemands":[],"rangerRequests":[],"callbacks":[],
+              "actualActionQueries":0,"policyPhase":phase}
+        cases.append(case);save(output/(name+".json"),case)
 
     try:
         if request["identityProfile"]=="id-only":
@@ -211,22 +254,27 @@ def execute_cases(spark,bridge,request):
             run("authored-region-denied",lambda:spark.table(table).filter("region = 'east'").select("id"))
             run("email-denied",lambda:spark.table(table).select("email"))
             run("sort-email-denied",lambda:spark.table(table).select("id","email").orderBy("email").select("id"))
-            spark.table(table).select("id").createTempView("parity_view")
-            run("view-count",lambda:spark.table("parity_view"))
-            spark.table(table).select("id","email").createTempView("parity_explicit")
-            run("view-explicit-denied",lambda:spark.table("parity_explicit"))
-            spark.table(table).select("id").filter("id = 1").createOrReplaceTempView("parity_view")
-            retained=spark.table("parity_view")
-            spark.table(table).select("id").filter("id = 2").createOrReplaceTempView("parity_view")
-            run("view-replaced",lambda:spark.table("parity_view"))
-            run("view-retained",lambda:retained)
-            spark.catalog.dropTempView("parity_view")
-            run("view-dropped",lambda:spark.table("parity_view"))
-            run("view-after-drop",lambda:retained)
+            id_view=create_view("id-view-created",lambda:spark.table(table).select("id"),"parity_view")
+            if id_view:unavailable("view-count",id_view)
+            else:run("view-count",lambda:spark.table("parity_view"))
+            explicit_view=create_view("explicit-view-created",lambda:spark.table(table).select("id","email"),"parity_explicit")
+            if explicit_view:unavailable("view-explicit-denied",explicit_view)
+            else:run("view-explicit-denied",lambda:spark.table("parity_explicit"))
+            if id_view:
+                for name in ["view-replaced","view-retained","view-dropped","view-after-drop"]:unavailable(name,id_view)
+            else:
+                spark.table(table).select("id").filter("id = 1").createOrReplaceTempView("parity_view")
+                retained=spark.table("parity_view")
+                spark.table(table).select("id").filter("id = 2").createOrReplaceTempView("parity_view")
+                run("view-replaced",lambda:spark.table("parity_view"))
+                run("view-retained",lambda:retained)
+                spark.catalog.dropTempView("parity_view")
+                run("view-dropped",lambda:spark.table("parity_view"))
+                run("view-after-drop",lambda:retained)
             retained=spark.table(table).select("id").orderBy("id")
-            run("id-retained-warmup",lambda:retained)
+            baseline=run("id-retained-warmup",lambda:retained)
             transition("revoke-id")
-            run("retained-revoked",lambda:retained)
+            run("retained-revoked",lambda:retained,baseline=baseline)
         elif request["identityProfile"]=="denied-email":
             run("wildcard-email-denied",lambda:spark.table(table).select("email"))
             run("wildcard-deny-count",lambda:spark.table(table))
@@ -267,6 +315,7 @@ def execute_cases(spark,bridge,request):
             run("fresh-null-mask",ordered)
         else:raise AssertionError("Unknown identity profile")
         save(output/"cases.json",cases)
+        if request.get("comparator"):save(output/"prerequisites.json",prerequisites)
     finally:bridge.close()
 
 

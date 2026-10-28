@@ -32,7 +32,7 @@ from cdf_live import ROOT, JAVA, Ranger, Public, Server, RecordingProxy, envfile
 from cdf_merge_live import await_file
 from read_parity_live import start, finish, fixture_select_grants
 from cdf_merge_live_checks import file_ref
-from read_parity_checks import CASE_SPECS, verify_audit_slice, verify_policy_http, verify_jar_property
+from read_parity_checks import CASE_SPECS, verify_audit_slice, verify_policy_http, verify_jar_property, verify_comparator_cases
 from package_binding import capture_sources, canonical_digest
 
 CACHE=Path.home()/'.gradle/caches/modules-2/files-2.1'
@@ -197,7 +197,7 @@ def run(spark,route,inputs_path,out):
         if server is not None:
             for table in ['source','primitive']:
                 rest.call('GET','/api/metalakes/'+metalake+'/catalogs/iceberg/schemas/'+database+'/tables/'+table)
-        cases=[];exits={'native':file_ref(out/'seed/process/exit.json')}
+        cases=[];prerequisites=[];prerequisite_proofs=[];exits={'native':file_ref(out/'seed/process/exit.json')}
         for profile in ['id-only','table-wide','no-grant','denied-email']:
             (process,stdout,stderr),initial_ref=launch(profile,subjects[profile],profile)
             states={'initial':initial_ref}
@@ -227,19 +227,32 @@ def run(spark,route,inputs_path,out):
             events=[json.loads(line) for line in selected_http.splitlines()]
             save(out/profile/'plugin-http-range.json',{'firstByte':request['pluginHttpFirstByte'],'endByte':len(raw_http),'slice':file_ref(http_slice)})
             proxy.disarm()
+            profile_prerequisites=read(out/profile/'python-evidence/prerequisites.json')
+            for reference in profile_prerequisites:
+                observation=read(reference['path'])
+                snapshot_ref=states[observation['policyPhase']];wire=wire_policies[snapshot_ref['path']]
+                event=verify_policy_http(events,wire,service,observation['pluginPolicyVersion'])
+                verify_audit_slice(observation,[file_ref(path) for path in (out/profile/'audit').glob('*.log')])
+                prerequisites.append(reference)
+                proof_path=out/profile/(observation['name']+'-policy-proof.json')
+                save(proof_path,{'observation':reference,'snapshot':snapshot_ref,
+                    'download':{'event':event,'rawPolicy':wire,'processHttp':file_ref(http_slice)}})
+                prerequisite_proofs.append(file_ref(proof_path))
             for case in read(out/profile/'python-evidence/cases.json'):
                 case['policySnapshot']=states[case['policyPhase']]
-                wire=wire_policies[case['policySnapshot']['path']]
-                case['policyDownload']={'event':verify_policy_http(events,wire,service,case['pluginPolicyVersion']),
-                                        'rawPolicy':wire,'processHttp':file_ref(http_slice)}
+                if case['outcome']!='not-executed':
+                    wire=wire_policies[case['policySnapshot']['path']]
+                    case['policyDownload']={'event':verify_policy_http(events,wire,service,case['pluginPolicyVersion']),
+                                            'rawPolicy':wire,'processHttp':file_ref(http_slice)}
                 cases.append(case)
-        assert len(cases)==len(CASE_SPECS) and {case['name'] for case in cases}==set(CASE_SPECS),'Comparator case inventory differs'
+        counts=verify_comparator_cases(cases,prerequisites)
         aqe=next(case for case in cases if case['name']=='aqe-join')
         assert aqe['outcome']=='allowed' and aqe['observedRows']==aqe['expectedRows'],'Comparator AQE payload failed'
         assert any(node.get('isFinalPlan') is True for node in aqe['planNodes']),'Comparator final AQE absent'
         assert any(node['class'].endswith('ShuffleQueryStageExec') and node.get('materialized') is True for node in aqe['planNodes']),'Comparator materialized payload stage absent'
         assert aqe['rangerRequests'],'Positive-control actual SELECT audits absent'
         for case in cases:
+            if case['outcome']=='not-executed':continue
             sinks=[file_ref(path) for path in (out/case['identityProfile']/'audit').glob('*.log')]
             verify_audit_slice(case,sinks)
             assert case['pluginPolicyVersion']==read(case['policySnapshot'])['policyVersion'],'Comparator policy application differs'
@@ -263,7 +276,7 @@ def run(spark,route,inputs_path,out):
         assert capture_sources(ROOT)==sources,'Source changed during comparator'
         save(out/'result.json',{'schemaVersion':1,'spark':spark,'engine':'iceberg','iceberg':'1.11.0','kyuubi':'1.10.2',
             'catalogRoute':route,'runtimeManifest':file_ref(out/'runtime-manifest.json'),'rangerServerVersion':'2.8.0','rangerClientVersion':'2.8.0',
-            'deployedRanger':file_ref(association),'pluginHttp':file_ref(proxy.events),'auditSinks':{profile:[file_ref(path) for path in (out/profile/'audit').glob('*.log')] for profile in subjects},'cases':cases,'processExits':exits,'database':database,
+            'deployedRanger':file_ref(association),'pluginHttp':file_ref(proxy.events),'auditSinks':{profile:[file_ref(path) for path in (out/profile/'audit').glob('*.log')] for profile in subjects},'cases':cases,'prerequisites':prerequisites,'prerequisitePolicyProofs':prerequisite_proofs,'caseCounts':counts,'processExits':exits,'database':database,
             'differences':[case['name'] for case in cases if case['comparison']=='measured-difference'],
             'deploymentExclusions':['native seeding','metadata authorization disabled for wrapper','fixture-authored policies; no grant propagation claim']})
     finally:
