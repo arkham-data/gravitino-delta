@@ -24,7 +24,7 @@ import sys
 import time
 import hashlib
 import threading
-from read_parity_pyspark import execute_cases, normalize, ref
+from read_parity_pyspark import execute_cases, normalize, ref, clear_job_group
 from pyspark.sql import SparkSession
 
 request = json.loads(Path(sys.argv[1]).read_text())
@@ -170,7 +170,7 @@ class Bridge:
         events=self.drain();assert self.active==name;self.active=''
         selected_events=events[self.audit_start:]
         audit_path=out/(name+'-audit.raw.jsonl');audit_path.write_bytes(self.audit_bytes[self.audit_start_bytes:])
-        spark.sparkContext.clearJobGroup()
+        clear_job_group(spark)
         query=self.queries[-1] if self.queries else (frame.queryExecution() if frame is not None else None)
         analyzed=out/(name+'-analyzed.txt');final=out/(name+'-final.txt')
         analyzed.write_text(str(query.analyzed()) if query is not None else 'Lookup rejected before analyzed plan')

@@ -224,6 +224,16 @@ class TestReadParityChecks(unittest.TestCase):
         self.assertEqual(4,len(pandas_cases))
         self.assertTrue(all(case["error"] is None for case in pandas_cases),[(case["name"],case["error"]) for case in pandas_cases])
 
+    def test_job_group_cleanup_uses_stock_jvm_context(self):
+        import types
+        from unittest.mock import Mock
+        from read_parity_pyspark import clear_job_group
+        jvm_context=types.SimpleNamespace(clearJobGroup=Mock())
+        python_context=types.SimpleNamespace(_jsc=types.SimpleNamespace(sc=lambda:jvm_context))
+        # Deliberately no nonexistent Python clearJobGroup wrapper.
+        clear_job_group(types.SimpleNamespace(sparkContext=python_context))
+        jvm_context.clearJobGroup.assert_called_once_with()
+
     def case(self, name):
         return next(case for case in self.value["cases"] if case["name"] == name)
 

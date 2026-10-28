@@ -28,6 +28,11 @@ from pathlib import Path
 import sys
 
 
+def clear_job_group(spark):
+    """Use Spark's JVM diagnostic API, absent from the classic Python wrapper."""
+    spark.sparkContext._jsc.sc().clearJobGroup()
+
+
 def normalize(value):
     """Keep nulls, decimal scale and timestamp microseconds explicit in JSON evidence."""
     if value is None or type(value).__name__ in ["NaTType", "NAType"]:
