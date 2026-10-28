@@ -180,6 +180,50 @@ class TestReadParityChecks(unittest.TestCase):
         event["downstream"]="dropped"
         with self.assertRaises(AssertionError):verify_policy_http([event],file_ref(raw),"fixture",9)
 
+    def test_arrow_settings_precede_all_four_fresh_factories(self):
+        # Exercise the shared runner used by Delta and comparator. These small doubles
+        # test configuration lifetime only; real transport/value proof remains live.
+        import types
+        from unittest.mock import MagicMock
+        from read_parity_pyspark import execute_cases
+        root=Path(self.directory.name);settings={"spark.sql.session.timeZone":"UTC"}
+        class Conf:
+            def set(self,key,value):settings[key]=value
+            def get(self,key):return settings[key]
+        class Frame:
+            def __init__(self):self.captured=dict(settings);self._jdf=self
+            def select(self,*args):return self
+            def filter(self,*args):return self
+            def orderBy(self,*args):return self
+            def limit(self,*args):return self
+            def distinct(self,*args):return self
+            def alias(self,*args):return self
+            def join(self,*args):return self
+            def createTempView(self,*args):pass
+            def collect(self):return [[1,"M"]]
+            def count(self):return 4
+            def show(self,*args,**kwargs):print("|id|email|\n|1|M|\n|2|M|\nonly showing top 2 rows")
+            def toPandas(self):
+                assert self.captured==settings, "configuration changed after frame construction"
+                return types.SimpleNamespace(dtypes={"id":"int64","email":"object"},itertuples=lambda **kwargs:[(1,"M")])
+        class Bridge:
+            def begin(self,name):pass
+            def phase(self,name):pass
+            def finish(self,name,frame,allowed):
+                path=root/(name+"-observer.json");path.write_text('{}');return str(path)
+            def close(self):pass
+        spark=types.SimpleNamespace(conf=Conf(),table=lambda *args:Frame(),sql=lambda *args:Frame())
+        sql=types.ModuleType("pyspark.sql");sql.functions=MagicMock()
+        parent=types.ModuleType("pyspark");parent.sql=sql
+        modules={"pyspark":parent,"pyspark.sql":sql,"pandas":types.SimpleNamespace(__version__="2.2.3"),
+                 "pyarrow":types.SimpleNamespace(__version__="17.0.0",RecordBatch=type("RecordBatch",(),{}))}
+        output=root/"runner-evidence"
+        with patch.dict("sys.modules",modules),patch.dict("os.environ",{"TZ":"UTC"}):
+            execute_cases(spark,Bridge(),{"catalog":"catalog","database":"db","pythonOutput":str(output),"identityProfile":"table-wide","comparator":True})
+        cases=json.loads((output/"cases.json").read_text());pandas_cases=[case for case in cases if case["api"]=="toPandas"]
+        self.assertEqual(4,len(pandas_cases))
+        self.assertTrue(all(case["error"] is None for case in pandas_cases),[(case["name"],case["error"]) for case in pandas_cases])
+
     def case(self, name):
         return next(case for case in self.value["cases"] if case["name"] == name)
 

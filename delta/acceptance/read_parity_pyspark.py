@@ -143,15 +143,17 @@ def execute_cases(spark,bridge,request):
 
     def run(name, factory, action=None):
         api, expected, columns=CASE_SPECS[name]
+        if api=="toPandas":
+            enabled=name.endswith("-on")
+            # Origins capture settings at frame construction, before any action normalization.
+            spark.conf.set("spark.sql.execution.arrow.pyspark.enabled",str(enabled).lower())
+            spark.conf.set("spark.sql.execution.arrow.pyspark.fallback.enabled","false")
         bridge.begin(name)
         frame=None;observed=None;error=None;arrow=None;display=None
         try:
             frame=factory()
             if api=="count":observed=[[int(frame.count())]]
             elif api=="toPandas":
-                enabled=name.endswith("-on")
-                spark.conf.set("spark.sql.execution.arrow.pyspark.enabled",str(enabled).lower())
-                spark.conf.set("spark.sql.execution.arrow.pyspark.fallback.enabled","false")
                 calls=[]
                 def profile(pyframe,event,arg):
                     if event=="return" and pyframe.f_code.co_name=="_collect_as_arrow":
