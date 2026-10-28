@@ -61,7 +61,7 @@ gradle.projectsEvaluated {
       receipt.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(inputs)) + '\n'
     }
     jarTask.from(owner.sourceSets.test.output) {
-      ['DeltaRangerLiveReadParity', 'DeltaRangerDownloadedSecurity', 'DeltaRangerCallbackGateway', 'DeltaRangerStartupCache'].each { name ->
+      ['DeltaRangerLiveReadParity', 'DeltaRangerLiveMetadataBarrier', 'DeltaRangerLivePhasePin', 'DeltaRangerLiveAppend', 'DeltaRangerDownloadedSecurity', 'DeltaRangerCallbackGateway', 'DeltaRangerStartupCache'].each { name ->
         include("org/apache/gravitino/spark/connector/delta/ranger/${name}.class")
         include("org/apache/gravitino/spark/connector/delta/ranger/${name}\$*.class")
       }
