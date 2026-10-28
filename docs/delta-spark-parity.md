@@ -188,4 +188,6 @@ The exact AST/source proof preserves all prior checker semantics and all produce
 observer, compiled-class and runtime inputs. Focused tests passed 40/40 and full
 acceptance passed 104/104. The supplement index is
 `.superpowers/sdd/2026-10-26-delta-spark-read-parity/task-5/fix-round-1/supplemental-index.json`.
-Controller re-review remains pending.
+Scoped re-review and the final whole-milestone review passed with no findings.
+The approved ordinary-read milestone is closed; append AQE, catalog-demo and
+production deployment remain separate work.

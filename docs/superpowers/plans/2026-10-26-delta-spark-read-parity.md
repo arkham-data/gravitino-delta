@@ -233,7 +233,7 @@ in the file map; update `docs/delta-spark-parity.md`,
 - [x] Extend the Iceberg comparator with the same finite operations/fixtures and retained-frame/view/Arrow probes. Use Iceberg 1.11.0/Kyuubi 1.10.2 and actual Ranger 2.8.0 on both Spark patches, native and Gravitino wrapper (four cells). Capture actual permission requests where its rewritten-plan extraction differs; label measured differences rather than changing Delta's original-demand rules. Preserve unique database scopes because the Hive service mapping lacks a catalog dimension. Native seeding/metadata-auth-off results do not prove Gravitino grant propagation.
 - [x] Freeze the final code candidate, inventory disk/services and run heavy builds serially. Run all new installed suites on all four Spark/Delta pairs plus the affected read/CDF/MERGE/append regression selectors in the coverage map. Reuse prior cases only where final source/class/dependency inputs match; do not rerun closed unrelated live MERGE phases merely for cleaner logs. Inspect every selected XML count and original exit; skips/zero-test/setup failures are not passes.
 - [x] Build four immutable `read-parity` packages and run four live Delta cells plus the four comparator cells. Verify server/client Ranger 2.8.0, exact loaded providers, original Python/native/supervisor exits, policy versions/download/application, canonical registration, native API routes and exact values. Retain all runtime and supplemental JARs/source inventories, including original failed attempts. Produce `E/final-evidence-index.json` and a support table separating Delta assertions, measured comparator differences and deployment exclusions.
-- [ ] Update support/setup docs and this plan to actual observed results; independently check every final index reference/hash, source-to-class/package identity and documentation-only delta. Obtain fresh integrated SPEC/QUALITY review. Resolve findings with affected reruns only, commit the completed milestone, verify intended remote/branch and push under standing authorization. Report the actual push result and remaining append/catalog-demo work. Do not mark native Arrow or any other selected surface complete if its gate remains open.
+- [x] Update support/setup docs and this plan to actual observed results; independently check every final index reference/hash, source-to-class/package identity and documentation-only delta. Obtain fresh integrated SPEC/QUALITY review. Resolve findings with affected reruns only, commit the completed milestone, verify intended remote/branch and push under standing authorization. Report the actual push result and remaining append/catalog-demo work. Do not mark native Arrow or any other selected surface complete if its gate remains open.
 
 ## Commands and evidence discipline
 
@@ -327,9 +327,22 @@ outcomes are separated in the support documents. Original failures remain retain
 Fresh common-JAR metadata, source/class/package joins and final index hashes are
 verified; support/setup documentation is a subsequent documentation-only delta.
 
-Task 5 implementation/evidence is ready for controller-owned fresh SPEC/QUALITY
-and whole-branch review. The final combined review/closure/push checkbox remains
-open. The implementer did not push or claim milestone closure. See
-`.superpowers/sdd/2026-10-26-delta-spark-read-parity/task-5-report.md` and
-`final-evidence-index.json` in the same evidence root. Append AQE, catalog-demo and
-production deployment remain separate work.
+Task 5 and the final whole-milestone review passed SPEC/QUALITY with no remaining
+findings. The one Important checker finding was fixed in `b2ed60551`: grant-denial
+claims now require an attributed denied SELECT result and the exact authorization
+error. Scoped re-review passed. Focused tests passed 40/40, acceptance passed
+104/104, and the additive gate passed all 168 immutable original Delta records.
+The original runtime qualification and index remain unchanged; the supplemental
+index verifies 3,218 references and the exact unchanged runtime/source boundary.
+
+The final review covers `683ba8976..b268241bc`. This closing change updates only
+documentation; it does not relabel runtime receipts or claim new Spark execution.
+The branch `codex/delta-spark-feasibility` is published under the user's standing
+milestone-push authorization to `arkham-data/gravitino-delta`. Original evidence,
+reports and the working checkout are retained for continued local work.
+
+See `.superpowers/sdd/2026-10-26-delta-spark-read-parity/whole-branch-review.md`,
+`task-5-fix-round-1-review.md`, `task-5-report.md`, `final-evidence-index.json` and
+`task-5/fix-round-1/supplemental-index.json`. The controller ledger records the
+actual push outcome. Append AQE, catalog-demo and production deployment remain
+separate work; this closes only the approved finite ordinary-read milestone.
