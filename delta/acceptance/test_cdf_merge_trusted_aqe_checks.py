@@ -144,6 +144,7 @@ class TestTrustedAqeChecks(unittest.TestCase):
         self.assertEqual("readParityLiveAppOut", profile["property"])
         self.assertEqual("delta/acceptance/read_parity_live.gradle", profile["init"])
         self.assertTrue(profile["class"].endswith("/DeltaRangerLiveReadParity"))
+        self.assertEqual(profile["class"].replace("/", "."), profile["provider"])
         self.assertEqual("cdfReadLiveThinJar", app_profile("read")["task"])
         self.assertEqual("cdfMergeLiveThinJar", app_profile("merge")["task"])
 

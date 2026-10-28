@@ -136,7 +136,7 @@ def app_profile(app):
     if app=='read-parity':
         return {'init':'delta/acceptance/read_parity_live.gradle','task':'readParityLiveThinJar',
                 'property':'readParityLiveAppOut','jar':'read-parity-live.jar',
-                'class':APP.replace('CdfRead','ReadParity')}
+                'class':APP.replace('CdfRead','ReadParity'),'provider':APP.replace('CdfRead','ReadParity').replace('/','.')}
     stem='cdf-'+app+'-live'
     return {'init':'delta/acceptance/'+stem.replace('-','_')+'.gradle','task':'cdf'+app.title()+'LiveThinJar', 'property':'cdf'+app.title()+'LiveAppOut','jar':stem+'.jar','class':APP if app=='read' else APP.replace('CdfRead','CdfMerge')}
 
@@ -224,7 +224,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     ranger_classes=classes(changed)
     names=[n for n in base['providers'] if not n.startswith(('org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveAppend','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLivePhasePin','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdf'))]
     names+= [n[:-6].replace('/','.') for n in ranger_classes if n.startswith((prefix+'DeltaRangerCdf',prefix+'DeltaRangerMerge',prefix+'GravitinoDeltaTable',prefix+'GravitinoDeltaMergeBuilder')) and '$anon' not in n and '$$' not in n]
-    names+=[profile['class'].replace('/','.')+'$']
+    names+=[profile.get('provider',profile['class'].replace('/','.')+'$')]
     providers=provider_inventory(jars,sorted(set(names)))
     for name,path in selected.items():
         if path not in [changed,app] and name.startswith('gravitino-'):shared[str(path)]=sha(path)

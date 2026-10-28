@@ -122,18 +122,17 @@ fun writeProjectPropertiesFile() {
   }
 }
 
-tasks {
-  jar {
-    doFirst() {
-      writeProjectPropertiesFile()
-      if (!file(propertiesFile).exists()) {
-        throw GradleException("Failed to generate $propertiesFile.")
-      }
-    }
+val generateBuildInfo by tasks.registering {
+  inputs.property("gitCommitId", provider { getGitCommitId() })
+  inputs.property("projectVersion", project.version.toString())
+  outputs.file(propertiesFile)
+  doLast { writeProjectPropertiesFile() }
+}
 
-    from("src/main/resources") {
-      include("gravitino-build-info.properties").duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    }
+tasks {
+  processResources {
+    // Generate before copying resources, so the JAR cannot retain the previous commit's copy.
+    dependsOn(generateBuildInfo)
   }
 
   clean {

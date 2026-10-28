@@ -20,6 +20,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 JAVA = "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"
@@ -47,7 +48,7 @@ class TestBuildInfoGit(unittest.TestCase):
                 function = function[:function.index("\n}\n") + 3]
                 script += function.replace("getGitCommitId", module + "GitCommitId") + "\n"
             text = (ROOT / "common/build.gradle.kts").read_text()
-            writer = text[text.index('val propertiesFile ='):text.index('\ntasks {')]
+            writer = text[text.index('val propertiesFile ='):text.index('\nval generateBuildInfo') if '\nval generateBuildInfo' in text else text.index('\ntasks {')]
             script += writer.replace("getGitCommitId", "commonGitCommitId")
             script += """
 version = "probe"
@@ -58,6 +59,7 @@ tasks.register("metadataProbe") {
   }
 }
 """
+            script += text[text.index("\nval generateBuildInfo") if "\nval generateBuildInfo" in text else text.index("\ntasks {"):].replace("getGitCommitId", "commonGitCommitId")
             (root / "build.gradle.kts").write_text(script)
             self.run_command(["git", "add", "."], root)
             self.run_command(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
@@ -85,6 +87,19 @@ tasks.register("metadataProbe") {
                                           (checkout / artifact).read_text().splitlines()
                                           if "=" in line and not line.startswith("#"))
                         self.assertEqual(expected, properties["git.commit.id"], artifact)
+
+            # Exercise the actual task wiring twice without clean: jar.doFirst is too late
+            # to regenerate processResources output and duplicate exclusion keeps stale bytes.
+            command=[str(ROOT / "gradlew"), "-p", str(root), "jar", "--offline", "--no-daemon",
+                     "--max-workers=1", "-Dorg.gradle.jvmargs=-Xmx512m", "--console=plain"]
+            self.run_command(command,root)
+            self.run_command(["git","-c","user.name=Fixture","-c","user.email=fixture@example.invalid",
+                              "commit","--allow-empty","-m","second metadata revision"],root)
+            expected=self.run_command(["git","rev-parse","HEAD"],root)
+            self.run_command(command,root)
+            with zipfile.ZipFile(root/"build/libs/metadata-probe-probe.jar") as archive:
+                self.assertIn("git.commit.id="+expected,archive.read("gravitino-build-info.properties").decode())
+            self.assertIn("git.commit.id="+expected,(root/"build/resources/main/gravitino-build-info.properties").read_text())
 
 
 if __name__ == "__main__":
