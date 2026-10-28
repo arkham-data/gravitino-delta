@@ -51,6 +51,8 @@ import org.apache.spark.sql.catalyst.plans.logical.{
   Sort
 }
 import org.apache.spark.sql.execution.{LogicalRDD, QueryExecution, SQLExecution}
+import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, AQEShuffleReadExec}
+import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.SparkConf
@@ -199,9 +201,11 @@ class TestDeltaRangerNativeGovernedAppend {
     }
   )
 
-  private def violatedAppend(
+  private[ranger] def violatedAppend(
       frontend: String = "insertInto",
       nullDefault: Boolean = true,
+      adaptive: Boolean = false,
+      afterFailure: SparkSession => Unit = _ => (),
       executingOnly: Boolean = false,
       executingPhase: String = "analysis",
       check: (DeltaRangerAppendHelper, SparkSession) => Unit = (_, _) => ()
@@ -297,8 +301,8 @@ class TestDeltaRangerNativeGovernedAppend {
               frame.getClassName == classOf[TestDeltaRangerNativeGovernedAppend].getName &&
                 !frame.getMethodName.contains("$") && frame.getMethodName != "violatedAppend"
             )
-            .get
-            .getMethodName
+            .map(_.getMethodName)
+            .getOrElse("violatedAppend")
           val outcome = Map[String, Any](
             "schemaVersion" -> 1,
             "testMethod" -> method,
@@ -326,9 +330,11 @@ class TestDeltaRangerNativeGovernedAppend {
             trace.directory.resolve("outcome.json"),
             new ObjectMapper().writeValueAsBytes(outcome.asJava)
           )
+          afterFailure(spark)
         },
         Some(NativeSelectFixture.extension(target)),
         Map(
+          "spark.sql.adaptive.enabled" -> adaptive.toString,
           "spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false",
           SQLConf.USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES.key -> nullDefault.toString
         ),
@@ -681,9 +687,12 @@ class TestDeltaRangerNativeGovernedAppend {
     spark.sparkContext.statusTracker.getJobIdsForGroup(null).toSet
   }
 
-  private def successfulAppend(
+  private[ranger] def successfulAppend(
       frontend: String = "insertInto",
       nullDefault: Boolean = true,
+      adaptive: Boolean = false,
+      adaptiveBroadcast: Boolean = false,
+      restrictiveTargetReads: Boolean = false,
       scenario: String = "masked-filtered-separate-source",
       testMethod: String = "installedNamedAppendCommitsMaskedFilteredSource",
       seedCommits: Int = 0,
@@ -692,6 +701,7 @@ class TestDeltaRangerNativeGovernedAppend {
       checkpointJson: Boolean = true,
       checkpointStruct: Boolean = true,
       partitionedTarget: Boolean = false,
+      cdfTarget: Option[Boolean] = None,
       rewriteTarget: Boolean = false,
       checkpointTail: Boolean = false,
       priorCommitVersion: Option[Long] = None,
@@ -723,6 +733,10 @@ class TestDeltaRangerNativeGovernedAppend {
     } else None
     val failBeforeCommit = revokeAfterHelper || invalidateSourceRegistrationAfterHelper
     val target = new TestDeltaRangerNativeSelect.Fixture
+    if (restrictiveTargetReads) {
+      target.filter = "id < 0"
+      target.mask = "'TARGET'"
+    }
     val source = new TestDeltaRangerNativeSelect.Fixture
     source.customCatalog = "b"
     NativeSelectFixture.catalogPolicies = Map("a" -> target, "b" -> source)
@@ -844,12 +858,19 @@ class TestDeltaRangerNativeGovernedAppend {
           val helpers = new java.util.IdentityHashMap[DeltaRangerAppendHelper, java.lang.Boolean]()
           val commits = new java.util.IdentityHashMap[DeltaRangerAppendCommit, java.lang.Boolean]()
           val nativeQueries = new java.util.IdentityHashMap[QueryExecution, java.lang.Boolean]()
+          val payloadQueries = new java.util.IdentityHashMap[QueryExecution, java.lang.Boolean]()
           registration.onRead = _ => {
             val helper =
               field[ThreadLocal[DeltaRangerAppendHelper]](DeltaRangerAppendHelper, "active").get()
             helperObserved ||= helper != null
             if (helper != null) {
               helpers.put(helper, true)
+              Option(spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)).foreach {
+                id =>
+                  Option(SQLExecution.getQueryExecution(id.toLong)).foreach(qe =>
+                    payloadQueries.put(qe, true)
+                  )
+              }
               helperValidationCallbacks += 1
             }
             if (
@@ -1088,6 +1109,28 @@ class TestDeltaRangerNativeGovernedAppend {
                 )
               }
             } else write()
+            if (adaptive && sourceSql.contains(" JOIN ") && failureCheck.isEmpty) {
+              val payloads = payloadQueries.keySet().asScala.toVector.filter { qe =>
+                DeltaRangerNativeScans.evidence(qe.optimizedPlan).exists(_.owner.appendInput)
+              }
+              val plans = payloads
+                .flatMap(qe => DeltaRangerPhysicalProvenance.nodes(qe.executedPlan))
+                .collect { case plan: AdaptiveSparkPlanExec => plan }
+              plans.foreach(plan => trace.record("adaptive-write-payload", plan.treeString))
+              if (adaptiveBroadcast)
+                assertTrue(
+                  plans.exists(_.executedPlan.exists(_.isInstanceOf[BroadcastHashJoinExec])),
+                  "native payload must convert to broadcast"
+                )
+              assertTrue(
+                plans.exists(plan =>
+                  plan.isFinalPlan && plan.executedPlan.exists(
+                    _.isInstanceOf[AQEShuffleReadExec]
+                  )
+                ),
+                "actual native payload must finish an adaptive shuffle"
+              )
+            }
             if (repeatCompletedResult) {
               val qe = completed.poll(10, TimeUnit.SECONDS)
               assertNotNull(qe)
@@ -1552,10 +1595,16 @@ class TestDeltaRangerNativeGovernedAppend {
         },
         Some(NativeSelectFixture.extension(target)),
         Map(
+          "spark.sql.adaptive.enabled" -> adaptive.toString,
           "spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false",
           SQLConf.USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES.key -> nullDefault.toString
-        ) ++ rawConfig.map(path =>
-          "spark.gravitino.deltaRanger.rawCacheMaintenance.config" -> path.toString
+        ) ++ (if (adaptiveBroadcast)
+                Map("spark.sql.adaptive.autoBroadcastJoinThreshold" -> "10485760")
+              else
+                Map.empty[String, String]) ++ (if (adaptive)
+                                                 Map("spark.sql.autoBroadcastJoinThreshold" -> "-1")
+                                               else Map.empty[String, String]) ++ rawConfig.map(
+          path => "spark.gravitino.deltaRanger.rawCacheMaintenance.config" -> path.toString
         ) ++ checkpointPartSize.map(size =>
           "spark.databricks.delta.checkpoint.partSize" -> size.toString
         ),
@@ -1588,6 +1637,21 @@ class TestDeltaRangerNativeGovernedAppend {
                   "', 'delta.checkpoint.writeStatsAsStruct'='" + checkpointStruct + "')"
               )
               .collect()
+          }
+          cdfTarget.foreach { enabled =>
+            native
+              .sql(
+                "ALTER TABLE delta.`" + NativeSelectFixture.locations("a") +
+                  "` SET TBLPROPERTIES ('delta.enableChangeDataFeed'='true')"
+              )
+              .collect()
+            if (!enabled)
+              native
+                .sql(
+                  "ALTER TABLE delta.`" + NativeSelectFixture.locations("a") +
+                    "` SET TBLPROPERTIES ('delta.enableChangeDataFeed'='false')"
+                )
+                .collect()
           }
           val setupVersion =
             DeltaLog.forTable(native, NativeSelectFixture.locations("a")).update().version

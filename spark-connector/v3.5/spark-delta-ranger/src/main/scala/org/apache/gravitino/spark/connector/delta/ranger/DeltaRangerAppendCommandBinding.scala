@@ -19,6 +19,8 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
+import org.apache.spark.sql.execution.CachedData
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.SparkSession
@@ -69,6 +71,19 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
     validate(command, input.session)
     val options = command.writeOptions.iterator.toMap
     DeltaRangerNativeIdempotency.validateOptions(input.session, options)
+    if (input.session.sessionState.conf.adaptiveExecutionEnabled) {
+      val manager = input.session.sharedState.cacheManager
+      val field = manager.getClass.getDeclaredField("cachedData")
+      field.setAccessible(true)
+      val relation = target.table().toLogicalRelation
+      if (
+        field
+          .get(manager)
+          .asInstanceOf[Seq[CachedData]]
+          .exists(_.plan.exists(_.sameResult(relation)))
+      )
+        denied("adaptive native target cache maintenance is not qualified")
+    }
     val maintenance = DeltaRangerCdfCacheMaintenance.prepare(input, this, target)
     target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
       val owner = target.bindTransaction(input.session, transaction)

@@ -298,8 +298,6 @@ private[ranger] object DeltaRangerReadRule {
       .source(plan, spark)
       .orElse(DeltaRangerAppendCoordinator.source(plan, spark))
       .getOrElse(DeltaRangerNativeScans.consume(plan, spark))
-    if (spark.sessionState.conf.adaptiveExecutionEnabled && owner.appendInput)
-      throw new SecurityException("Unsupported user AQE for Delta Ranger collection")
     owner.run { operation =>
       val prepared = new PrepareDeltaScan(spark) {
         // Raw Delta statistics are not a governed aggregate input. Keep the stock

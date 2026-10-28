@@ -587,18 +587,38 @@ class TestDeltaRangerCommitPublication {
           }
           asApp {
             val data = spark.table("b.db.t")
-            val original = data.queryExecution.analyzed
-            val receipt =
-              DeltaRangerDecisionReceipt.consumeOwned(original, spark, optimized = false)
-            assertEquals(1, receipt.obligations.size)
-            val obligation = receipt.obligations.head
-            assertEquals(Set("id", "secret", "region"), obligation.columns)
-            assertEquals("'MASKED'", obligation.decisions.masks("secret").expression().get())
-            assertEquals(
-              if (emptySource) "false" else "region = 'keep'",
-              obligation.decisions.filter.get()
-            )
-            trace.source(receipt)
+            var sourceObserved = false
+            val preparingField = DeltaRangerAppendCoordinator.getClass.getDeclaredFields
+              .find(field => field.getName == "preparing" || field.getName.endsWith("$$preparing"))
+              .get
+            preparingField.setAccessible(true)
+            val preparing = preparingField
+              .get(DeltaRangerAppendCoordinator)
+              .asInstanceOf[ThreadLocal[DeltaRangerAppendCoordinator.Source]]
+            val originalSourceRead = sourceFixture.onRead
+            sourceFixture.onRead = index => {
+              originalSourceRead(index)
+              if (!sourceObserved && preparing.get() != null) {
+                val owner = preparing.get()
+                val inputField = owner.getClass.getDeclaredFields
+                  .find(field => field.getName == "input" || field.getName.endsWith("$$input"))
+                  .get
+                inputField.setAccessible(true)
+                val input =
+                  inputField.get(owner).asInstanceOf[DeltaRangerAppendV1Input.RetainedV1Input]
+                val receipt = input.receipt
+                sourceObserved = true
+                assertEquals(1, receipt.obligations.size)
+                val obligation = receipt.obligations.head
+                assertEquals(Set("id", "secret", "region"), obligation.columns)
+                assertEquals("'MASKED'", obligation.decisions.masks("secret").expression().get())
+                assertEquals(
+                  if (emptySource) "false" else "region = 'keep'",
+                  obligation.decisions.filter.get()
+                )
+                trace.source(receipt)
+              }
+            }
             clean()
             val started = System.nanoTime()
             var failure: Option[Throwable] = None
@@ -611,6 +631,8 @@ class TestDeltaRangerCommitPublication {
                 trace.failed("original-public-writer", error)
 
             }
+            sourceFixture.onRead = originalSourceRead
+            assertTrue(sourceObserved, "actual retained append receipt must be observed")
             trace.record(
               "writer-terminal",
               s"frontend=$frontend refresh=$refresh elapsedNanos=${System.nanoTime() - started} clientReturned=${failure.isEmpty} attempts=1"

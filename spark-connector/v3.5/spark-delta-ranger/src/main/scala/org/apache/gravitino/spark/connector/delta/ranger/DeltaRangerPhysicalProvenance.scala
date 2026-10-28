@@ -271,9 +271,9 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       private val raw: SparkPlan,
       private val native: DeltaRangerPhysicalPlanning.NativeWitness
   ) extends Ticket {
-    private var mergeBoundaryInstalled = false
-    def installMergeBoundary(): Boolean = synchronized {
-      if (mergeBoundaryInstalled) false else { mergeBoundaryInstalled = true; true }
+    private var commitBoundaryInstalled = false
+    def installCommitBoundary(): Boolean = synchronized {
+      if (commitBoundaryInstalled) false else { commitBoundaryInstalled = true; true }
     }
     private val expectedBinding = binding(expected)
     private val rawBinding = binding(raw)
@@ -391,6 +391,9 @@ private[ranger] object DeltaRangerPhysicalProvenance {
             Some(exact)
           }
         new TrustedReadTicket(prepared, spark, prepared.readRecipe(spark), witness)
+      } else if (spark.sessionState.conf.adaptiveExecutionEnabled) {
+        val recipe = prepared.appendRecipe(spark)
+        new CapturedTicket(prepared.owner.beginAppend(recipe), spark)
       } else {
         val logical = prepared.recoverExecutable(spark)
         val witness = userWitness(logical, spark)
@@ -445,7 +448,8 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case native: NativeTicket =>
         if (
           spark.sessionState.conf.adaptiveExecutionEnabled &&
-          DeltaRangerMergeCommit.current.nonEmpty && !native.installMergeBoundary()
+          (DeltaRangerMergeCommit.current.nonEmpty || DeltaRangerAppendCommit.current.nonEmpty) &&
+          !native.installCommitBoundary()
         ) return plan
         DeltaRangerRawMetadata.current.foreach { metadata =>
           return DeltaRangerRawMetadataGuardExec(plan)(new RawMetadataContext(native, metadata))

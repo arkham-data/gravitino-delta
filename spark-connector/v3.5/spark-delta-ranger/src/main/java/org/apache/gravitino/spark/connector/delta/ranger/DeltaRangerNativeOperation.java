@@ -95,6 +95,15 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
       return false;
     }
 
+    /**
+     * Whether this callback belongs to an accepted native append payload.
+     *
+     * @return true only during the captured append helper lifetime
+     */
+    default boolean usesCapturedAppend() {
+      return false;
+    }
+
     /** Freezes the exact cached getter return for later scan continuation comparisons. */
     default Predicate<LogicalRDD> freezeCache(LogicalRDD actual) {
       throw denied();
@@ -655,6 +664,7 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     } else if (scanOwner != null) {
       scanOwner.requireLive();
       if (!scanOwner.usesCapturedRead()
+          && !scanOwner.usesCapturedAppend()
           && !(scanOwner instanceof CdfReadOwner && ((CdfReadOwner) scanOwner).usesCapturedCdf())) {
         scanOwner.bindings().forEach(BoundRegistrationScan::requireLive);
       }

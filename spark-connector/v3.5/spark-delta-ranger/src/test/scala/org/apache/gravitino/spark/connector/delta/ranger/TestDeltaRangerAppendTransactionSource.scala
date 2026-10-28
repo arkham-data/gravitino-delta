@@ -771,6 +771,7 @@ class TestDeltaRangerAppendTransactionSource {
                 e.sourceEntries += 1
                 e.input =
                   field(owner, "input").asInstanceOf[DeltaRangerAppendV1Input.RetainedV1Input]
+                trace.source(e.input.receipt)
                 e.data = field(e.input, "data").asInstanceOf[Dataset[Row]]
                 e.before = Some(readState(OptimisticTransaction.getActive.get))
                 trace.record(
@@ -797,13 +798,6 @@ class TestDeltaRangerAppendTransactionSource {
           metadata.foreach(_.onRead = _ => observe())
           try {
             val data = spark.sql(sql)
-            trace.source(
-              DeltaRangerDecisionReceipt.consumeOwned(
-                data.queryExecution.analyzed,
-                spark,
-                optimized = false
-              )
-            )
             try {
               if (frontend == "insertInto") data.write.mode("append").insertInto("a.db.t")
               else data.write.mode("append").saveAsTable("a.db.t")

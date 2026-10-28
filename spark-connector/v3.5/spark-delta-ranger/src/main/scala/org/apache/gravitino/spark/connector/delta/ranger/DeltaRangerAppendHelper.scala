@@ -58,8 +58,8 @@ private[ranger] final class DeltaRangerAppendHelper(
 ) {
   import DeltaRangerAppendHelper._
   private val spark = input.session
-  private var closed = false
-  private var executing = false
+  @volatile private var closed = false
+  @volatile private var executing = false
   private var reconstructing = true
   // Validation callbacks cannot claim the first native tracker or scan while admission is open.
   private var admitting = false
@@ -152,6 +152,8 @@ private[ranger] final class DeltaRangerAppendHelper(
       .flatten
       .toVector
   }
+
+  def capturedExecutionLive: Boolean = !closed && executing && !reconstructing
 
   def requireLive(): Unit = {
     if (closed || !(active.get() eq this)) denied("expired helper owner")

@@ -43,6 +43,7 @@ private[ranger] final class DeltaRangerNativeScans private (
   val obligations = receipt.obligations
   private case class AcceptedRead(context: DeltaRangerExecutionContext.Context, live: () => Boolean)
   @volatile private var acceptedRead: Option[AcceptedRead] = None
+  @volatile private var acceptedAppend: Option[DeltaRangerExecutionContext.Context] = None
   private var frozen = false
   private val transitions = new java.util.IdentityHashMap[TahoeFileIndex, TahoeLogFileIndex]()
 
@@ -55,6 +56,16 @@ private[ranger] final class DeltaRangerNativeScans private (
     acceptedRead = Some(AcceptedRead(context, lifetime))
   }
 
+  def beginAppend(recipe: LogicalPlan): DeltaRangerExecutionContext.Context = {
+    val owner = source.getOrElse(throw new SecurityException("Read is not an append"))
+    val context = DeltaRangerExecutionContext.forAppend(owner, recipe)
+    acceptedAppend = Some(context)
+    context
+  }
+
+  private def executionContext: Option[DeltaRangerExecutionContext.Context] =
+    acceptedAppend.map { context => context.logicalPlan(); context }.orElse(readContext)
+
   def endRead(): Unit = { acceptedRead = None }
 
   // SQLExecution removes its exact binding on success and failure. Reading an expired
@@ -62,7 +73,7 @@ private[ranger] final class DeltaRangerNativeScans private (
   def readContext: Option[DeltaRangerExecutionContext.Context] =
     acceptedRead.filter(_.live()).map(_.context)
 
-  def acceptedReadIndex(index: FileIndex): Boolean = readContext.exists { context =>
+  def acceptedExecutionIndex(index: FileIndex): Boolean = executionContext.exists { context =>
     val belongs = context.logicalPlan().exists {
       case relation: LogicalRelation =>
         relation.relation match {
@@ -138,7 +149,11 @@ private[ranger] final class DeltaRangerNativeScans private (
     obligations.map(_.binding).asJava
   override def usesCapturedRead(): Boolean = readContext.nonEmpty
 
-  override def requireLive(): Unit = if (!usesCapturedRead()) {
+  override def usesCapturedAppend(): Boolean = acceptedAppend.exists { context =>
+    context.logicalPlan(); true
+  }
+
+  override def requireLive(): Unit = if (!usesCapturedRead() && !usesCapturedAppend()) {
     source.foreach(_.requireLive())
     obligations.foreach(_.binding.requireLive())
   }
@@ -291,6 +306,14 @@ private[ranger] object DeltaRangerNativeScans {
     }
     def recoverExecutable(session: SparkSession): LogicalPlan =
       executable.replay(session, plan => verify(plan, session))
+
+    def appendRecipe(session: SparkSession): LogicalPlan = {
+      if (!owner.appendInput || (session ne owner.session))
+        throw new SecurityException("Append recipe owner changed")
+      val recipe = recoverExecutable(session)
+      DeltaRangerNativeScans.attach(recipe, this)
+      recipe
+    }
 
     def readRecipe(session: SparkSession): LogicalPlan = synchronized {
       if (session ne owner.session) throw new SecurityException("Read recipe session changed")
@@ -461,7 +484,7 @@ private[ranger] object DeltaRangerPreparedIndex {
       // A changed stock filter may make Delta reselect files through native metadata queries.
       // Preserve that typed native scope, while its owner uses the accepted recipe instead of
       // mutable caller/engine checks after the outer action has accepted this read.
-      owner.acceptedReadIndex(index)
+      owner.acceptedExecutionIndex(index)
       preparation.requireEvidence(owner.session)
       owner.invoke(index, partitions, data) { operation =>
         operation.captureRetained(original, scan.scannedSnapshot, preparation)
@@ -553,7 +576,7 @@ private[ranger] object DeltaRangerLogIndex {
         !(index.deltaLog eq original.deltaLog)
       )
         throw new SecurityException("Native log continuation does not bind this index")
-      owner.acceptedReadIndex(index)
+      owner.acceptedExecutionIndex(index)
       preparation.requireEvidence(owner.session)
       val active = DeltaRangerNativeOperation.current()
       if (active != null) {

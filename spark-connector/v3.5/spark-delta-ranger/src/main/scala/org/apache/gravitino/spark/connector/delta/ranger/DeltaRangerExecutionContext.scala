@@ -41,6 +41,24 @@ private[ranger] object DeltaRangerExecutionContext {
     new ReadContext(recipe.clone())
   }
 
+  def forAppend(
+      source: DeltaRangerAppendCoordinator.Source,
+      recipe: LogicalPlan
+  ): Context = {
+    source.requireRecipe(recipe)
+    new AppendContext(source, recipe.clone())
+  }
+
+  private final class AppendContext(
+      source: DeltaRangerAppendCoordinator.Source,
+      recipe: LogicalPlan
+  ) extends Context {
+    override def logicalPlan(): LogicalPlan = {
+      source.requireCapturedExecution()
+      recipe.clone()
+    }
+  }
+
   sealed trait MergePhase
   case object Source extends MergePhase
   case object TouchedFiles extends MergePhase

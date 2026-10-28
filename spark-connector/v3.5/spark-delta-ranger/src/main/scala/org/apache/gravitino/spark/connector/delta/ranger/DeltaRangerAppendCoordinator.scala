@@ -105,7 +105,7 @@ private[ranger] object DeltaRangerAppendCoordinator {
       transaction: OptimisticTransaction
   ) {
     private[ranger] var helper: DeltaRangerAppendHelper = _
-    private var closed = false
+    @volatile private var closed = false
     private var entered = false
     private var claimed = false
     private var nativeOwner: DeltaRangerNativeScans = _
@@ -116,6 +116,19 @@ private[ranger] object DeltaRangerAppendCoordinator {
       input.requireLive()
       transactionOwner.requireTransaction(transaction)
       input.requireLive()
+    }
+
+    def requireRecipe(recipe: LogicalPlan): Unit = {
+      requireLive()
+      val prepared = DeltaRangerNativeScans.prepared(recipe)
+      requireExecutable(prepared.owner)
+      prepared.verifyExecutable(recipe, input.session)
+      input.association.validateRetainedOwned(input, transactionOwner, transaction)
+    }
+
+    def requireCapturedExecution(): Unit = {
+      if (closed || helper == null || !helper.capturedExecutionLive)
+        denied("expired captured append execution")
     }
 
     def requireGenerator(candidate: OptimisticTransaction): Unit = {
