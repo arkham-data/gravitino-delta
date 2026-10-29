@@ -32,7 +32,8 @@ import org.apache.spark.sql.{DataFrame, SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
-import org.apache.spark.sql.execution.CachedData
+import org.apache.spark.sql.execution.{CachedData, SparkPlan}
+import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
@@ -1295,6 +1296,21 @@ object DeltaRangerLiveAppend {
       if (!identities.containsKey(value)) identities.put(value, "object-" + identities.size())
       identities.get(value)
     }
+    private def rawProducer(plan: SparkPlan): Option[DeltaRangerRawProducer] = plan match {
+      case raw: DeltaRangerRawProducer => Some(raw)
+      case adaptive: AdaptiveSparkPlanExec =>
+        require(adaptive.getClass == classOf[AdaptiveSparkPlanExec])
+        val raw = adaptive.inputPlan match {
+          case value: DeltaRangerRawProducer => value
+          case _ => throw new IllegalStateException("Missing raw adaptive cache input")
+        }
+        Vector(adaptive.initialPlan, adaptive.executedPlan).foreach {
+          case value: DeltaRangerRawProducer => require(value.owner eq raw.owner)
+          case _ => throw new IllegalStateException("Missing raw adaptive cache root")
+        }
+        Some(raw)
+      case _ => None
+    }
     def record(
         spark: SparkSession,
         frames: Vector[DataFrame],
@@ -1332,9 +1348,9 @@ object DeltaRangerLiveAppend {
       val rows = entries.map { data =>
         val builder = data.cachedRepresentation.cacheBuilder
         val producer = builder.cachedPlan
-        val owner = producer match {
-          case raw: DeltaRangerRawProducer => Some(raw.owner); case _ => None
-        }
+        val raw = rawProducer(producer)
+        val owner = raw.map(_.owner)
+        owner.foreach(value => require(value.key eq data.plan))
         val dependency = owner.flatMap { value =>
           val field = value.getClass.getDeclaredField("dependency")
           field.setAccessible(true)
@@ -1351,17 +1367,18 @@ object DeltaRangerLiveAppend {
           "selectedHead" -> owner.map(v => id(v.observation.selectedHead)).orNull,
           "selectedVersion" -> owner.map(_.observation.installedVersion).getOrElse(-1L),
           "ownerDependency" -> dependency.map(id).orNull,
-          "dependencies" -> producer.collect { case scan: InMemoryTableScanExec =>
-            val b = scan.relation.cacheBuilder
-            val d = b.cachedPlan match {
-              case raw: DeltaRangerRawProducer => Some(raw.owner); case _ => None
+          "dependencies" -> raw
+            .getOrElse(producer)
+            .collect { case scan: InMemoryTableScanExec =>
+              val b = scan.relation.cacheBuilder
+              val d = rawProducer(b.cachedPlan).map(_.owner)
+              Map(
+                "builder" -> id(b),
+                "producer" -> id(b.cachedPlan),
+                "owner" -> d.map(id).orNull
+              ).asJava
             }
-            Map(
-              "builder" -> id(b),
-              "producer" -> id(b.cachedPlan),
-              "owner" -> d.map(id).orNull
-            ).asJava
-          }.asJava
+            .asJava
         ).asJava
       }
       writeJson(

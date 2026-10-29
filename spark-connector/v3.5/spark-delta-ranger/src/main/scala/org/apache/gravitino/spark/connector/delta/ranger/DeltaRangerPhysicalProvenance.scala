@@ -329,7 +329,11 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case helper: DeltaRangerCdfReadScans.HelperExec => helper.verify(); return helper
       case cdf: DeltaRangerCdfProducer => cdf.receipt.beforeTransitions(cdf); return cdf
       case raw: DeltaRangerRawProducer => raw.owner.beforeTransitions(raw.child); return raw
-      case _                           =>
+      case adaptive: AdaptiveSparkPlanExec
+          if adaptive.inputPlan.isInstanceOf[DeltaRangerRawProducer] =>
+        adaptive.inputPlan.asInstanceOf[DeltaRangerRawProducer].owner.acceptAdaptive(adaptive)
+        return adaptive
+      case _ =>
     }
     plan match {
       case command: DeltaRangerCdfPropertyExec =>
@@ -432,7 +436,11 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case helper: DeltaRangerCdfReadScans.HelperExec => helper.verify(); return helper
       case cdf: DeltaRangerCdfProducer => cdf.receipt.afterTransitions(cdf); return cdf
       case raw: DeltaRangerRawProducer => raw.owner.afterTransitions(raw.child); return raw
-      case _                           =>
+      case adaptive: AdaptiveSparkPlanExec
+          if adaptive.inputPlan.isInstanceOf[DeltaRangerRawProducer] =>
+        adaptive.inputPlan.asInstanceOf[DeltaRangerRawProducer].owner.acceptAdaptive(adaptive)
+        return adaptive
+      case _ =>
     }
     val tickets = nodes(plan).flatMap(_.getTagValue(tag).map(_.get)).distinct
     if (tickets.size != 1) denied("missing or mixed physical transition evidence")
@@ -452,6 +460,10 @@ private[ranger] object DeltaRangerPhysicalProvenance {
           !native.installCommitBoundary()
         ) return plan
         DeltaRangerRawMetadata.current.foreach { metadata =>
+          if (
+            spark.sessionState.conf.adaptiveExecutionEnabled && metadata.appendMaintenance &&
+            !native.installCommitBoundary()
+          ) return plan
           return DeltaRangerRawMetadataGuardExec(plan)(new RawMetadataContext(native, metadata))
         }
         DeltaRangerAppendCommit.current

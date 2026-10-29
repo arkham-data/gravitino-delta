@@ -648,212 +648,228 @@ class TestDeltaRangerRawMaintenanceIntegration {
     Seq(false, true).foreach(order => scenario(order, storage))
   }
 
-  private def scenario(dependentFirst: Boolean, storage: Map[String, String] = Map.empty): Unit = {
+  private[ranger] def scenario(
+      dependentFirst: Boolean,
+      storage: Map[String, String] = Map.empty,
+      adaptive: Boolean = false
+  ): Unit = {
     val source = new TestDeltaRangerNativeSelect.Fixture
     source.customCatalog = "b"
+    val trace = InstalledAppendBoundaryProbe.fresh(
+      s"raw-maintenance-aqe-$adaptive-project-first-$dependentFirst"
+    )
     try
-      withEnabled(Seq("a"), storage.map { case (key, value) => ("spark.hadoop." + key) -> value }) {
-        (spark, native, policy) =>
-          NativeSelectFixture.catalogPolicies = Map("a" -> policy, "b" -> source)
-          val s3Root =
-            if (storage.nonEmpty)
-              Some(
-                new Path(
-                  "s3a://" +
-                    System.getProperty(
-                      "gravitino.delta.test.s3.bucket"
-                    ) + "/raw-maintenance-integration/" + UUID.randomUUID()
-                )
+      withEnabled(
+        Seq("a"),
+        Map("spark.sql.adaptive.enabled" -> adaptive.toString) ++ storage.map { case (key, value) =>
+          ("spark.hadoop." + key) -> value
+        }
+      ) { (spark, native, policy) =>
+        trace.activate(spark)
+        NativeSelectFixture.catalogPolicies = Map("a" -> policy, "b" -> source)
+        val s3Root =
+          if (storage.nonEmpty)
+            Some(
+              new Path(
+                "s3a://" +
+                  System.getProperty(
+                    "gravitino.delta.test.s3.bucket"
+                  ) + "/raw-maintenance-integration/" + UUID.randomUUID()
               )
-            else None
-          try {
-            s3Root.foreach { root =>
-              active(native) {
-                Seq("a", "b").foreach { catalog =>
-                  val location = new Path(root, catalog).toString
-                  native
-                    .sql(
-                      s"SELECT 1L id, '$catalog-one' secret, 'keep' region UNION ALL " +
-                        s"SELECT 2L, '$catalog-two', 'drop' UNION ALL SELECT 3L, CAST(NULL AS STRING), 'keep'"
-                    )
-                    .write
-                    .format("delta")
-                    .save(location)
-                  NativeSelectFixture.locations += catalog -> location
-                }
-              }
-              Seq(
-                "org.apache.hadoop.fs.s3a.S3AFileSystem",
-                "com.amazonaws.auth.BasicAWSCredentials"
-              )
-                .foreach { name =>
-                  val cls = Class.forName(name, false, classOf[DeltaLog].getClassLoader)
-                  evidence(
-                    "loaded-origins.txt",
-                    name + "=" + cls.getProtectionDomain.getCodeSource.getLocation + "\n"
+            )
+          else None
+        try {
+          s3Root.foreach { root =>
+            active(native) {
+              Seq("a", "b").foreach { catalog =>
+                val location = new Path(root, catalog).toString
+                native
+                  .sql(
+                    s"SELECT 1L id, '$catalog-one' secret, 'keep' region UNION ALL " +
+                      s"SELECT 2L, '$catalog-two', 'drop' UNION ALL SELECT 3L, CAST(NULL AS STRING), 'keep'"
                   )
-                }
+                  .write
+                  .format("delta")
+                  .save(location)
+                NativeSelectFixture.locations += catalog -> location
+              }
             }
-            spark.conf.set(
-              "spark.databricks.delta.write.txnAppId",
-              "raw-maintenance-" + UUID.randomUUID()
+            Seq(
+              "org.apache.hadoop.fs.s3a.S3AFileSystem",
+              "com.amazonaws.auth.BasicAWSCredentials"
             )
-            spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
-            spark.conf.set("spark.databricks.delta.write.txnVersion.autoReset.enabled", "false")
-            val location = NativeSelectFixture.locations("a")
-            val (target, dependent, unrelated) = active(native) {
-              val target = native.read.format("delta").load(location)
-              val dependent = target.select("id", "region")
-              val ordered = if (dependentFirst) Seq(dependent, target) else Seq(target, dependent)
-              ordered.foreach(frame => { frame.cache(); assertEquals(3, frame.collect().length) })
-              val unrelated = native.range(4).toDF().cache()
-              assertEquals(4, unrelated.collect().length)
-              (target, dependent, unrelated)
-            }
-            val frames = Vector(target, dependent)
-            def entries =
-              frames.map(frame => spark.sharedState.cacheManager.lookupCachedData(frame).get)
-            val old = entries
-            val unrelatedEntry = spark.sharedState.cacheManager.lookupCachedData(unrelated).get
-            old.foreach(entry =>
-              assertTrue(entry.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded)
-            )
-            val originalIndex = rawIndex(target)
-            val oldHead = originalIndex.deltaLog.unsafeVolatileSnapshot
-            def append(): Unit = spark
-              .sql("SELECT id, secret, region FROM b.db.t")
-              .write
-              .mode("append")
-              .insertInto("a.db.t")
-            append()
-            assertNull(DeltaRangerNativeOperation.current())
-            assertTrue(DeltaRangerAppendCommit.current.isEmpty)
-            assertTrue(OptimisticTransaction.getActive.isEmpty)
-            val head = originalIndex.deltaLog.unsafeVolatileSnapshot
-            assertEquals(oldHead.version + 1, head.version)
-            val fresh = entries
-            def replaced(previous: Vector[org.apache.spark.sql.execution.CachedData]): Unit = {
-              entries.zip(previous).foreach { case (current, before) =>
-                assertSame(before.plan, current.plan)
-                assertNotSame(
-                  before.cachedRepresentation.cacheBuilder,
-                  current.cachedRepresentation.cacheBuilder
-                )
-                assertNotSame(
-                  before.cachedRepresentation.cacheBuilder.cachedPlan,
-                  current.cachedRepresentation.cacheBuilder.cachedPlan
-                )
-                assertFalse(before.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded)
-                assertFalse(current.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded)
-                assertTrue(
-                  current.cachedRepresentation.cacheBuilder.cachedPlan
-                    .isInstanceOf[DeltaRangerRawProducer]
+              .foreach { name =>
+                val cls = Class.forName(name, false, classOf[DeltaLog].getClassLoader)
+                evidence(
+                  "loaded-origins.txt",
+                  name + "=" + cls.getProtectionDomain.getCodeSource.getLocation + "\n"
                 )
               }
-              assertSame(
-                unrelatedEntry.cachedRepresentation.cacheBuilder,
-                spark.sharedState.cacheManager
-                  .lookupCachedData(unrelated)
-                  .get
-                  .cachedRepresentation
-                  .cacheBuilder
+          }
+          spark.conf.set(
+            "spark.databricks.delta.write.txnAppId",
+            "raw-maintenance-" + UUID.randomUUID()
+          )
+          spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+          spark.conf.set("spark.databricks.delta.write.txnVersion.autoReset.enabled", "false")
+          val location = NativeSelectFixture.locations("a")
+          val (target, dependent, unrelated) = active(native) {
+            val target = native.read.format("delta").load(location)
+            val dependent = target.select("id", "region")
+            val ordered = if (dependentFirst) Seq(dependent, target) else Seq(target, dependent)
+            ordered.foreach(frame => { frame.cache(); assertEquals(3, frame.collect().length) })
+            val unrelated = native.range(4).toDF().cache()
+            assertEquals(4, unrelated.collect().length)
+            (target, dependent, unrelated)
+          }
+          val frames = Vector(target, dependent)
+          def entries =
+            frames.map(frame => spark.sharedState.cacheManager.lookupCachedData(frame).get)
+          val old = entries
+          val unrelatedEntry = spark.sharedState.cacheManager.lookupCachedData(unrelated).get
+          old.foreach(entry =>
+            assertTrue(entry.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded)
+          )
+          val originalIndex = rawIndex(target)
+          val oldHead = originalIndex.deltaLog.unsafeVolatileSnapshot
+          def append(): Unit = spark
+            .sql("SELECT id, secret, region FROM b.db.t")
+            .write
+            .mode("append")
+            .insertInto("a.db.t")
+          append()
+          assertNull(DeltaRangerNativeOperation.current())
+          assertTrue(DeltaRangerAppendCommit.current.isEmpty)
+          assertTrue(OptimisticTransaction.getActive.isEmpty)
+          val head = originalIndex.deltaLog.unsafeVolatileSnapshot
+          assertEquals(oldHead.version + 1, head.version)
+          val fresh = entries
+          def replaced(previous: Vector[org.apache.spark.sql.execution.CachedData]): Unit = {
+            entries.zip(previous).foreach { case (current, before) =>
+              assertSame(before.plan, current.plan)
+              assertNotSame(
+                before.cachedRepresentation.cacheBuilder,
+                current.cachedRepresentation.cacheBuilder
               )
-              assertTrue(
-                unrelatedEntry.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded
+              assertNotSame(
+                before.cachedRepresentation.cacheBuilder.cachedPlan,
+                current.cachedRepresentation.cacheBuilder.cachedPlan
               )
+              assertFalse(before.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded)
+              assertFalse(current.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded)
+              TrustedAqeMaintenanceObservation
+                .producer(current.cachedRepresentation.cacheBuilder.cachedPlan)
             }
-            replaced(old)
-            val root = fresh.head.cachedRepresentation.cacheBuilder.cachedPlan
-              .asInstanceOf[DeltaRangerRawProducer]
-            val preMembershipCopy = root.clone().asInstanceOf[DeltaRangerRawProducer]
-            assertThrows(classOf[SecurityException], () => preMembershipCopy.executeCollect())
-            root.owner.requireInstalled(root)
-            def strip(
-                node: org.apache.spark.sql.execution.SparkPlan
-            ): org.apache.spark.sql.execution.SparkPlan = node match {
-              case stage: org.apache.spark.sql.execution.WholeStageCodegenExec => strip(stage.child)
-              case adapter: org.apache.spark.sql.execution.InputAdapter   => strip(adapter.child)
-              case rows: org.apache.spark.sql.execution.ColumnarToRowExec => strip(rows.child)
-              case other                                                  => other
-            }
-            val prefixOnly = root
-              .withNewChildren(Seq(strip(root.child)))
-              .asInstanceOf[DeltaRangerRawProducer]
+            assertSame(
+              unrelatedEntry.cachedRepresentation.cacheBuilder,
+              spark.sharedState.cacheManager
+                .lookupCachedData(unrelated)
+                .get
+                .cachedRepresentation
+                .cacheBuilder
+            )
             assertTrue(
-              assertThrows(classOf[SecurityException], () => prefixOnly.executeCollect()).getMessage
-                .contains("incomplete raw physical tail")
+              unrelatedEntry.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded
             )
-            val changedIds = root.child.transformDown {
-              case scan: org.apache.spark.sql.execution.FileSourceScanExec =>
-                scan.copy(output =
-                  scan.output.map(
-                    _.withExprId(
-                      org.apache.spark.sql.catalyst.expressions.NamedExpression.newExprId
-                    )
+          }
+          replaced(old)
+          val root = fresh.head.cachedRepresentation.cacheBuilder.cachedPlan
+            .asInstanceOf[DeltaRangerRawProducer]
+          val preMembershipCopy = root.clone().asInstanceOf[DeltaRangerRawProducer]
+          assertThrows(classOf[SecurityException], () => preMembershipCopy.executeCollect())
+          root.owner.requireInstalled(root)
+          def strip(
+              node: org.apache.spark.sql.execution.SparkPlan
+          ): org.apache.spark.sql.execution.SparkPlan = node match {
+            case stage: org.apache.spark.sql.execution.WholeStageCodegenExec => strip(stage.child)
+            case adapter: org.apache.spark.sql.execution.InputAdapter        => strip(adapter.child)
+            case rows: org.apache.spark.sql.execution.ColumnarToRowExec      => strip(rows.child)
+            case other                                                       => other
+          }
+          val prefixOnly = root
+            .withNewChildren(Seq(strip(root.child)))
+            .asInstanceOf[DeltaRangerRawProducer]
+          assertTrue(
+            assertThrows(classOf[SecurityException], () => prefixOnly.executeCollect()).getMessage
+              .contains("incomplete raw physical tail")
+          )
+          val changedIds = root.child.transformDown {
+            case scan: org.apache.spark.sql.execution.FileSourceScanExec =>
+              scan.copy(output =
+                scan.output.map(
+                  _.withExprId(
+                    org.apache.spark.sql.catalyst.expressions.NamedExpression.newExprId
                   )
                 )
-            }
-            assertThrows(classOf[SecurityException], () => root.withNewChildren(Seq(changedIds)))
-            val copy = root.clone().asInstanceOf[DeltaRangerRawProducer]
-            assertNotSame(root, copy)
-            assertThrows(classOf[SecurityException], () => copy.executeCollect())
-            root.owner.requireInstalled(root)
-            val callbacks = new AtomicInteger()
-            val hostile = RawHostilePreparation(root.output, callbacks)
-            assertThrows(classOf[SecurityException], () => root.withNewChildren(Seq(hostile)))
-            assertEquals(0, callbacks.get())
+              )
+          }
+          assertThrows(classOf[SecurityException], () => root.withNewChildren(Seq(changedIds)))
+          val copy = root.clone().asInstanceOf[DeltaRangerRawProducer]
+          assertNotSame(root, copy)
+          assertThrows(classOf[SecurityException], () => copy.executeCollect())
+          root.owner.requireInstalled(root)
+          val callbacks = new AtomicInteger()
+          val hostile = RawHostilePreparation(root.output, callbacks)
+          assertThrows(classOf[SecurityException], () => root.withNewChildren(Seq(hostile)))
+          assertEquals(0, callbacks.get())
+          if (adaptive) {
+            assertThrows(
+              classOf[SecurityException],
+              () => new QueryExecution(spark, fresh.head.plan).executedPlan.executeCollect()
+            )
+          } else {
             val standalone = new QueryExecution(spark, fresh.head.plan).executedPlan
             assertThrows(classOf[SecurityException], () => standalone.executeCollect())
-            val expected = Vector(
-              Row(1L, "a-one", "keep"),
-              Row(2L, "a-two", "drop"),
-              Row(3L, null, "keep"),
-              Row(1L, "b-one-masked", "keep"),
-              Row(3L, null, "keep")
+          }
+          val expected = Vector(
+            Row(1L, "a-one", "keep"),
+            Row(2L, "a-two", "drop"),
+            Row(3L, null, "keep"),
+            Row(1L, "b-one-masked", "keep"),
+            Row(3L, null, "keep")
+          )
+          def counted(rows: Vector[Row]) =
+            rows.groupBy(identity).map { case (row, values) => row -> values.size }
+          def readback(): Unit = active(native) {
+            def read = native.read.format("delta").load(location)
+            assertEquals(counted(expected), counted(read.collect().toVector))
+            assertSame(native, SparkSession.active)
+            assertEquals(
+              counted(expected.map(row => Row(row.getLong(0), row.getString(2)))),
+              counted(read.select("id", "region").collect().toVector)
             )
-            def counted(rows: Vector[Row]) =
-              rows.groupBy(identity).map { case (row, values) => row -> values.size }
-            def readback(): Unit = active(native) {
-              def read = native.read.format("delta").load(location)
-              assertEquals(counted(expected), counted(read.collect().toVector))
-              assertSame(native, SparkSession.active)
-              assertEquals(
-                counted(expected.map(row => Row(row.getLong(0), row.getString(2)))),
-                counted(read.select("id", "region").collect().toVector)
-              )
-              assertEquals(counted(expected), counted(read.collect().toVector))
-            }
-            readback()
-            append()
-            assertEquals(head.version, originalIndex.deltaLog.unsafeVolatileSnapshot.version)
-            replaced(fresh)
-            assertThrows(classOf[SecurityException], () => root.owner.requireInstalled(root))
-            assertThrows(classOf[SecurityException], () => copy.executeCollect())
-            entries.foreach(entry =>
-              entry.cachedRepresentation.cacheBuilder.cachedPlan match {
-                case next: DeltaRangerRawProducer =>
-                  assertNotSame(root.owner, next.owner)
-                  assertSame(
-                    originalIndex.deltaLog.unsafeVolatileSnapshot,
-                    next.owner.observation.selectedHead
-                  )
-                case _ => fail("missing refreshed raw generation")
-              }
+            assertEquals(counted(expected), counted(read.collect().toVector))
+          }
+          readback()
+          append()
+          assertEquals(head.version, originalIndex.deltaLog.unsafeVolatileSnapshot.version)
+          replaced(fresh)
+          assertThrows(classOf[SecurityException], () => root.owner.requireInstalled(root))
+          assertThrows(classOf[SecurityException], () => copy.executeCollect())
+          entries.foreach { entry =>
+            val next = TrustedAqeMaintenanceObservation.producer(
+              entry.cachedRepresentation.cacheBuilder.cachedPlan
             )
-            readback()
-            evidence(
-              "semantics.txt",
-              s"backend=${if (storage.isEmpty) "local" else "s3a-minio"} " +
-                s"dependentFirst=$dependentFirst versionBefore=${oldHead.version} versionAfter=${head.version} " +
-                "targetRows=5 dependentRows=5 duplicateVersionUnchanged=true exactKeys=true " +
-                "buildersReplacedTwice=true unrelatedPreserved=true lateNativeReadback=true\n"
+            assertNotSame(root.owner, next.owner)
+            assertSame(
+              originalIndex.deltaLog.unsafeVolatileSnapshot,
+              next.owner.observation.selectedHead
             )
-          } finally
-            s3Root.foreach(root =>
-              root.getFileSystem(native.sessionState.newHadoopConf()).delete(root, true)
-            )
+          }
+          readback()
+          evidence(
+            "semantics.txt",
+            s"backend=${if (storage.isEmpty) "local" else "s3a-minio"} " +
+              s"dependentFirst=$dependentFirst versionBefore=${oldHead.version} versionAfter=${head.version} " +
+              "targetRows=5 dependentRows=5 duplicateVersionUnchanged=true exactKeys=true " +
+              "buildersReplacedTwice=true unrelatedPreserved=true lateNativeReadback=true\n"
+          )
+        } finally
+          s3Root.foreach(root =>
+            root.getFileSystem(native.sessionState.newHadoopConf()).delete(root, true)
+          )
       }
-    finally source.engine.close()
+    finally { trace.close(); source.engine.close() }
   }
 }
 

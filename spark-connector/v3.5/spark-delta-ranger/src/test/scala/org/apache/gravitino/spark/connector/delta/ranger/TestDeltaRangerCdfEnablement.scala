@@ -40,10 +40,10 @@ class TestDeltaRangerCdfEnablement {
   def projectFirstCachesPreserveCdfIntervals(): Unit = scenario("project-first")
 
   @Test
-  def cloningRequiredCacheAppendRejectsBeforePublication(): Unit = scenario("clone-denied")
+  def nativeClonedSessionCachesPreserveCdfIntervals(): Unit = scenario("clone-native")
 
-  private def scenario(order: String): Unit = {
-    val warmOrder = if (order == "clone-denied") "target-first" else order
+  private[ranger] def scenario(order: String, appendAdaptive: Boolean = false): Unit = {
+    val warmOrder = if (order == "clone-native") "target-first" else order
     val target = new TestDeltaRangerNativeSelect.Fixture
     val source = new TestDeltaRangerNativeSelect.Fixture
     source.customCatalog = "b"
@@ -56,11 +56,14 @@ class TestDeltaRangerCdfEnablement {
         "table.count=1\ntable.0.metalake=lake\ntable.0.catalog=a\n" +
         "table.0.database=db\ntable.0.table=t\n").getBytes("UTF-8")
     )
+    val trace = InstalledAppendBoundaryProbe.fresh(s"cdf-continued-$order-aqe-$appendAdaptive")
     var reopenLocation: String = null
     var reopenVersion = -1L
     try {
       NativeSelectFixture.withSpark(
         spark => {
+          trace.activate(spark)
+          trace.record("cdf-evidence-directory", output.toString)
           spark.conf.set("spark.sql.catalog.a", classOf[CdfAlterForwardingCatalog].getName)
           val registration = NativeSelectFixture.bindingFixture(spark, "a")
           val sourceRegistration = NativeSelectFixture.bindingFixture(spark, "b")
@@ -218,29 +221,7 @@ class TestDeltaRangerCdfEnablement {
               Set(Row(1L, "a-one-masked", "keep"), Row(3L, null, "keep")),
               spark.sql("SELECT id, secret, region FROM a.db.t").collect().toSet
             )
-          if (order == "clone-denied") {
-            val before = manifest(Paths.get(location))
-            val error = assertThrows(
-              classOf[Exception],
-              () => {
-                spark
-                  .sql("SELECT id, secret, region FROM b.db.t")
-                  .write
-                  .mode("append")
-                  .insertInto("a.db.t"); ()
-              }
-            )
-            assertTrue(
-              Iterator
-                .iterate[Throwable](error)(_.getCause)
-                .takeWhile(_ != null)
-                .exists(e =>
-                  Option(e.getMessage).exists(_.contains("cache recache requires a cloned session"))
-                )
-            )
-            assertEquals(enabled, head)
-            assertEquals(before, manifest(Paths.get(location)))
-          } else {
+          locally {
             val written = scala.collection.mutable.ArrayBuffer.empty[Long]
             Seq(true, false).foreach { cdfEnabled =>
               if (!cdfEnabled) {
@@ -259,10 +240,15 @@ class TestDeltaRangerCdfEnablement {
                   )
                 spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
                 def append(): Unit = {
-                  val writer =
-                    spark.sql("SELECT id, secret, region FROM b.db.t").write.mode("append")
-                  if (frontend == "insertInto") writer.insertInto("a.db.t")
-                  else writer.saveAsTable("a.db.t")
+                  val previous = spark.conf.get("spark.sql.adaptive.enabled")
+                  if (appendAdaptive) spark.conf.set("spark.sql.adaptive.enabled", "true")
+                  try {
+                    val writer =
+                      spark.sql("SELECT id, secret, region FROM b.db.t").write.mode("append")
+                    if (frontend == "insertInto") writer.insertInto("a.db.t")
+                    else writer.saveAsTable("a.db.t")
+                  } finally
+                    if (appendAdaptive) spark.conf.set("spark.sql.adaptive.enabled", previous)
                 }
                 val before = head
                 append()
@@ -322,8 +308,8 @@ class TestDeltaRangerCdfEnablement {
         Some(NativeSelectFixture.extension(target)),
         Map(
           "spark.gravitino.deltaRanger.rawCacheMaintenance.config" -> raw.toString,
-          "spark.sql.sources.bucketing.autoBucketedScan.enabled" -> (order == "clone-denied" || order == "cold").toString,
-          "spark.sql.optimizer.canChangeCachedPlanOutputPartitioning" -> "false",
+          "spark.sql.sources.bucketing.autoBucketedScan.enabled" -> (order == "clone-native" || order == "cold").toString,
+          "spark.sql.optimizer.canChangeCachedPlanOutputPartitioning" -> appendAdaptive.toString,
           "spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false"
         ),
         native =>
@@ -334,7 +320,7 @@ class TestDeltaRangerCdfEnablement {
             .collect()
       )
       if (reopenLocation != null) reopenCheckpoint(reopenLocation, reopenVersion)
-    } finally { target.engine.close(); source.engine.close() }
+    } finally { trace.close(); target.engine.close(); source.engine.close() }
   }
 
   private def reopenCheckpoint(location: String, version: Long): Unit = {

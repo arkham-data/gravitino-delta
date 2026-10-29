@@ -35,9 +35,10 @@ private[ranger] object DeltaRangerRawMaintenance {
       DeltaRangerNativeOperation.current() != null ||
       plan.exists(DeltaRangerDecisionReceipt.present) || !raw(plan)
     ) return plan
+    val maintenance = DeltaRangerCdfCacheMaintenance.compilationSession(plan, spark)
     val serializer = DeltaRangerRawCacheSerializer.observe(spark)
     if (
-      spark.sessionState.conf.adaptiveExecutionEnabled ||
+      (spark.sessionState.conf.adaptiveExecutionEnabled && !maintenance) ||
       spark.conf.get("spark.databricks.delta.asyncUpdate.stalenessTimeLimit", "0").toLong != 0L
     )
       reject("unqualified compilation settings")

@@ -48,7 +48,7 @@ class TestDeltaRangerTrustedAqeAppend {
     )
 
   @Test
-  def unsupportedWarmTargetRejectsBeforeMutation(): Unit = withFixture("aqe-warm-preflight") {
+  def undeployedWarmTargetRejectsBeforeMutation(): Unit = withFixture("aqe-warm-preflight") {
     (spark, _, _, trace) =>
       val extensions = new SparkSessionExtensions
       new DeltaSparkSessionExtension().apply(extensions)
@@ -83,12 +83,20 @@ class TestDeltaRangerTrustedAqeAppend {
             .mode("append")
             .insertInto("a.db.t")
       )
+      trace.record(
+        "negative-causes",
+        Iterator.iterate[Throwable](failure)(_.getCause).takeWhile(_ != null).mkString(" | ")
+      )
+      InstalledAppendBoundaryProbe.manifest(root, trace.directory.resolve("diagnostic-after"))
       assertTrue(
         Iterator
           .iterate[Throwable](failure)(_.getCause)
           .takeWhile(_ != null)
           .exists(error =>
-            Option(error.getMessage).exists(_.contains("adaptive native target cache maintenance"))
+            Option(error.getMessage).exists(message =>
+              message.contains("Raw maintenance") || message
+                .contains("Raw native observation rejected")
+            )
           )
       )
       assertEquals(

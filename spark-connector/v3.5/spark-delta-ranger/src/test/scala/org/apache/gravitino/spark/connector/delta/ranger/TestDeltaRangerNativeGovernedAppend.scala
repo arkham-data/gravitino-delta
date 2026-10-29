@@ -706,6 +706,7 @@ class TestDeltaRangerNativeGovernedAppend {
       checkpointTail: Boolean = false,
       priorCommitVersion: Option[Long] = None,
       warmCache: Boolean = false,
+      warmProjectFirst: Boolean = false,
       rawMaintenance: Boolean = false,
       repeatCompletedResult: Boolean = false,
       emptySource: Boolean = false,
@@ -789,19 +790,28 @@ class TestDeltaRangerNativeGovernedAppend {
             val frames =
               try {
                 val targetFrame =
-                  native.read.format("delta").load(NativeSelectFixture.locations("a")).cache()
+                  native.read.format("delta").load(NativeSelectFixture.locations("a"))
+                val dependent = targetFrame.select("id", "region")
+                val ordered =
+                  if (warmProjectFirst) Vector(dependent, targetFrame)
+                  else Vector(targetFrame, dependent)
+                ordered.foreach(frame => {
+                  frame.cache(); assertEquals(3 + bootstrapRows, frame.collect().length)
+                })
+                trace.record("warm-insertion-order", s"projectFirst=$warmProjectFirst")
                 val rows = targetFrame.collect().toVector
                 assertEquals(
-                  Set(Row(1L, "a-one", "keep"), Row(2L, "a-two", "drop"), Row(3L, null, "keep")),
+                  (Set(Row(1L, "a-one", "keep"), Row(2L, "a-two", "drop"), Row(3L, null, "keep")) ++
+                    (if (bootstrapRows > 0) Set(Row(-1L, "bootstrap", "keep"))
+                     else Set.empty[Row])),
                   rows.toSet
                 )
                 trace.record(
                   "warm-target-rows-json",
                   json.writeValueAsString(rows.map(_.toSeq.asJava).asJava)
                 )
-                val dependent = targetFrame.select("id", "region").cache()
                 val dependentRows = dependent.collect().toVector
-                assertEquals(3, dependentRows.size)
+                assertEquals(3 + bootstrapRows, dependentRows.size)
                 trace.record(
                   "warm-dependent-rows-json",
                   json.writeValueAsString(dependentRows.map(_.toSeq.asJava).asJava)
@@ -1319,10 +1329,8 @@ class TestDeltaRangerNativeGovernedAppend {
               )
               assertFalse(old.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded)
               assertFalse(fresh.cachedRepresentation.cacheBuilder.isCachedColumnBuffersLoaded)
-              assertTrue(
-                fresh.cachedRepresentation.cacheBuilder.cachedPlan
-                  .isInstanceOf[DeltaRangerRawProducer]
-              )
+              TrustedAqeMaintenanceObservation
+                .producer(fresh.cachedRepresentation.cacheBuilder.cachedPlan)
             }
             val consumer = warmFrames.head.sparkSession
             SparkSession.setActiveSession(consumer)
@@ -1331,7 +1339,7 @@ class TestDeltaRangerNativeGovernedAppend {
                 Row(1L, "a-one", "keep"),
                 Row(2L, "a-two", "drop"),
                 Row(3L, null, "keep")
-              ) ++ expectedAppendedRows
+              ) ++ Vector.fill(bootstrapRows)(Row(-1L, "bootstrap", "keep")) ++ expectedAppendedRows
               def counted(rows: Vector[Row]) =
                 rows.groupBy(identity).map { case (row, xs) => row -> xs.size }
               def freshTarget =
@@ -1345,7 +1353,7 @@ class TestDeltaRangerNativeGovernedAppend {
               assertEquals(counted(expected), counted(freshTarget.collect().toVector))
               trace.record(
                 "raw-warm-late-readback",
-                "target=5 dependent=5 repeated=true capturedSessionRestored=true"
+                s"target=${expected.size} dependent=${expected.size} repeated=true capturedSessionRestored=true"
               )
             } finally SparkSession.setActiveSession(spark)
           }

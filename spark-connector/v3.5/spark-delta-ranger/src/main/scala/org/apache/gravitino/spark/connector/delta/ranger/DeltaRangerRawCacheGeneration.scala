@@ -32,6 +32,7 @@ import org.apache.spark.sql.catalyst.expressions.{
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution._
+import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, TableCacheQueryStageExec}
 import org.apache.spark.sql.execution.columnar.{InMemoryRelation, InMemoryTableScanExec}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.sql.types.{DataType, Metadata}
@@ -57,6 +58,7 @@ private[ranger] final class DeltaRangerRawCacheGeneration(
   private var finalBinding: Option[Vector[Any]] = None
   @volatile private var winner: Option[(DeltaRangerRawProducer, AnyRef, StorageLevel)] = None
   @volatile private var retired = false
+  @volatile private var adaptive: Option[AdaptiveSparkPlanExec] = None
 
   private def live(): Unit = {
     if (
@@ -73,17 +75,56 @@ private[ranger] final class DeltaRangerRawCacheGeneration(
   )
 
   override def plan(child: LogicalPlan): SparkPlan = {
+    if (prefixBinding.nonEmpty) {
+      // Replanning the sealed carrier must retain the native wrapper's materialized cache stage.
+      // Lowering its original scan again discards AQE progress and causes endless reoptimization.
+      // This is the same accepted recipe, not a new compilation or policy authorization.
+      val wrapper = adaptive.getOrElse(denied("raw physical compilation repeated"))
+      if (wrapper.isFinalPlan) denied("completed raw adaptive compilation")
+      logical.verify(child, session)
+      wrapper.executedPlan match {
+        case root: DeltaRangerRawProducer if root.owner eq this =>
+          beforeTransitions(root.child)
+          return root
+        case _ => denied("foreign raw adaptive execution product")
+      }
+    }
     live()
     val expected = logical.verify(child, session)
     val prefix = DeltaRangerPhysicalPlanning.lower(session, expected)
     safe(prefix)
     val tail = DeltaRangerPhysicalPlanning.tail(session, expected, prefix)
     safe(tail)
-    if (prefixBinding.nonEmpty) denied("raw physical compilation repeated")
     prefixBinding = Some(binding(prefix))
     coreBinding = Some(core(prefix))
     finalBinding = Some(binding(tail))
     DeltaRangerRawProducer(prefix)(this)
+  }
+
+  /** Accepts the stock wrapper once while its native append maintenance scope still owns it. Later
+    * AQE copies are internal execution products; only the installed wrapper's final root can
+    * execute. This does not grant standalone raw-query or per-stage policy authority.
+    */
+  def acceptAdaptive(plan: AdaptiveSparkPlanExec): Unit = synchronized {
+    if (
+      plan.getClass != classOf[AdaptiveSparkPlanExec] || (plan.context.session ne session) ||
+      plan.isSubquery || !session.sessionState.conf.adaptiveExecutionEnabled
+    )
+      denied("foreign raw adaptive wrapper")
+    def root(value: SparkPlan): DeltaRangerRawProducer = value match {
+      case raw: DeltaRangerRawProducer if (raw.owner eq this) => raw
+      case _ => denied("foreign raw adaptive input")
+    }
+    beforeTransitions(root(plan.inputPlan).child)
+    candidate(root(plan.initialPlan).child)
+    adaptive match {
+      case Some(original) if original eq plan => ()
+      case Some(_)                            => denied("copied raw adaptive wrapper")
+      case None =>
+        if (!DeltaRangerCdfCacheMaintenance.owns(native)) denied("unowned raw adaptive compilation")
+        live()
+        adaptive = Some(plan)
+    }
   }
 
   def candidate(child: SparkPlan): Unit = {
@@ -107,18 +148,26 @@ private[ranger] final class DeltaRangerRawCacheGeneration(
         live()
         candidate(root.child)
         if (!finalBinding.contains(binding(root.child))) denied("incomplete raw physical tail")
+        val installedPlan: SparkPlan = adaptive match {
+          case Some(plan) =>
+            if (!plan.isFinalPlan || (plan.executedPlan ne root))
+              denied("raw root is not the installed adaptive execution product")
+            plan
+          case None => root
+        }
         def lookup(): InMemoryRelation = {
           val entry = session.sharedState.cacheManager
             .lookupCachedData(key)
             .getOrElse { retired = winner.nonEmpty; denied("raw candidate is not installed") }
           val builder = entry.cachedRepresentation.cacheBuilder
           winner.foreach { case (installedRoot, installedBuilder, _) =>
+            val previousPlan = adaptive.getOrElse(installedRoot)
             if (
               (entry.plan ne key) || (builder ne installedBuilder) ||
-              (builder.cachedPlan ne installedRoot)
+              (builder.cachedPlan ne previousPlan)
             ) retired = true
           }
-          if ((entry.plan ne key) || (builder.cachedPlan ne root) || (root.owner ne this))
+          if ((entry.plan ne key) || (builder.cachedPlan ne installedPlan) || (root.owner ne this))
             denied("exact raw installed winner changed")
           if (
             attributes(entry.cachedRepresentation.output) != attributes(key.output) ||
@@ -202,7 +251,8 @@ private[ranger] object DeltaRangerRawCacheGeneration {
       classOf[WholeStageCodegenExec],
       classOf[InputAdapter],
       classOf[ColumnarToRowExec],
-      classOf[InMemoryTableScanExec]
+      classOf[InMemoryTableScanExec],
+      classOf[TableCacheQueryStageExec]
     )
     def visit(node: SparkPlan): Unit = {
       if (!allowed(node.getClass)) denied("unsafe raw physical child")
@@ -218,15 +268,22 @@ private[ranger] object DeltaRangerRawCacheGeneration {
           denied("raw cached filter changed")
         case _ =>
       }
-      node.children.foreach(visit)
+      node match {
+        case stage: TableCacheQueryStageExec =>
+          if (stage.plan.getClass != classOf[InMemoryTableScanExec])
+            denied("foreign raw cache stage")
+          visit(stage.plan)
+        case _ => node.children.foreach(visit)
+      }
     }
     visit(plan)
   }
 
   private def core(plan: SparkPlan): Any = plan match {
-    case node: WholeStageCodegenExec => core(node.child)
-    case node: InputAdapter          => core(node.child)
-    case node: ColumnarToRowExec     => core(node.child)
+    case stage: TableCacheQueryStageExec => core(stage.plan)
+    case node: WholeStageCodegenExec     => core(node.child)
+    case node: InputAdapter              => core(node.child)
+    case node: ColumnarToRowExec         => core(node.child)
     case node =>
       Vector(
         node.getClass,
@@ -238,13 +295,17 @@ private[ranger] object DeltaRangerRawCacheGeneration {
       )
   }
 
-  private def binding(plan: SparkPlan): Vector[Any] = Vector(
-    plan.getClass,
-    plan.productIterator.map(value).toVector,
-    attributes(plan.output),
-    plan.outputOrdering.map(value).toVector,
-    plan match { case node: WholeStageCodegenExec => node.codegenStageId; case _ => 0 }
-  )
+  private def binding(plan: SparkPlan): Vector[Any] = plan match {
+    case stage: TableCacheQueryStageExec => binding(stage.plan)
+    case _ =>
+      Vector(
+        plan.getClass,
+        plan.productIterator.map(value).toVector,
+        attributes(plan.output),
+        plan.outputOrdering.map(value).toVector,
+        plan match { case node: WholeStageCodegenExec => node.codegenStageId; case _ => 0 }
+      )
+  }
 
   private def value(item: Any): Any = item match {
     case null            => null

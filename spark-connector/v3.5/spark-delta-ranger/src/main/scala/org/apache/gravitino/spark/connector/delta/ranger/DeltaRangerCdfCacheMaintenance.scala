@@ -20,6 +20,7 @@
 package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.util.IdentityHashMap
+import scala.collection.JavaConverters._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction, Snapshot}
@@ -28,7 +29,9 @@ import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.execution.CachedData
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 
-/** Issues CDF compatibility only for retained raw keys rebuilt by one actual append. */
+/** Owns native refresh of retained raw cache keys for one actual append, including CDF
+  * compatibility.
+  */
 private[ranger] object DeltaRangerCdfCacheMaintenance {
   private val active = new ThreadLocal[Scope]()
   private val property = "delta.enableChangeDataFeed"
@@ -41,7 +44,8 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
   ): Option[Scope] = {
     if (input.association ne binding) reject("foreign append input")
     val head = target.log().unsafeVolatileSnapshot
-    if (!cdfProtocol(head.protocol)) return None
+    if (!cdfProtocol(head.protocol) && !input.session.sessionState.conf.adaptiveExecutionEnabled)
+      return None
     if (
       active.get() != null || DeltaRangerNativeOperation.current() != null ||
       OptimisticTransaction.getActive.nonEmpty
@@ -56,6 +60,12 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
     val scope = new Scope(input, binding, target, head)
     if (scope.hasKeys) Some(scope) else None
   }
+
+  def compilationSession(plan: LogicalPlan, session: SparkSession): Boolean =
+    Option(active.get()).exists(_.compilationSession(plan, session))
+
+  def owns(owner: DeltaRangerRawNativeScans): Boolean =
+    Option(active.get()).exists(_.owns(owner))
 
   def authorize(plan: LogicalPlan, spark: SparkSession, index: TahoeLogFileIndex): Unit =
     Option(active.get()).foreach(_.authorize(plan, spark, index))
@@ -94,28 +104,38 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
     private val log = target.log()
     private val selected = new IdentityHashMap[TahoeLogFileIndex, Compatibility]()
     private val keys = new IdentityHashMap[LogicalPlan, Any]()
+    private val compilationSessions = new IdentityHashMap[TahoeLogFileIndex, SparkSession]()
     private var closed = false
     private val manager = spark.sharedState.cacheManager
     private val field = manager.getClass.getDeclaredField("cachedData")
     field.setAccessible(true)
-    field.get(manager).asInstanceOf[Seq[CachedData]].foreach { entry =>
+    private val entries = field.get(manager).asInstanceOf[Seq[CachedData]]
+    entries.foreach { entry =>
+      if (
+        entry.plan.exists(_.sameResult(target.table().toLogicalRelation)) &&
+        !DeltaRangerRawMaintenance.raw(entry.plan)
+      ) reject("unsupported target cache dependency")
       if (DeltaRangerRawMaintenance.raw(entry.plan)) {
         val relation = entry.plan.collectLeaves().head.asInstanceOf[LogicalRelation]
         val index =
           relation.relation.asInstanceOf[HadoopFsRelation].location.asInstanceOf[TahoeLogFileIndex]
         if ((index.deltaLog eq log) && index.path == tablePath)
           keys.put(entry.plan, DeltaRangerNativeProvenance.binding(entry.plan))
+        else if (entry.plan.exists(_.sameResult(target.table().toLogicalRelation)))
+          reject("foreign target cache history")
+      }
+    }
+    if (!keys.isEmpty) {
+      val registrations = DeltaRangerRawMaintenanceDeployment.observeRegistrations(spark).asScala
+      registrations.foreach(_.requireCurrent(spark))
+      if (!registrations.exists(_.publication().samePublication(target.observation())))
+        reject("target cache has no deployment registration")
+      val serializer = DeltaRangerRawCacheSerializer.observe(spark)
+      entries.filter(entry => keys.containsKey(entry.plan)).foreach { entry =>
+        serializer.requireSerializer(spark, entry.cachedRepresentation.cacheBuilder.serializer)
       }
     }
     def hasKeys: Boolean = !keys.isEmpty
-    if (
-      hasKeys && (spark.sessionState.conf.adaptiveExecutionEnabled ||
-        spark.conf.get("spark.sql.sources.bucketing.autoBucketedScan.enabled", "true").toBoolean ||
-        spark.conf
-          .get("spark.sql.optimizer.canChangeCachedPlanOutputPartitioning", "false")
-          .toBoolean)
-    )
-      reject("cache recache requires a cloned session")
     private def tablePath = log.dataPath
 
     def complete(transaction: OptimisticTransaction, committed: Option[Long]): Unit = {
@@ -189,23 +209,77 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
       context()
     }
 
-    def authorize(plan: LogicalPlan, session: SparkSession, index: TahoeLogFileIndex): Unit = {
-      requireLive()
+    def compilationSession(plan: LogicalPlan, session: SparkSession): Boolean = {
+      if (!keys.containsKey(plan)) reject("unowned cache key")
+      requireCompilationSession(session)
+      true
+    }
+
+    private def requireCompilationSession(session: SparkSession): Unit = {
       if (
-        (session ne spark) || !keys.containsKey(plan) ||
+        !SparkSession.getActiveSession.exists(_ eq session) ||
+        (session.sharedState ne spark.sharedState) ||
+        (session.sparkContext ne spark.sparkContext)
+      ) reject("foreign compilation session")
+      val expected = spark.sessionState.conf.getAllConfs
+      val actual = session.sessionState.conf.getAllConfs
+      val disabled =
+        if (spark.conf.get("spark.sql.optimizer.canChangeCachedPlanOutputPartitioning").toBoolean)
+          Seq(
+            "spark.sql.adaptive.applyFinalStageShuffleOptimizations",
+            "spark.sql.sources.bucketing.autoBucketedScan.enabled"
+          )
+        else
+          Seq(
+            "spark.sql.adaptive.enabled",
+            "spark.sql.sources.bucketing.autoBucketedScan.enabled"
+          )
+      val changed = disabled.filter(name => spark.conf.get(name).toBoolean)
+      if (session ne spark) {
+        DeltaRangerRawDeltaLogCache.requireSession(session)
+        val parent = classOf[SparkSession].getDeclaredField("parentSessionState")
+        parent.setAccessible(true)
+        if (
+          changed.isEmpty || !parent
+            .get(session)
+            .asInstanceOf[Option[AnyRef]]
+            .exists(_ eq spark.sessionState)
+        )
+          reject("foreign native clone parent")
+        val cloned = disabled
+          .filter(name => spark.conf.get(name).toBoolean)
+          .foldLeft(expected)((settings, name) => settings.updated(name, "false"))
+        if (actual != cloned) reject("foreign cloned configuration")
+      } else if (changed.nonEmpty || actual != expected) reject("native cloned session required")
+      DeltaRangerNativeOperation.withRawSession(spark, () => requireLive())
+    }
+
+    def authorize(plan: LogicalPlan, session: SparkSession, index: TahoeLogFileIndex): Unit = {
+      requireCompilationSession(session)
+      if (
+        !keys.containsKey(plan) ||
         keys.get(plan) != DeltaRangerNativeProvenance.binding(plan) ||
         (index.deltaLog ne log) || index.path != tablePath
       ) reject("unowned cache key")
-      val witness = new Compatibility(index, log, published.version, head.metadata, head.protocol)
-      witness.requireCurrent(index, log.unsafeVolatileSnapshot)
-      selected.put(index, witness)
+      compilationSessions.put(index, session)
+      if (cdfProtocol(head.protocol)) {
+        val witness = new Compatibility(index, log, published.version, head.metadata, head.protocol)
+        witness.requireCurrent(index, log.unsafeVolatileSnapshot)
+        selected.put(index, witness)
+      }
     }
 
+    def owns(owner: DeltaRangerRawNativeScans): Boolean =
+      !closed && used && (Thread.currentThread() eq thread) &&
+        (compilationSessions.get(owner.observation.rawIndex) eq owner.session()) &&
+        (owner.observation.selectedHead eq published)
+
     def observation(session: SparkSession, index: TahoeLogFileIndex): Option[Compatibility] = {
-      requireLive()
-      if (session ne spark) reject("foreign session")
+      requireCompilationSession(session)
+      if (compilationSessions.get(index) ne session) reject("foreign session")
       Option(selected.get(index))
     }
+
   }
 
   /** Immutable compatibility, usable only inside the existing exact installed cache generation. */

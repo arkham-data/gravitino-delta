@@ -63,6 +63,8 @@ private[ranger] final class DeltaRangerRawMetadata(owner: DeltaRangerRawNativeSc
 
   private def requireLive(): Unit = owner.requireLive()
 
+  def appendMaintenance: Boolean = DeltaRangerCdfCacheMaintenance.owns(owner)
+
   def capture(): Unit = {
     requireLive()
     def get(stats: Boolean)(body: => Dataset[_]): Unit = {
