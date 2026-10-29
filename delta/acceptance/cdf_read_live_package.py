@@ -132,7 +132,11 @@ def verify_runtime(runtime):
 
 
 def app_profile(app):
-    assert app in ['read','merge','read-parity'], 'Unknown thin application'
+    assert app in ['read','merge','read-parity','append-aqe'], 'Unknown thin application'
+    if app=='append-aqe':
+        return {'init':'delta/acceptance/append_aqe_live.gradle','task':'appendAqeLiveThinJar',
+                'property':'appendAqeLiveAppOut','jar':'append-aqe-live.jar',
+                'class':APP.replace('CdfRead','AppendAqe'),'provider':APP.replace('CdfRead','AppendAqe').replace('/','.')}
     if app=='read-parity':
         return {'init':'delta/acceptance/read_parity_live.gradle','task':'readParityLiveThinJar',
                 'property':'readParityLiveAppOut','jar':'read-parity-live.jar',
@@ -184,8 +188,8 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     shutil.copyfile(built_python,python_zip)
     artifacts={str(p):sha(p) for p in [changed,built_app,python_zip,output/'compiled-classes.json']}
     supplemental={}
-    if application in ['merge','read-parity']:
-        build_inputs=output/('app/read-parity-build-inputs.json' if application=='read-parity' else 'app/cdf-merge-build-inputs.json')
+    if application in ['merge','read-parity','append-aqe']:
+        build_inputs=output/({'read-parity':'app/read-parity-build-inputs.json','append-aqe':'app/append-aqe-build-inputs.json'}.get(application,'app/cdf-merge-build-inputs.json'))
         artifacts[str(build_inputs)]=sha(build_inputs)
         resolved=read(build_inputs)
         dependencies=output/'supplemental';dependencies.mkdir()
@@ -212,7 +216,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     oldstock=base['stockJarHashes'];oldjars={Path(p).name:Path(p) for p in base['jarHashes']}
     omitted=set(oldstock)-set(oldjars)
     sources={p.name:p for p in (stock/'jars').glob('*.jar') if p.name not in omitted}
-    selected={n:p for n,p in oldjars.items() if n not in oldstock and not n.startswith(('gravitino-spark-connector-delta-ranger-runtime','public-grants-live-append','cdf-read-live','cdf-merge-live','read-parity-live','delta-spark_2.12-','delta-storage-'))}
+    selected={n:p for n,p in oldjars.items() if n not in oldstock and not n.startswith(('gravitino-spark-connector-delta-ranger-runtime','public-grants-live-append','cdf-read-live','cdf-merge-live','read-parity-live','append-aqe-live','delta-spark_2.12-','delta-storage-'))}
     selected[changed.name]=changed;selected[app.name]=app
     for artifact in ['delta-spark_2.12','delta-storage']:
         matches=list((Path.home()/'.gradle/caches/modules-2/files-2.1/io.delta'/artifact/delta).glob('*/*.jar'));assert len(matches)==1
@@ -222,8 +226,12 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     jars=sorted((home/'jars').glob('*.jar'))
     prefix='org/apache/gravitino/spark/connector/delta/ranger/'
     ranger_classes=classes(changed)
-    names=[n for n in base['providers'] if not n.startswith(('org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveAppend','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLivePhasePin','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdf'))]
+    names=[n for n in base['providers'] if not n.startswith(('org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveAppend','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLivePhasePin','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveCdf','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveReadParity','org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerLiveAppendAqe'))]
     names+= [n[:-6].replace('/','.') for n in ranger_classes if n.startswith((prefix+'DeltaRangerCdf',prefix+'DeltaRangerMerge',prefix+'GravitinoDeltaTable',prefix+'GravitinoDeltaMergeBuilder')) and '$anon' not in n and '$$' not in n]
+    if application=='append-aqe':
+        names += ['py4j.JavaServer','py4j.ClientServer','py4j.ClientServerConnection']
+        stems=('DeltaRangerAppend','DeltaRangerExecutionContext','DeltaRangerNativeScans','DeltaRangerNativeIdempotency','DeltaRangerPhysicalProvenance','DeltaRangerRaw','DeltaRangerCache')
+        names += [n[:-6].replace('/','.') for n in ranger_classes if n.startswith(tuple(prefix+stem for stem in stems)) and '$anon' not in n and '$$' not in n]
     names+=[profile.get('provider',profile['class'].replace('/','.')+'$')]
     providers=provider_inventory(jars,sorted(set(names)))
     for name,path in selected.items():
@@ -246,7 +254,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--base',required=True);parser.add_argument('--out',required=True)
-    parser.add_argument('--app',choices=['read','merge','read-parity'],default='read');parser.add_argument('--spark',default='3.5.4');parser.add_argument('--delta',default='3.3.0')
+    parser.add_argument('--app',choices=['read','merge','read-parity','append-aqe'],default='read');parser.add_argument('--spark',default='3.5.4');parser.add_argument('--delta',default='3.3.0')
     args=parser.parse_args();os.umask(0o077)
     build_package(Path(args.base).resolve(),Path(args.out).resolve(),args.spark,args.delta,args.app)
 

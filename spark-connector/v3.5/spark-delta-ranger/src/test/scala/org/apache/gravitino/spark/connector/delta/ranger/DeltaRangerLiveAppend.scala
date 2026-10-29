@@ -1300,15 +1300,15 @@ object DeltaRangerLiveAppend {
       case raw: DeltaRangerRawProducer => Some(raw)
       case adaptive: AdaptiveSparkPlanExec =>
         require(adaptive.getClass == classOf[AdaptiveSparkPlanExec])
-        val raw = adaptive.inputPlan match {
-          case value: DeltaRangerRawProducer => value
-          case _ => throw new IllegalStateException("Missing raw adaptive cache input")
+        adaptive.inputPlan match {
+          case raw: DeltaRangerRawProducer =>
+            Vector(adaptive.initialPlan, adaptive.executedPlan).foreach {
+              case value: DeltaRangerRawProducer => require(value.owner eq raw.owner)
+              case _ => throw new IllegalStateException("Missing raw adaptive cache root")
+            }
+            Some(raw)
+          case _ => None
         }
-        Vector(adaptive.initialPlan, adaptive.executedPlan).foreach {
-          case value: DeltaRangerRawProducer => require(value.owner eq raw.owner)
-          case _ => throw new IllegalStateException("Missing raw adaptive cache root")
-        }
-        Some(raw)
       case _ => None
     }
     def record(
@@ -1361,6 +1361,13 @@ object DeltaRangerLiveAppend {
           "builder" -> id(builder),
           "producer" -> id(producer),
           "producerClass" -> producer.getClass.getName,
+          "adaptiveRoots" -> (producer match {
+            case adaptive: AdaptiveSparkPlanExec =>
+              Vector(adaptive.inputPlan, adaptive.initialPlan, adaptive.executedPlan)
+                .map(plan => Map("identity" -> id(plan), "class" -> plan.getClass.getName).asJava)
+                .asJava
+            case _ => Vector.empty.asJava
+          }),
           "loaded" -> builder.isCachedColumnBuffersLoaded,
           "owner" -> owner.map(id).orNull,
           "ownerKey" -> owner.map(v => id(v.key)).orNull,

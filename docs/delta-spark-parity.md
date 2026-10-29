@@ -67,6 +67,16 @@ read bounds, [governed MERGE](delta-cdf-merge.md) for policy/checkpoint semantic
 and the separate [builder](superpowers/plans/2026-10-22-delta-cdf-merge-builder.md)
 and [deployment](superpowers/plans/2026-10-22-delta-cdf-merge-demo.md) plans.
 
+## Adaptive append candidate
+
+The [append continuation](delta-native-governed-append.md#caller-selected-adaptive-append)
+implements the two existing native classic PySpark append frontends with caller
+AQE preserved. A bounded seven-profile / 14-attempt public-grant development
+subset has passed; the final frozen four-pair installed/live matrix remains
+pending. Native cache-key maintenance uses fresh late native queries; it does not
+promise that a previously executed Dataset/QueryExecution refreshes. Existing
+schema, option, source, transaction and feature limits remain in force.
+
 ## Revised adaptive execution boundary
 
 The trusted-stock route supersedes the former exact physical-stage/RDD-graph

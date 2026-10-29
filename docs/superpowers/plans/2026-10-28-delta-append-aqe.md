@@ -105,6 +105,14 @@ Let **M**=`spark-connector/v3.5/spark-delta-ranger/src/main/scala/org/apache/gra
 
 ## Task 4: Frozen public-grant matrix, documentation and closure
 
+**In progress:** bounded public-grant native PySpark development validation passed
+seven profiles / 14 attempts with original supervisor exit0 and independent
+public/runtime/payload/native checks. Supplemental CDF/cache assertions pass those
+same retained records; focused Python tests pass25 and full acceptance129. Exact
+final installed selection is67 methods/12 classes after the added native AQE warm
+regression. Candidate freeze and the complete four-pair 26-profile/42-attempt
+matrix remain required; task/whole-branch review and push belong to the controller.
+
 **Files:** live runner/thin app/package profile and final support docs from map; extend `A/append_aqe_checks.py` and tests with actual Delta result verification.
 
 **Interfaces:** `verify_delta_append(result: dict) -> None`; `append_aqe_live.py --runtime <manifest> --inputs <private-inputs> --out <fresh-dir>`; `E/final-evidence-index.json` joins frozen source, installed and real live results, original command exits and immutable runtime artifacts.

@@ -48,7 +48,96 @@ catalog visibility, full policy snapshots and safe preinitialization audit loggi
 remain required. Admin, downloader, metadata and application identities remain
 separate. Credentials and deployment configuration stay private.
 
+## Caller-selected adaptive append
+
+The bounded append continuation keeps `spark.sql.adaptive.enabled=true` throughout
+the actual classic PySpark application. Its two existing native entry points are:
+
+```python
+source.write.mode("append").insertInto("catalog.schema.existing_table")
+source.write.mode("append").saveAsTable("catalog.schema.existing_table")
+```
+
+The source remains an admitted registered relation or admitted conditioned join;
+the exercised exchange-bearing source is a self-join on the registered source's
+`id`. Payload rows are neither collected nor reconstructed by the bridge. Schema
+names, types, nullability and order must match the existing PUBLISHED target.
+Writer options remain empty. The existing session transaction pair and
+`txnVersion.autoReset.enabled=false` retain their previous contract. Both
+null/default-helper branches are exercised without toggling caller AQE. This
+does not admit SQL INSERT, `writeTo.append`, raw-path writes, arbitrary source
+grammar, schema evolution or additional writer options.
+
+The append-owned callback records a final stock adaptive payload with materialized
+shuffle stages. Metadata and independent readback callbacks are recorded
+separately. A metadata adaptive wrapper does not qualify an adaptive write.
+Original source columns and occurrences retain SELECT checks, masks and filters;
+public target MODIFY_TABLE still supplies Ranger UPDATE through the existing
+provider mapping. Target SELECT remains read authority, not an insertion
+constraint. Admin, policy downloader, metadata reader and application identities
+are distinct, and canonical four-part Ranger resources retain their metalake
+service binding. Gravitino retains registration ownership and Delta retains native
+files, actions and publication. Only the exact observed native-version receipt
+advance may change the registration after a commit.
+
+Existing entry/precommit checks, authorized/denied duplicate behavior and known
+commit recovery remain in force. An authorized duplicate rechecks authority,
+skips payload generation and creates no second publication. The public-revoke
+case downloads and applies the new policy in the same JVM after native file
+generation and before publication, then observes the existing precommit refusal.
+This is a measured boundary, not a per-stage or atomic Ranger/Delta revocation
+fence. Preserve exceptions and independently inspect native state before retrying
+an uncertain write; postcommit observation failure is not rollback.
+
+Native target and direct attribute-Project cache keys are maintained in both
+insertion orders, including duplicate and late readback. Late readback constructs
+fresh native DataFrames in the retained native session after the append owner
+exits. Reusing an already executed Dataset/QueryExecution is a separate boundary:
+a development attempt returned its old rows even though replacement cache owners
+selected the new head. That observation is retained; refreshing such retained
+QueryExecutions is not qualified here. Native CacheManager's existing compilation
+clone/configuration behavior remains distinct from the unchanged caller AQE
+setting. Governed cached SELECT and application-cached append sources remain
+outside this scope.
+
+CDF-enabled and CDF-disabled target continued use, partitioned targets and classic
+multipart checkpoint plus JSON-tail reopening are separately exercised. CDF
+enable/disable setup histories are native fixture setup before ADOPT; they do not
+qualify changing CDF properties under caller AQE or broader Delta table features.
+Checkpoint acceptance requires actual parts/pointer and exact independent
+reopened rows/version, not just a successful append return.
+
+The Iceberg 1.11/Kyuubi 1.10.2 reference covers native HadoopCatalog and Gravitino
+wrapper on both Spark patches, with four append frontends and actual adaptive
+payloads. Its target UPDATE resource and post-rewrite source permission audits
+differ from Delta's canonical resource and original-demand checks: a constant
+masked source column was absent from the Iceberg permission audits. This is a
+measured observer result, not permission to remove Delta's original-column
+authorization. The reference does not itself qualify Delta's duplicate,
+registration, native cache, checkpoint or after-helper revalidation guarantees.
+Its `writeTo.append` and SQL INSERT SELECT successes do not expand Delta's two
+qualified frontends.
+
+All execution remains bounded to the pinned Spark/Delta pairs, classic local
+PySpark, Java 17, Scala 2.12.21, actual Ranger server/client 2.8.0 and the
+manifested Hadoop/S3A 3.3.6 MinIO profile. One writer job per dataset is assumed.
+Catalog-demo, Connect/streaming, separate workers, production authentication and
+full Delta support remain separate work.
+
+The development subset has 14 actual application attempts across seven profiles,
+with original exits and independent public/runtime/payload/native checks passing.
+This remains candidate evidence. Final qualification requires all four frozen
+Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 cells, each with 67 selected installed methods
+and 26 live profiles / 42 application write attempts. The final index is retained
+at `.superpowers/sdd/2026-10-28-delta-append-aqe/final-evidence-index.json` when that
+matrix and independent reviews complete. No final four-pair result is claimed yet.
+
 ## Native cache and checkpoint scope
+
+The following cache/protocol limits describe the historical October 18 AQE=false
+profile. The adaptive continuation above has separate candidate evidence and
+continues to exclude broader table/cache histories.
+
 
 Automatic native refresh is qualified for existing raw target cache entries and
 direct attribute-Project dependents, in both target-first and Project-first
@@ -184,6 +273,10 @@ and an absent target cache entry. These expected negative tests describe
 postcommit maintenance failure, not denied-before-write evidence.
 
 ## Remaining work
+
+This list records the October 18 append boundary. Later CDF, MERGE and ordinary-read
+results are tracked separately in the [current parity table](delta-spark-parity.md);
+the adaptive append continuation above has its own qualification gate.
 
 SQL INSERT VALUES/SELECT, `writeTo.append`, raw-path writes, broader writer options,
 reset=true, overwrite, UPDATE/DELETE/MERGE, CTAS/RTAS, streaming, auto-compaction,

@@ -491,5 +491,857 @@ class TestAppendAqeChecks(unittest.TestCase):
                     verify_iceberg_append(value)
 
 
+class TestDeltaAppendAqeChecks(unittest.TestCase):
+    """Behavioral Delta mutants are independent of the Iceberg contract."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.counter = 0
+
+    def artifact(self, value):
+        self.counter += 1
+        path = self.root / str(self.counter)
+        path.write_text(json.dumps(value))
+        return file_ref(path)
+
+    def fixture(self, outcome="committed"):
+        before = dict(
+            version=0,
+            rows=[[0, "sentinel", "seed"]],
+            nativeId="native-id",
+            publications=[],
+        )
+        after = copy.deepcopy(before)
+        if outcome in ("committed", "postcommit-failure"):
+            after.update(
+                version=1,
+                rows=before["rows"]
+                + [[1, "MASKED", "allowed"], [3, "MASKED", "allowed"]],
+                publications=[1],
+            )
+        if outcome == "duplicate":
+            before = copy.deepcopy(after)
+            before.update(
+                version=1,
+                rows=[
+                    [0, "sentinel", "seed"],
+                    [1, "MASKED", "allowed"],
+                    [3, "MASKED", "allowed"],
+                ],
+                publications=[1],
+            )
+            after = copy.deepcopy(before)
+        resource = dict(catalog="catalog", database="db", table="source", column="id")
+        events = [
+            dict(
+                resource=resource,
+                user="app",
+                accessType="select",
+                policyType=0,
+                allowed=outcome != "source-denied",
+            ),
+            dict(
+                resource=dict(resource, table="target", column="*"),
+                user="app",
+                accessType="update",
+                policyType=0,
+                allowed=outcome not in ("target-denied", "denied-duplicate"),
+            ),
+        ]
+        connection = dict(
+            gatewayType="py4j.clientserver.ClientServer",
+            clientType="py4j.clientserver.JavaClient",
+            pythonThread=1,
+            connectionId=2,
+            socket=["127.0.0.1", 1],
+            peer=["127.0.0.1", 2],
+            jvmThread=3,
+            aqe="true",
+        )
+
+        def policy_entry(table, accesses):
+            return dict(
+                id=1 if table == "source" else 2,
+                policyType=0,
+                resources={
+                    k: dict(values=[v], isExcludes=False, isRecursive=False)
+                    for k, v in dict(
+                        catalog="catalog", database="db", table=table, column="*"
+                    ).items()
+                },
+                policyItems=[
+                    dict(
+                        roles=["role"],
+                        accesses=[dict(type=a, isAllowed=True) for a in accesses],
+                    )
+                ],
+            )
+
+        source_allowed = outcome != "source-denied"
+        target_allowed = outcome not in ("target-denied", "denied-duplicate")
+        policy = dict(
+            policyVersion=2,
+            serviceName="service",
+            policies=[
+                policy_entry("source", ["select"] if source_allowed else []),
+                policy_entry(
+                    "target",
+                    ["select", "update", "alter"] if target_allowed else ["select"],
+                ),
+            ],
+        )
+        public = dict(
+            appUser=dict(name="app", roles=["role"]),
+            appRole=dict(
+                name="role",
+                rangerRole="role",
+                securableObjects=[
+                    dict(
+                        fullName="catalog.db.source",
+                        privileges=[dict(name="select_table", condition="allow")]
+                        if source_allowed
+                        else [],
+                    ),
+                    dict(
+                        fullName="catalog.db.target",
+                        privileges=[
+                            dict(name=n.lower(), condition="allow")
+                            for n in (
+                                ["SELECT_TABLE", "MODIFY_TABLE"]
+                                if target_allowed
+                                else ["SELECT_TABLE"]
+                            )
+                        ],
+                    ),
+                ],
+            ),
+            metadataUser=dict(name="metadata"),
+        )
+        roles = dict(
+            roleVersion=1,
+            rangerRoles=[
+                dict(
+                    name="role",
+                    users=[dict(name="app", isAdmin=False)],
+                    groups=[],
+                    roles=[],
+                )
+            ],
+        )
+        applied = dict(
+            policy=2,
+            role=1,
+            download=self.artifact(policy),
+            roleDownload=self.artifact(roles),
+            publicState=self.artifact(public),
+        )
+        privilege = "SELECT_TABLE" if not source_allowed else "MODIFY_TABLE"
+        grant = source_allowed and target_allowed
+        table = "source" if not source_allowed else "target"
+        transition = dict(
+            privilege=privilege,
+            grant=grant,
+            beforePolicy=1,
+            afterPolicy=2,
+            publicRequest=self.artifact(
+                dict(
+                    method="PUT",
+                    path="/api/metalakes/lake/permissions/roles/role/table/catalog.db."
+                    + table
+                    + ("/grant/" if grant else "/revoke/"),
+                    body=dict(privileges=[dict(name=privilege, condition="ALLOW")]),
+                )
+            ),
+            publicResponse=self.artifact(dict(code=0)),
+            callbacks=self.artifact(
+                [
+                    dict(
+                        method="PUT",
+                        path="/service/public/v2/api/policy/1",
+                        completion="confirmed",
+                        downstream="sent",
+                        upstream_status=200,
+                        started_ns=1,
+                        completed_ns=2,
+                        response_sha256="a" * 64,
+                    )
+                ]
+            ),
+        )
+        case = dict(
+            name="case",
+            api="insertInto",
+            outcome=outcome,
+            source="source",
+            target="target",
+            callerBefore=connection,
+            callerAfter=copy.deepcopy(connection),
+            before=self.artifact(before),
+            after=self.artifact(after),
+            rangerRequests=events,
+            applied=self.artifact(applied),
+            publicTransition=self.artifact(transition),
+            rangerState=self.artifact(dict(policies=policy, roles=roles)),
+            failure=[],
+            callbacks=[
+                dict(
+                    kind="write-payload",
+                    failed=False,
+                    queryId=7,
+                    appendOwner=True,
+                    planNodes=[
+                        dict(className="AdaptiveSparkPlanExec", isFinalPlan=True),
+                        dict(className="ShuffleQueryStageExec", materialized=True),
+                    ],
+                )
+            ],
+        )
+        if outcome not in ("committed", "duplicate"):
+            case["failure"] = [
+                dict(
+                    className="java.lang.SecurityException",
+                    message="Delta Ranger access denied",
+                    stack=[
+                        "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerPolicyEngine.authorize(DeltaRangerPolicyEngine.java:100)"
+                    ],
+                )
+            ]
+        if outcome == "postcommit-failure":
+            case["failure"] = [
+                dict(
+                    className="java.lang.IllegalStateException",
+                    message="postcommit readback failed",
+                    stack=[],
+                )
+            ]
+        return dict(
+            schemaVersion=1,
+            spark="3.5.4",
+            delta="3.3.0",
+            subject="app",
+            metadataSubject="metadata",
+            verificationSubject="setup",
+            metalake="lake",
+            catalog="catalog",
+            database="db",
+            processExits={
+                name: self.artifact(dict(exitCode=0, timedOut=False))
+                for name in ["writer", "native-before", "native-after", "supervisor"]
+            },
+            cases=[case],
+        )
+
+    def check(self, value):
+        import append_aqe_checks
+
+        checker = getattr(append_aqe_checks, "verify_delta_append", None)
+        self.assertTrue(callable(checker), "Delta observations need a separate checker")
+        checker(value)
+
+    def test_delta_commit_and_duplicate_and_postcommit_classification(self):
+        for outcome in [
+            "committed",
+            "duplicate",
+            "source-denied",
+            "target-denied",
+            "denied-duplicate",
+            "postcommit-failure",
+        ]:
+            with self.subTest(outcome=outcome):
+                self.check(self.fixture(outcome))
+
+    def test_delta_rejects_missing_authority_and_metadata_only_aqe(self):
+        mutations = {
+            "missing-source-select": lambda c: c.update(
+                rangerRequests=c["rangerRequests"][1:]
+            ),
+            "missing-target-update": lambda c: c.update(
+                rangerRequests=c["rangerRequests"][:1]
+            ),
+            "missing-public-transition": lambda c: c.pop("publicTransition"),
+            "missing-applied-download": lambda c: c.update(
+                applied=self.artifact(dict(policy=2, role=1))
+            ),
+            "metadata-only-aqe": lambda c: c["callbacks"][0].update(kind="metadata"),
+            "unowned-adaptive-plan": lambda c: c["callbacks"][0].update(
+                appendOwner=False
+            ),
+            "caller-aqe-toggle": lambda c: c["callerAfter"].update(aqe="false"),
+            "new-py4j-connection": lambda c: c["callerAfter"].update(connectionId=8),
+            "unexpected-rows": lambda c: c.update(
+                after=self.artifact(
+                    dict(
+                        version=1,
+                        rows=[[0, "sentinel", "seed"]],
+                        nativeId="native-id",
+                        publications=[1],
+                    )
+                )
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                value = self.fixture()
+                mutate(value["cases"][0])
+                with self.assertRaises(AssertionError):
+                    self.check(value)
+
+    def test_posthelper_refusal_requires_real_held_thread_witness(self):
+        value = self.fixture("target-denied")
+        case = value["cases"][0]
+        case["outcome"] = "after-helper-revoked"
+        case["rangerRequests"][1]["allowed"] = True
+        case["failure"] = [
+            dict(
+                className="java.lang.SecurityException",
+                message="Delta Ranger publication changed; reanalyze the query",
+                stack=[
+                    "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerPolicyEngine.requireSnapshot(DeltaRangerPolicyEngine.java:100)"
+                ],
+            )
+        ]
+        with self.assertRaises(AssertionError):
+            self.check(value)
+
+    def test_delta_requires_actual_downloaded_role_membership(self):
+        value = self.fixture()
+        case = value["cases"][0]
+        applied = json.loads(Path(case["applied"]["path"]).read_text())
+        applied.pop("roleDownload")
+        case["applied"] = self.artifact(applied)
+        with self.assertRaises(AssertionError):
+            self.check(value)
+
+    def test_delta_payload_ownership_cannot_be_borrowed_from_another_callback(self):
+        value = self.fixture()
+        case = value["cases"][0]
+        case["callbacks"][0]["appendOwner"] = False
+        case["callbacks"].append(
+            dict(
+                kind="write-payload",
+                failed=False,
+                appendOwner=True,
+                queryId=8,
+                planNodes=[],
+            )
+        )
+        with self.assertRaises(AssertionError):
+            self.check(value)
+
+    def test_delta_rejects_false_denial_duplicate_checkpoint_and_cache(self):
+        cases = [
+            (
+                "generic-error-denial",
+                "source-denied",
+                lambda c: c.update(
+                    failure=[
+                        dict(
+                            className="java.net.SocketTimeoutException",
+                            message="timeout",
+                            stack=[],
+                        )
+                    ]
+                ),
+            ),
+            (
+                "duplicate-publication",
+                "duplicate",
+                lambda c: c.update(
+                    after=self.artifact(
+                        dict(
+                            version=2,
+                            rows=[
+                                [0, "sentinel", "seed"],
+                                [1, "MASKED", "allowed"],
+                                [3, "MASKED", "allowed"],
+                            ],
+                            nativeId="native-id",
+                            publications=[1, 2],
+                        )
+                    )
+                ),
+            ),
+            (
+                "postcommit-called-rollback",
+                "target-denied",
+                lambda c: c.update(
+                    after=self.artifact(
+                        dict(
+                            version=1,
+                            rows=[
+                                [0, "sentinel", "seed"],
+                                [1, "MASKED", "allowed"],
+                                [3, "MASKED", "allowed"],
+                            ],
+                            nativeId="native-id",
+                            publications=[1],
+                        )
+                    )
+                ),
+            ),
+            (
+                "wrong-checkpoint-rows",
+                "committed",
+                lambda c: c.update(
+                    checkpoint=self.artifact(
+                        dict(
+                            version=1,
+                            rows=[],
+                            nativeId="native-id",
+                            files=[self.artifact("checkpoint")],
+                        )
+                    )
+                ),
+            ),
+            (
+                "wrong-warm-cache-result",
+                "committed",
+                lambda c: c.update(
+                    warm=self.artifact(
+                        dict(
+                            order="target-first",
+                            targetRows=[],
+                            repeatedTargetRows=[],
+                            dependentRows=[],
+                        )
+                    )
+                ),
+            ),
+        ]
+        for name, outcome, mutate in cases:
+            with self.subTest(name=name):
+                value = self.fixture(outcome)
+                mutate(value["cases"][0])
+                with self.assertRaises(AssertionError):
+                    self.check(value)
+
+
+class TestAppendAqePublicTransitions(unittest.TestCase):
+    def fixture(self):
+        def public(selected):
+            return dict(
+                appUser=dict(name="app", roles=["role"]),
+                metadataUser=dict(name="meta", roles=["meta-role"]),
+                metadataRole=dict(
+                    name="meta-role",
+                    securableObjects=[
+                        dict(
+                            fullName="cat.db.source",
+                            privileges=[dict(name="SELECT_TABLE", condition="ALLOW")],
+                        )
+                    ],
+                ),
+                appRole=dict(
+                    name="role",
+                    securableObjects=[
+                        dict(
+                            fullName="cat.db.source",
+                            privileges=[dict(name="SELECT_TABLE", condition="ALLOW")]
+                            if selected
+                            else [],
+                        )
+                    ],
+                ),
+            )
+
+        def snapshot(selected, version):
+            return dict(
+                public=public(selected),
+                policies=dict(
+                    policyVersion=version,
+                    policies=[
+                        dict(
+                            id=1,
+                            policyType=0,
+                            resources=dict(table=dict(values=["source"])),
+                            policyItems=[
+                                dict(
+                                    roles=["meta-role"]
+                                    + (["role"] if selected else []),
+                                    accesses=[dict(type="select", isAllowed=True)],
+                                )
+                            ],
+                        ),
+                        dict(
+                            id=2,
+                            policyType=2,
+                            resources=dict(table=dict(values=["source"])),
+                            rowFilterPolicyItems=[dict(filter="region = 'allowed'")],
+                        ),
+                    ],
+                ),
+                roles=dict(roleVersion=1, rangerRoles=[]),
+            )
+
+        plan = dict(catalog="cat", database="db", appRole="role", rangerAppRole="role")
+        callbacks = [
+            dict(
+                method="PUT",
+                path="/service/public/v2/api/policy/1",
+                completion="confirmed",
+                downstream="sent",
+                upstream_status=200,
+                started_ns=1,
+                completed_ns=2,
+                response_sha256="a" * 64,
+            )
+        ]
+        return plan, snapshot(True, 1), snapshot(False, 2), callbacks
+
+    def check(self, plan, before, after, callbacks):
+        try:
+            from append_aqe_public import verify_public_transition
+        except ImportError:
+            self.fail("Public SELECT needs a bounded transition oracle")
+        verify_public_transition(
+            plan, "source", "SELECT_TABLE", False, before, after, callbacks
+        )
+
+    def test_source_select_revoke_preserves_metadata_and_source_filter(self):
+        plan, before, after, callbacks = self.fixture()
+        self.check(plan, before, after, callbacks)
+
+    def test_source_select_rejects_unrelated_policy_and_metadata_drift(self):
+        for kind in ["filter", "metadata", "callback", "role"]:
+            with self.subTest(kind=kind):
+                plan, before, after, callbacks = self.fixture()
+                if kind == "filter":
+                    after["policies"]["policies"][1]["rowFilterPolicyItems"] = []
+                elif kind == "metadata":
+                    after["public"]["metadataRole"]["securableObjects"] = []
+                elif kind == "callback":
+                    callbacks[0]["path"] = "/service/public/v2/api/policy/8"
+                else:
+                    after["roles"]["rangerRoles"] = [dict(name="other")]
+                with self.assertRaises(AssertionError):
+                    self.check(plan, before, after, callbacks)
+
+
+class TestAppendAqePythonProviders(unittest.TestCase):
+    def test_real_file_and_zip_import_provenance(self):
+        import hashlib
+        import importlib.util
+        import zipimport
+        from append_aqe_profiles import module_provenance
+
+        source = b"answer = 42\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plain = root / "plain_provider.py"
+            plain.write_bytes(source)
+            archive = root / "providers.zip"
+            with zipfile.ZipFile(archive, "w") as output:
+                output.writestr("zip_provider.py", source)
+            specs = [
+                importlib.util.spec_from_file_location("plain_provider", plain),
+                zipimport.zipimporter(str(archive)).find_spec("zip_provider"),
+            ]
+            for spec in specs:
+                with self.subTest(loader=type(spec.loader).__name__):
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    try:
+                        evidence = module_provenance(module)
+                    except OSError:
+                        self.fail(
+                            "Zip-imported providers must be read through their actual loader"
+                        )
+                    self.assertEqual(
+                        hashlib.sha256(source).hexdigest(), evidence["sha256"]
+                    )
+                    self.assertEqual(module.__file__, evidence["path"])
+                    self.assertIn("container", evidence)
+                    self.assertTrue(Path(evidence["container"]["path"]).is_file())
+                    if isinstance(spec.loader, zipimport.zipimporter):
+                        self.assertEqual("zip_provider.py", evidence["member"])
+
+
+class TestAppendAqeNativeMetadata(unittest.TestCase):
+    def test_delta_metadata_accepts_action_wrapper_and_direct_body(self):
+        from append_aqe_profiles import metadata_body
+
+        body = dict(id="native", partitionColumns=["region"], configuration={})
+        self.assertEqual(body, metadata_body(body))
+        self.assertEqual(body, metadata_body(dict(metaData=body)))
+        for malformed in [
+            dict(metaData=body, protocol={}),
+            dict(metaData={}),
+            dict(partitionColumns="region"),
+        ]:
+            with self.subTest(malformed=malformed):
+                with self.assertRaises(AssertionError):
+                    metadata_body(malformed)
+
+
+class TestAppendAqeRegistrations(unittest.TestCase):
+    def test_only_exact_target_receipt_version_may_advance(self):
+        from append_aqe_profiles import verify_registration_transition
+
+        def registration(name):
+            return dict(
+                code=0,
+                table=dict(
+                    name=name,
+                    properties={
+                        "delta.registration.receipt.nativeVersion": "0",
+                        "delta.registration.receipt.nativeId": name + "-native",
+                        "location": "s3a://fixture/" + name,
+                    },
+                ),
+            )
+
+        before = {name: registration(name) for name in ("source", "target")}
+        after = copy.deepcopy(before)
+        key = "delta.registration.receipt.nativeVersion"
+        after["target"]["table"]["properties"][key] = "1"
+        verify_registration_transition(before, after, "target", 0, 1)
+        verify_registration_transition(after, after, "target", 1, 1)
+        for table, field, value in [
+            ("source", key, "1"),
+            ("target", key, "2"),
+            ("target", key, "01"),
+            ("target", "delta.registration.receipt.nativeId", "other"),
+            ("target", "location", "s3a://other/"),
+        ]:
+            with self.subTest(table=table, field=field):
+                mutated = copy.deepcopy(after)
+                mutated[table]["table"]["properties"][field] = value
+                with self.assertRaises(AssertionError):
+                    verify_registration_transition(before, mutated, "target", 0, 1)
+
+
+class TestAppendAqeMaintenanceEvidence(unittest.TestCase):
+    def native(self, profile="cdf-enabled", commits=2):
+        enabled = profile == "cdf-enabled"
+        before = dict(
+            version=commits,
+            metadata={"metaData": {"id": "native"}},
+            protocol={"protocol": {"minWriterVersion": 4}},
+            schemaJson="fixed-schema",
+            partitionColumns=["region"] if profile == "partitioned" else [],
+            native=dict(
+                properties={"delta.enableChangeDataFeed": str(enabled).lower()}
+            ),
+            intervals=[],
+        )
+        after = copy.deepcopy(before)
+        after["version"] = commits + 1
+        if enabled:
+            after["intervals"] = [
+                dict(
+                    startingVersion=2,
+                    endingVersion=commits + 1,
+                    error=None,
+                    rows=[
+                        [row[0], row[1], row[2], "insert", version]
+                        for version in range(2, commits + 2)
+                        for row in [[1, "MASKED", "allowed"], [3, "MASKED", "allowed"]]
+                    ],
+                )
+            ]
+        return before, after
+
+    def warm(self, order="target-first"):
+        before = dict(
+            aqe=True,
+            asyncStaleness=0,
+            roles=["target", "project"],
+            matchingOrder=["project", "target"]
+            if order == "target-first"
+            else ["target", "project"],
+            unrelated=dict(key="other", loaded=True),
+            entries=[
+                dict(key=key, builder="old-" + key, loaded=True, owner=None)
+                for key in ["target", "project"]
+            ],
+        )
+        after = copy.deepcopy(before)
+        after.update(
+            observedHead="head-1", observedVersion=1, oldBuffersUnloaded=[True, True]
+        )
+        for entry in after["entries"]:
+            entry.update(
+                builder="new-" + entry["key"],
+                loaded=False,
+                owner="owner-" + entry["key"],
+                ownerKey=entry["key"],
+                selectedVersion=1,
+                selectedHead="head-1",
+                producerClass="org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRawProducer",
+            )
+        return dict(order=order, freshDataFrames=True), before, after
+
+    def test_native_profiles_and_both_warm_orders(self):
+        from append_aqe_checks import (
+            _verify_delta_native_profile,
+            _verify_delta_warm_state,
+        )
+
+        for profile in ["cdf-enabled", "cdf-disabled", "partitioned", "plain"]:
+            for commits in [1, 2]:
+                _verify_delta_native_profile(profile, *self.native(profile, commits))
+        for order in ["target-first", "project-first"]:
+            _verify_delta_warm_state(*self.warm(order), 1)
+
+    def test_rejects_native_profile_and_cdf_interval_drift(self):
+        from append_aqe_checks import _verify_delta_native_profile
+
+        for kind in [
+            "metadata",
+            "protocol",
+            "schema",
+            "partition",
+            "cdf-property",
+            "missing-interval",
+            "feed-error",
+            "wrong-row",
+            "wrong-change-type",
+            "missing-first-commit",
+            "wrong-ending-version",
+            "disabled-feed",
+        ]:
+            with self.subTest(kind=kind):
+                profile = "cdf-disabled" if kind == "disabled-feed" else "cdf-enabled"
+                before, after = self.native(profile)
+                if kind in ["metadata", "protocol"]:
+                    after[kind] = {"changed": True}
+                elif kind == "schema":
+                    after["schemaJson"] = "changed"
+                elif kind == "partition":
+                    after["partitionColumns"] = ["region"]
+                elif kind == "cdf-property":
+                    for image in [before, after]:
+                        image["native"]["properties"]["delta.enableChangeDataFeed"] = (
+                            "false"
+                        )
+                elif kind == "missing-interval":
+                    after["intervals"] = []
+                elif kind == "feed-error":
+                    after["intervals"][0]["error"] = {"class": "Failure"}
+                elif kind == "wrong-row":
+                    after["intervals"][0]["rows"][0][1] = "unmasked"
+                elif kind == "wrong-change-type":
+                    after["intervals"][0]["rows"][0][3] = "delete"
+                elif kind == "missing-first-commit":
+                    after["intervals"][0]["startingVersion"] = 3
+                    after["intervals"][0]["rows"] = after["intervals"][0]["rows"][2:]
+                elif kind == "wrong-ending-version":
+                    after["intervals"][0]["endingVersion"] = 4
+                elif kind == "disabled-feed":
+                    after["intervals"] = [{"error": None}]
+                with self.assertRaises(AssertionError):
+                    _verify_delta_native_profile(profile, before, after)
+
+    def test_rejects_warm_buffer_key_and_owner_drift(self):
+        from append_aqe_checks import _verify_delta_warm_state
+
+        for kind in [
+            "retained-qe",
+            "wrong-order",
+            "not-unloaded",
+            "already-loaded",
+            "old-builder",
+            "key",
+            "owner",
+            "head",
+            "version",
+            "unrelated",
+        ]:
+            with self.subTest(kind=kind):
+                warm, before, after = self.warm()
+                if kind == "retained-qe":
+                    warm["freshDataFrames"] = False
+                elif kind == "wrong-order":
+                    before["matchingOrder"].reverse()
+                elif kind == "not-unloaded":
+                    after["oldBuffersUnloaded"][0] = False
+                elif kind == "already-loaded":
+                    after["entries"][0]["loaded"] = True
+                elif kind == "old-builder":
+                    after["entries"][0]["builder"] = before["entries"][0]["builder"]
+                elif kind == "key":
+                    after["entries"][0]["key"] = "copied-key"
+                elif kind == "owner":
+                    after["entries"][0]["ownerKey"] = "copied-key"
+                elif kind == "head":
+                    after["entries"][0]["selectedHead"] = "stale-head"
+                elif kind == "version":
+                    after["entries"][0]["selectedVersion"] = 0
+                elif kind == "unrelated":
+                    after["unrelated"]["key"] = "changed"
+                with self.assertRaises(AssertionError):
+                    _verify_delta_warm_state(warm, before, after, 1)
+
+
+class TestAppendAqeProfiles(unittest.TestCase):
+    def profiles(self):
+        try:
+            from append_aqe_profiles import case_specs
+        except ImportError:
+            self.fail("Final matrix requires an explicit bounded case inventory")
+        return case_specs()
+
+    def test_both_native_frontends_have_every_required_profile(self):
+        cases = self.profiles()
+        self.assertEqual(26, len(cases))
+        self.assertEqual(26, len({case["name"] for case in cases}))
+        for api in ["insertInto", "saveAsTable"]:
+            profiles = {case["profile"] for case in cases if case["api"] == api}
+            self.assertEqual(
+                {
+                    "plain",
+                    "partitioned",
+                    "source-denied",
+                    "target-denied",
+                    "duplicate",
+                    "denied-duplicate",
+                    "revoke",
+                    "warm-target-first",
+                    "warm-project-first",
+                    "cdf-enabled",
+                    "cdf-disabled",
+                    "checkpoint",
+                    "no-default",
+                },
+                profiles,
+            )
+
+    def test_profiles_preserve_explicit_transactions_and_caller_aqe(self):
+        from append_aqe_profiles import settings
+
+        for case in self.profiles():
+            values = settings(case, "owned-app-id")
+            self.assertEqual("true", values["spark.sql.adaptive.enabled"])
+            self.assertEqual(
+                "false",
+                values["spark.databricks.delta.write.txnVersion.autoReset.enabled"],
+            )
+            self.assertEqual(
+                "owned-app-id", values["spark.databricks.delta.write.txnAppId"]
+            )
+            self.assertEqual("1", values["spark.databricks.delta.write.txnVersion"])
+            self.assertEqual(
+                case["profile"] != "no-default",
+                values["spark.sql.defaultColumn.useNullsForMissingDefaultValues"]
+                == "true",
+            )
+
+
+class TestAppendAqePackageProfile(unittest.TestCase):
+    def test_separate_append_profile_preserves_existing_read_profile(self):
+        from cdf_read_live_package import app_profile
+
+        profile = app_profile("append-aqe")
+        self.assertEqual("appendAqeLiveThinJar", profile["task"])
+        self.assertEqual("appendAqeLiveAppOut", profile["property"])
+        self.assertEqual("append-aqe-live.jar", profile["jar"])
+        self.assertTrue(profile["provider"].endswith("DeltaRangerLiveAppendAqe"))
+        self.assertEqual("readParityLiveThinJar", app_profile("read-parity")["task"])
+        with self.assertRaises(AssertionError):
+            app_profile("unknown-append")
+
+
 if __name__ == "__main__":
     unittest.main()

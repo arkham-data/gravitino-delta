@@ -458,3 +458,42 @@ acceptance passed 104/104. The supplement index is
 Scoped re-review and the final whole-milestone review passed with no findings.
 The approved ordinary-read milestone is closed; append AQE, catalog-demo and
 production deployment remain separate work.
+
+## Native PySpark append with caller AQE
+
+The `append-aqe` package profile contains observations and policy/barrier control.
+The classic Python app itself constructs the registered source and calls native
+`DataFrameWriter.mode("append").insertInto` or existing-table `saveAsTable`.
+It does not collect/reconstruct the write payload. Caller AQE remains true.
+
+```bash
+python delta/acceptance/cdf_read_live_package.py --app append-aqe \
+  --base <verified-shared-manifest> --out <fresh-package-dir> \
+  --spark <3.5.4-or-3.5.6> --delta <3.3.0-or-3.3.2>
+python delta/acceptance/append_aqe_live.py --runtime <package-manifest> \
+  --inputs <private-inputs> --out <fresh-live-dir>
+```
+
+The finite inventory has 26 profiles / 42 application write attempts per pair.
+A `--case` subset is development evidence and always has `qualification=false`.
+Capture the runner's original supervisor exit externally, retain `raw-result.json`
+unchanged, join that actual exit into a fresh `checked-result.json`, and invoke
+`append_aqe_checks.verify_delta_append`. Require original nonzero inventories and
+zero failures/errors/skips; preserve all original failures and committed state.
+No missing supervisor receipt may be replaced with another command's exit.
+
+The fixture uses real public Gravitino SELECT_TABLE/MODIFY_TABLE transitions,
+Ranger 2.8 policy/role downloads and distinct admin/downloader/metadata/application
+identities. The bridge binds the actual pinned Python connection's JVM thread;
+its revocation witness must hold that thread after helper file generation. Policy
+ACKs, generic errors and metadata/readback adaptive plans cannot qualify a write.
+Fresh late native DataFrames verify maintained cache keys after owner exit. A
+retained already executed Dataset/QE is a separate, unqualified refresh boundary.
+CDF histories are native setup before ADOPT; checkpoint qualification requires
+actual parts/pointer and native reopen rows/version. See the
+[append scope](../../docs/delta-native-governed-append.md#caller-selected-adaptive-append).
+
+The seven-profile / 14-attempt development subset has passed. Final qualification
+still requires the frozen 67-method installed selection and complete live
+inventory on all four pairs, independent checks and controller-owned reviews.
+Catalog-demo and deployment remain deferred.
