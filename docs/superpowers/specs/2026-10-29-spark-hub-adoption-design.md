@@ -15,15 +15,15 @@
  limitations under the License.
 -->
 
-# Spark Hub adoption of governed Delta — proposed design
+# Spark Hub adoption of governed Delta — design
 
-Status: planning draft requested by the user on 2026-10-29; no new implementation or production migration is claimed. The user selected subagent-driven execution earlier. This document preserves that choice, but does not mark the proposed design or later milestone contracts approved.
+Status: M0/M1 execution was approved on 2026-10-29 using the selected subagent-driven workflow. The workload register, bindings, optional startup profile and named-read service are implemented and independently reviewed. Task 4 code and Python source-archive preflight are reviewed/prepared; Scala/build and live qualification remain pending. Later milestone contracts require their own designs.
 
 ## Intent and baseline
 
 Make the actual Spark Hub ingestion, transformation, incremental processing and maintenance paths operate through Gravitino-owned Delta registrations with Ranger policy enforcement. Spark Hub is the primary adoption acceptance repository; catalog-demo remains a separate, later integration. Passing a catalog-demo example does not qualify Spark Hub.
 
-The source audit inspected Spark Hub commit `74b71155478d4a5f78360108002c95399310a998` and Gravitino candidate `6834b18f9349fab8c97decd1cec0de0140a69666`. The existing append-AQE milestone is still running and must close independently. Its frozen producing sources must not be modified by this planning work. Before implementation, rebase the planning branch onto its reviewed closure and reconcile any contract differences.
+The source audit inspected Spark Hub commit `74b71155478d4a5f78360108002c95399310a998` and Gravitino candidate `6834b18f9349fab8c97decd1cec0de0140a69666`. The existing append-AQE milestone is still running and must close independently. Its frozen producing sources must not be modified by this planning work. Before JVM checks, native runtime packaging or live qualification, integrate its independently reviewed closure into the isolated adoption branch and reconcile any contract differences. Use a merge to preserve the audited commit references as reachable ancestors; code and pure Python checks may proceed independently beforehand.
 
 Source evidence: Spark Hub's `src/shared/commands/job_runner.py` delegates non-preview output to `src/shared/services/v2/delta.py`; that sink uses path writes, schema options, native MERGE and Glue refresh. `src/shared/services/v3/cdf_reader.py` reads open-ended path CDF; `src/shared/utils/incremental/state_manager.py` overwrites state paths. Join v4 unions transformed sources and eagerly checkpoints them. These are production-source call paths, not proof of current deployment frequency.
 
@@ -49,7 +49,7 @@ Detailed local audit: `../../../../delta-spark-feasibility/.superpowers/sdd/2026
 2. **Adapt every job to today's bounded connector contract.** Smaller initial connector changes, but requires removing or rewriting overwrite/schema evolution, generated partitions, joins/windows/checkpoints and streaming. It would change platform behavior and produce repeated adapters. It does not meet the stated full-support objective.
 3. **Complete a general-purpose Delta catalog before integrating any real job.** A broad native delegation architecture is attractive, but implementing all Delta features first gives little early evidence that actual Spark Hub semantics work. Use the shared-service approach and workload-driven milestones instead; keep the remaining full-Delta feature inventory explicit.
 
-The recommended approach is a proposal based on the audit, not a claim that the user previously chose these detailed phases. No live Glue deletion or cutover is included in planning authorization.
+M0/M1 is the approved first implementation slice. Later phases retain separate design gates; live Glue deletion and cutover are outside this slice.
 
 ## Boundaries and responsibilities
 

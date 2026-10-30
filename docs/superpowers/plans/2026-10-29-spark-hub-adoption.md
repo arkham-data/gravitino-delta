@@ -25,9 +25,9 @@
 
 **Tech Stack:** Spark 3.5.4/3.5.6, Delta 3.3.0/3.3.2, Java 17, Scala 2.12.21, Ranger server/client 2.8.0, classic PySpark, S3/MinIO.
 
-**Spec:** [Proposed adoption design](../specs/2026-10-29-spark-hub-adoption-design.md).
+**Spec:** [Adoption design](../specs/2026-10-29-spark-hub-adoption-design.md).
 
-Status: proposed roadmap; implementation has not started. Planning lives on `codex/spark-hub-adoption-plan`, separately from the frozen append-AQE worktree. The first detailed plan is [M0/M1](2026-10-29-spark-hub-catalog-foundation.md).
+Status: the approved [M0/M1 plan](2026-10-29-spark-hub-catalog-foundation.md) is in progress. Tasks 1–3 are implemented and reviewed; Task 4 code is reviewed and its Python source-archive checks pass on all four pinned pairs. Scala/build and live qualification remain pending. Work lives on `codex/spark-hub-adoption-plan` and Spark Hub `codex/gravitino-catalog-foundation`, separately from the append-AQE worktree. Later milestones remain design-gated.
 
 ## Global Constraints
 
@@ -45,8 +45,9 @@ The design's Global Constraints bind every milestone verbatim. No core/API/serve
 
 ```mermaid
 flowchart LR
-  A[Close append AQE] --> B[M0 workload register]
-  B --> C[M1 named read foundation]
+  A[Close append AQE] --> C[M1 named read qualification]
+  B[M0 workload register] --> P[M1 service and harness]
+  P --> C
   C --> D[M2 ingestion and refresh]
   D --> E[M3 transformed MERGE]
   E --> F[M4 CDF and state correctness]
@@ -56,7 +57,7 @@ flowchart LR
   H --> I[M7 streaming plan]
 ```
 
-Planning and read-only discovery may proceed during append qualification. Mutating connector implementation starts from the reviewed append closure. M5's feature requirements are captured in M0 even though its implementation follows the write foundation. M3 and M4 jointly qualify incremental pipelines.
+Independent catalog-service code, test harness preparation and pure Python checks may proceed during append qualification. Integrate the reviewed append closure while preserving audited commit ancestry before JVM checks, native runtime packaging and live qualification. The frozen append worktree remains isolated. M5's feature requirements are captured in M0 even though its implementation follows the write foundation. M3 and M4 jointly qualify incremental pipelines.
 
 | Milestone | Concrete work and primary ownership | Closure evidence |
 | --- | --- | --- |
