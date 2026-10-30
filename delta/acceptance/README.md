@@ -528,13 +528,18 @@ plans. There are exactly six case IDs: `named-filter-mask`, `projected-count`,
 `column-denied`, `unknown-binding`, `unpublished-registration`, and
 `fresh-action-revoke`.
 
-This code preparation does **not** qualify M1. The coverage register remains
-unqualified until original complete cells on all four Spark 3.5.4/3.5.6 and Delta
-3.3.0/3.3.2 pairs pass the independent checker and review. The structural coverage
-validator does not replace that gate. Unit fixtures say
-`unit-only-nonqualifying` and the full gate rejects them.
+The six named-read cases passed four original cells on Spark 3.5.4/3.5.6 and
+Delta 3.3.0/3.3.2, using Ranger server/client 2.8.0 and MinIO: 24 case outcomes
+and four separately counted authorized revoke preconditions. Each cell passed the
+full checker and a separately captured independent invocation. The producing
+Gravitino revision is `a59564b2e6caa74f97515a0b8b2deff90e1de992`; Spark Hub is
+pinned above. Original references and source hashes are in the private local index
+`.superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json`
+(SHA-256 `92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb`). This ignored evidence is local to the retained
+worktree, not a portable public artifact. Structural coverage validation does not
+replace the original full checks; unit fixtures remain nonqualifying.
 
-After the reviewed runtime gate, package the existing observation application
+To reproduce the qualified fixture, package the existing observation application
 with `cdf_read_live_package.py --app read-parity` for each pair, using fresh output
 paths. The private input document must provide `livePython`: an isolated Python
 3.11 interpreter with that pair's exact `pyspark` and `delta-spark` distributions,
@@ -554,7 +559,10 @@ python3 -m unittest discover -s delta/acceptance -p test_spark_hub_read_checks.p
 ```
 
 The fixture authors its own Ranger policies, separately from public metadata
-principal grants. Its three native rows are `(1, east, a)`, `(2, west, b)` and
+grants. Its distinct metadata principal owns only the isolated fixture schema and
+receives schema-wide owner-mapped Ranger `ALL`; this is broader than least-privilege
+metadata access and does not qualify a deployment profile. Tag policy and audit
+delivery are unqualified. Its three native rows are `(1, east, a)`, `(2, west, b)` and
 `(3, east, c)`; the policy filter is `region = 'east'` and the email mask is
 `'MASKED'`. It explicitly enables AQE, disables both broadcast thresholds and
 sets both shuffle partitions and AQE initial partitions to four before session
@@ -579,3 +587,10 @@ source publication receipts, UUID/name bindings and per-case artifacts are
 retained. A failure is never replayed by the runner. Spark Hub writes,
 streaming and deployment adoption remain incomplete, and no existing pipeline
 or default legacy route switches automatically. All other M0 gaps remain open.
+
+The initial native seed failed after committing source version 0. A later fixture
+role request returned an ambiguous 400 after both version-0 native commits; a
+subsequent metadata 403 did not qualify unpublished admission, and a further
+unsupported probe grant returned an ambiguous 400. Those original attempts and
+objects remain separate and were not replayed. Fresh isolated successor fixtures
+produced the four passing cells.

@@ -27,7 +27,7 @@
 
 **Spec:** [Adoption design](../specs/2026-10-29-spark-hub-adoption-design.md).
 
-Status: the approved [M0/M1 plan](2026-10-29-spark-hub-catalog-foundation.md) is in progress. Tasks 1–3 are implemented and reviewed; Task 4 code is reviewed and its Python source-archive checks pass on all four pinned pairs. Scala/build and live qualification remain pending. Work lives on `codex/spark-hub-adoption-plan` and Spark Hub `codex/gravitino-catalog-foundation`, separately from the append-AQE worktree. Later milestones remain design-gated.
+Status: the approved [M0/M1 plan](2026-10-29-spark-hub-catalog-foundation.md) has four original six-case runtime cells and independent full-check passes. The coverage register records that bounded read profile; whole-milestone review and push remain separate. Work lives on `codex/spark-hub-adoption-plan` and Spark Hub `codex/gravitino-catalog-foundation`, separately from the append-AQE worktree. Later milestones remain design-gated.
 
 ## Global Constraints
 

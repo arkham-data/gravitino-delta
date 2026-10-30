@@ -17,7 +17,7 @@
 
 # Spark Hub adoption of governed Delta — design
 
-Status: M0/M1 execution was approved on 2026-10-29 using the selected subagent-driven workflow. The workload register, bindings, optional startup profile and named-read service are implemented and independently reviewed. Task 4 code and Python source-archive preflight are reviewed/prepared; Scala/build and live qualification remain pending. Later milestone contracts require their own designs.
+Status: M0/M1 execution was approved on 2026-10-29 using the selected subagent-driven workflow. The workload register, bindings, optional startup profile and named-read service are implemented and reviewed. Four original six-case Task 4 cells and independent full checks passed for the bounded fixture; whole-milestone review remains separate. Later milestone contracts require their own designs.
 
 ## Intent and baseline
 

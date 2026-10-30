@@ -262,7 +262,10 @@ class TestSparkHubCoverage(unittest.TestCase):
         document = json.loads(Path(__file__).with_name("spark_hub_coverage.json").read_text())
         validate_coverage(document)
         summary = coverage_summary(document)
-        self.assertEqual([], summary.get("qualifiedCases"))
+        self.assertEqual(
+            {"named-filter-mask", "projected-count", "column-denied", "unknown-binding", "unpublished-registration", "fresh-action-revoke"},
+            set(summary["qualifiedCases"]),
+        )
         cases = {case["id"]: case for case in document["cases"]}
         for case_id in (
             "named-filter-mask",

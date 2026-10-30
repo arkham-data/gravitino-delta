@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "repositories": {
-    "sparkHub": "74b71155478d4a5f78360108002c95399310a998",
-    "gravitino": "5f02cf687b5f88e47fc29294b25109d6380872af"
+    "sparkHub": "d01024b6f459ad2743b7b55099226b8c3dc742fd",
+    "gravitino": "a59564b2e6caa74f97515a0b8b2deff90e1de992"
   },
-  "description": "M0 finite source-level workload register. Scope required means source-reachable requirement, not deployed prevalence. No Spark Hub runtime has been qualified. supported-building-block is connector capability only. Original runtime reference validation is structural; Task 4 independent acceptance checks original artifacts/outcomes.",
+  "description": "M0 workload register and bounded M1 read results. Six M1 cases have original four-pair runtime evidence under the isolated fixture profile; all other cases retain their prior statuses. Structural validation does not certify runtime outcomes.",
   "evidence": [
     {
       "id": "catalog",
@@ -180,6 +180,318 @@
       "repository": "sparkHub",
       "revision": "d01024b6f459ad2743b7b55099226b8c3dc742fd",
       "reference": "src/shared/services/v2/spark.py:SparkClient.__init__"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.0-column-denied",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.0/cell/denied-email/column-denied-joined.json",
+      "sha256": "e95165464664842b0feee1176bb9f2009208163d33873294a86fca837dd77470",
+      "caseId": "column-denied",
+      "original": true,
+      "pair": "3.5.4-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.0-fresh-action-revoke",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.0/cell/id-only/fresh-action-revoke-joined.json",
+      "sha256": "d940edd0d79a254b325956ccba58f5640b7df1d57521f414e24beff76ed293b8",
+      "caseId": "fresh-action-revoke",
+      "original": true,
+      "pair": "3.5.4-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.0-named-filter-mask",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.0/cell/table-wide/named-filter-mask-joined.json",
+      "sha256": "bfc245b6df8938da39dcd39dddac9a84c3811616c84933d5ab397bd68e04690e",
+      "caseId": "named-filter-mask",
+      "original": true,
+      "pair": "3.5.4-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.0-projected-count",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.0/cell/id-only/projected-count-joined.json",
+      "sha256": "7566b9b4d49a26accadd7f91ffef6e90dc1cf96a6d81f9ee409aa1bc4267c2b0",
+      "caseId": "projected-count",
+      "original": true,
+      "pair": "3.5.4-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.0-unknown-binding",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.0/cell/table-wide/unknown-binding-joined.json",
+      "sha256": "da30dea1368f9f0165caf237d2e4834888cffd3f1bd01311406b39b59debc00a",
+      "caseId": "unknown-binding",
+      "original": true,
+      "pair": "3.5.4-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.0-unpublished-registration",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.0/cell/table-wide/unpublished-registration-joined.json",
+      "sha256": "122288cea66451614e8f174e4b65dca9ca8b9614fb1f2ea606ecee9c2b58ad55",
+      "caseId": "unpublished-registration",
+      "original": true,
+      "pair": "3.5.4-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.2-column-denied",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.2/cell/denied-email/column-denied-joined.json",
+      "sha256": "07319d0a2742b943af47e60d554c9da76cb3b9d6d7cb998fd7b13fc9d0046c0a",
+      "caseId": "column-denied",
+      "original": true,
+      "pair": "3.5.4-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.2-fresh-action-revoke",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.2/cell/id-only/fresh-action-revoke-joined.json",
+      "sha256": "a6e9d16d9be66cf1b1402f07fdde4b1012886137abf650e17d5fde24515e565c",
+      "caseId": "fresh-action-revoke",
+      "original": true,
+      "pair": "3.5.4-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.2-named-filter-mask",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.2/cell/table-wide/named-filter-mask-joined.json",
+      "sha256": "ba7c6bd1075b1069607270c96851eda90191b01aa8d49af53ec1d90726778160",
+      "caseId": "named-filter-mask",
+      "original": true,
+      "pair": "3.5.4-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.2-projected-count",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.2/cell/id-only/projected-count-joined.json",
+      "sha256": "ee115ea4edb5682d23d8fd741db07ec7ddce99605149a338530b59cfd8350644",
+      "caseId": "projected-count",
+      "original": true,
+      "pair": "3.5.4-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.2-unknown-binding",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.2/cell/table-wide/unknown-binding-joined.json",
+      "sha256": "7b164adfced75d62405d38b0d0a942b12cb249ef284579711009cf5eed673c13",
+      "caseId": "unknown-binding",
+      "original": true,
+      "pair": "3.5.4-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.2-unpublished-registration",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.4-3.3.2/cell/table-wide/unpublished-registration-joined.json",
+      "sha256": "826854005d438e2d5c0ee8c8f179fa23e21a231d79c12499efe6bf94285a1e79",
+      "caseId": "unpublished-registration",
+      "original": true,
+      "pair": "3.5.4-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.0-column-denied",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.0/cell/denied-email/column-denied-joined.json",
+      "sha256": "9c0228c21cdcf0f31d49e7dec929798963642cce75fb31b7ea1f7d58c7566f17",
+      "caseId": "column-denied",
+      "original": true,
+      "pair": "3.5.6-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.0-fresh-action-revoke",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.0/cell/id-only/fresh-action-revoke-joined.json",
+      "sha256": "40fbe16cf5a5316bc5d20f9b1b92ba56c592c0997d8bff89406ccd69120eac00",
+      "caseId": "fresh-action-revoke",
+      "original": true,
+      "pair": "3.5.6-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.0-named-filter-mask",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.0/cell/table-wide/named-filter-mask-joined.json",
+      "sha256": "c0b1171505a2820c2ee6feebd4c45dee58e83d23694faaa1b51d8c6758f8a2cf",
+      "caseId": "named-filter-mask",
+      "original": true,
+      "pair": "3.5.6-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.0-projected-count",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.0/cell/id-only/projected-count-joined.json",
+      "sha256": "a106f400743c89f56512a055d9866481bf0bdfe6f5a0109f29d229376a9f6731",
+      "caseId": "projected-count",
+      "original": true,
+      "pair": "3.5.6-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.0-unknown-binding",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.0/cell/table-wide/unknown-binding-joined.json",
+      "sha256": "7b59fff37689255c1bf05908e307dfdac6e3694da3fbae7f604303a17ea7111b",
+      "caseId": "unknown-binding",
+      "original": true,
+      "pair": "3.5.6-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.0-unpublished-registration",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.0/cell/table-wide/unpublished-registration-joined.json",
+      "sha256": "9a5208e89239369c678efe303cf98f53f864511976b77b14a4fde48c59f0f574",
+      "caseId": "unpublished-registration",
+      "original": true,
+      "pair": "3.5.6-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.2-column-denied",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.2/cell/denied-email/column-denied-joined.json",
+      "sha256": "f863101471b13c590ff0bb60e36ff234731b4f87431e348ec7dee9207b923710",
+      "caseId": "column-denied",
+      "original": true,
+      "pair": "3.5.6-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.2-fresh-action-revoke",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.2/cell/id-only/fresh-action-revoke-joined.json",
+      "sha256": "2507c60ac0c903c44086b5c1d9b4ce2b7c0b060c51f8493d34815f9901261af6",
+      "caseId": "fresh-action-revoke",
+      "original": true,
+      "pair": "3.5.6-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.2-named-filter-mask",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.2/cell/table-wide/named-filter-mask-joined.json",
+      "sha256": "0b2bd60285280db12699cc09cb362fcfd24c4a4936add83920026cacad592f84",
+      "caseId": "named-filter-mask",
+      "original": true,
+      "pair": "3.5.6-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.2-projected-count",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.2/cell/id-only/projected-count-joined.json",
+      "sha256": "f2b1e97ab0669f6db27ecde4cb816a6a44227ca870a820bcb4545ab6c101521f",
+      "caseId": "projected-count",
+      "original": true,
+      "pair": "3.5.6-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.2-unknown-binding",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.2/cell/table-wide/unknown-binding-joined.json",
+      "sha256": "e1cfff288a8cab3f51cd90798f1de1d6746e2c09b12ce49fc46e6469a8ba0347",
+      "caseId": "unknown-binding",
+      "original": true,
+      "pair": "3.5.6-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.2-unpublished-registration",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a59564b2e6caa74f97515a0b8b2deff90e1de992",
+      "reference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-successor-4/3.5.6-3.3.2/cell/table-wide/unpublished-registration-joined.json",
+      "sha256": "f4914c427135292d57371764d98b34a961d811414d049e4554be839e2d73e3ea",
+      "caseId": "unpublished-registration",
+      "original": true,
+      "pair": "3.5.6-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
+      "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
     }
   ],
   "cases": [
@@ -223,7 +535,7 @@
       "planFamily": "exchange-bearing-ordinary-read",
       "options": {},
       "features": [
-        "Task 4 actual production-class runtime evidence required"
+        "Actual production-class runtime evidence across four pinned pairs"
       ],
       "settings": {
         "spark.sql.adaptive.enabled": "true",
@@ -234,18 +546,22 @@
       },
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
       "expectedOutcome": "Exactly (1, east, MASKED), (3, east, MASKED) under the fixture filter and mask; read-only native identity/version unchanged.",
-      "status": "unqualified",
+      "status": "qualified",
       "evidenceRefs": [
         "catalog",
         "spark",
         "read-contract",
         "spark-hub-shared-read",
-        "spark-hub-read-profile"
+        "spark-hub-read-profile",
+        "runtime-3.5.4-3.3.0-named-filter-mask",
+        "runtime-3.5.4-3.3.2-named-filter-mask",
+        "runtime-3.5.6-3.3.0-named-filter-mask",
+        "runtime-3.5.6-3.3.2-named-filter-mask"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
       ],
-      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
+      "qualificationStage": "Four original pinned-pair cells passed full independent checks for this bounded fixture; schema-owner metadata authority and other scope limits apply."
     },
     {
       "id": "projected-count",
@@ -260,25 +576,29 @@
       "planFamily": "projected-count",
       "options": {},
       "features": [
-        "Task 4 actual production-class runtime evidence required"
+        "Actual production-class runtime evidence across four pinned pairs"
       ],
       "settings": {
         "spark.sql.adaptive.enabled": "true"
       },
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
       "expectedOutcome": "Count equals 2 with id-only SELECT and current row filter; no email privilege required.",
-      "status": "unqualified",
+      "status": "qualified",
       "evidenceRefs": [
         "catalog",
         "spark",
         "read-contract",
         "spark-hub-shared-read",
-        "spark-hub-read-profile"
+        "spark-hub-read-profile",
+        "runtime-3.5.4-3.3.0-projected-count",
+        "runtime-3.5.4-3.3.2-projected-count",
+        "runtime-3.5.6-3.3.0-projected-count",
+        "runtime-3.5.6-3.3.2-projected-count"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
       ],
-      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
+      "qualificationStage": "Four original pinned-pair cells passed full independent checks for this bounded fixture; schema-owner metadata authority and other scope limits apply."
     },
     {
       "id": "column-denied",
@@ -293,25 +613,29 @@
       "planFamily": "column-demand-denial",
       "options": {},
       "features": [
-        "Task 4 actual production-class runtime evidence required"
+        "Actual production-class runtime evidence across four pinned pairs"
       ],
       "settings": {
         "spark.sql.adaptive.enabled": "true"
       },
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
       "expectedOutcome": "Actual email SELECT denial is preserved; no native/path fallback.",
-      "status": "unqualified",
+      "status": "qualified",
       "evidenceRefs": [
         "catalog",
         "spark",
         "read-contract",
         "spark-hub-shared-read",
-        "spark-hub-read-profile"
+        "spark-hub-read-profile",
+        "runtime-3.5.4-3.3.0-column-denied",
+        "runtime-3.5.4-3.3.2-column-denied",
+        "runtime-3.5.6-3.3.0-column-denied",
+        "runtime-3.5.6-3.3.2-column-denied"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
       ],
-      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
+      "qualificationStage": "Four original pinned-pair cells passed full independent checks for this bounded fixture; schema-owner metadata authority and other scope limits apply."
     },
     {
       "id": "unknown-binding",
@@ -326,25 +650,29 @@
       "planFamily": "missing-binding",
       "options": {},
       "features": [
-        "Task 4 actual production-class runtime evidence required"
+        "Actual production-class runtime evidence across four pinned pairs"
       ],
       "settings": {
         "spark.sql.adaptive.enabled": "true"
       },
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
       "expectedOutcome": "Unknown UUID raises KeyError and issues no table request.",
-      "status": "unqualified",
+      "status": "qualified",
       "evidenceRefs": [
         "catalog",
         "spark",
         "read-contract",
         "spark-hub-shared-read",
-        "spark-hub-read-profile"
+        "spark-hub-read-profile",
+        "runtime-3.5.4-3.3.0-unknown-binding",
+        "runtime-3.5.4-3.3.2-unknown-binding",
+        "runtime-3.5.6-3.3.0-unknown-binding",
+        "runtime-3.5.6-3.3.2-unknown-binding"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
       ],
-      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
+      "qualificationStage": "Four original pinned-pair cells passed full independent checks for this bounded fixture; schema-owner metadata authority and other scope limits apply."
     },
     {
       "id": "unpublished-registration",
@@ -359,25 +687,29 @@
       "planFamily": "registration-state-denial",
       "options": {},
       "features": [
-        "Task 4 actual production-class runtime evidence required"
+        "Actual production-class runtime evidence across four pinned pairs"
       ],
       "settings": {
         "spark.sql.adaptive.enabled": "true"
       },
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
       "expectedOutcome": "Unpublished registration rejects before reading data; no path load or implicit creation.",
-      "status": "unqualified",
+      "status": "qualified",
       "evidenceRefs": [
         "catalog",
         "spark",
         "read-contract",
         "spark-hub-shared-read",
-        "spark-hub-read-profile"
+        "spark-hub-read-profile",
+        "runtime-3.5.4-3.3.0-unpublished-registration",
+        "runtime-3.5.4-3.3.2-unpublished-registration",
+        "runtime-3.5.6-3.3.0-unpublished-registration",
+        "runtime-3.5.6-3.3.2-unpublished-registration"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
       ],
-      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
+      "qualificationStage": "Four original pinned-pair cells passed full independent checks for this bounded fixture; schema-owner metadata authority and other scope limits apply."
     },
     {
       "id": "fresh-action-revoke",
@@ -392,25 +724,29 @@
       "planFamily": "fresh-action-policy-refresh",
       "options": {},
       "features": [
-        "Task 4 actual production-class runtime evidence required"
+        "Actual production-class runtime evidence across four pinned pairs"
       ],
       "settings": {
         "spark.sql.adaptive.enabled": "true"
       },
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
       "expectedOutcome": "A newly constructed action is denied after confirmed applied revoke; no stale/copied authority.",
-      "status": "unqualified",
+      "status": "qualified",
       "evidenceRefs": [
         "catalog",
         "spark",
         "read-contract",
         "spark-hub-shared-read",
-        "spark-hub-read-profile"
+        "spark-hub-read-profile",
+        "runtime-3.5.4-3.3.0-fresh-action-revoke",
+        "runtime-3.5.4-3.3.2-fresh-action-revoke",
+        "runtime-3.5.6-3.3.0-fresh-action-revoke",
+        "runtime-3.5.6-3.3.2-fresh-action-revoke"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
       ],
-      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
+      "qualificationStage": "Four original pinned-pair cells passed full independent checks for this bounded fixture; schema-owner metadata authority and other scope limits apply."
     },
     {
       "id": "raw-path-glue-migration",
