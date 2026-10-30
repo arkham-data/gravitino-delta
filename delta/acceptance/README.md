@@ -497,3 +497,67 @@ The seven-profile / 14-attempt development subset has passed. Final qualificatio
 still requires the frozen 67-method installed selection and complete live
 inventory on all four pairs, independent checks and controller-owned reviews.
 Catalog-demo and deployment remain deferred.
+
+
+## Spark Hub opt-in shared named reads
+
+`spark_hub_read_live.py` invokes the production `SparkClient` and
+`GravitinoDatasetCatalog` from Spark Hub revision
+`d01024b6f459ad2743b7b55099226b8c3dc742fd`. The Python application constructs
+native DataFrames and runs their methods; the existing read-parity bridge only
+observes identity, policy downloads, named metadata requests and final payload
+plans. There are exactly six case IDs: `named-filter-mask`, `projected-count`,
+`column-denied`, `unknown-binding`, `unpublished-registration`, and
+`fresh-action-revoke`.
+
+This code preparation does **not** qualify M1. The coverage register remains
+unqualified until original complete cells on all four Spark 3.5.4/3.5.6 and Delta
+3.3.0/3.3.2 pairs pass the independent checker and review. The structural coverage
+validator does not replace that gate. Unit fixtures say
+`unit-only-nonqualifying` and the full gate rejects them.
+
+After the reviewed runtime gate, package the existing observation application
+with `cdf_read_live_package.py --app read-parity` for each pair, using fresh output
+paths. The private input document must provide `livePython`: an isolated Python
+3.11 interpreter with that pair's exact `pyspark` and `delta-spark` distributions,
+Py4J 0.10.9.7, and the dependencies required by ordinary Spark Hub imports.
+Do not modify a retained prior runtime environment to satisfy this requirement.
+The runner inventories normal imports from both S and its source ZIP, checks
+every imported tracked source against the pinned revision, and retains hashes
+of installed dependency files and the interpreter. It excludes Settings values,
+`.env` files and unrelated files; JVM JARs belong to the G runtime manifest.
+
+```bash
+python delta/acceptance/spark_hub_read_live.py \
+  --runtime <fresh-verified-read-parity-manifest> \
+  --spark-hub-root <pinned-spark-hub-worktree> \
+  --inputs <private-inputs-with-livePython> --out <fresh-cell-directory>
+python3 -m unittest discover -s delta/acceptance -p test_spark_hub_read_checks.py
+```
+
+The fixture authors its own Ranger policies, separately from public metadata
+principal grants. Its three native rows are `(1, east, a)`, `(2, west, b)` and
+`(3, east, c)`; the policy filter is `region = 'east'` and the email mask is
+`'MASKED'`. It explicitly enables AQE, disables both broadcast thresholds and
+sets both shuffle partitions and AQE initial partitions to four before session
+creation. This isolated exchange control does not change product defaults or
+claim deployed workload performance equivalence. The allowed join uses two
+fresh service calls and must return exactly `(1, east, MASKED)` and
+`(3, east, MASKED)`, with original exchange-bearing final AQE payload evidence.
+The id-only projected count must be two. The revoke case retains an authorized
+precondition, confirms a newer applied policy download, and constructs a new
+native action before requiring an attributed denied SELECT.
+
+Request snapshots bracket each actual service call/action boundary and include
+failed requests. Unknown UUID resolution must call neither Spark's table method
+nor the metadata service. The unpublished fixture remains ADOPTING and must
+reach the named catalog and reject there. Python call and connection observations
+retain native API calls and reject Glue/Athena, path fallbacks and external
+Python services; Delta's ordinary named JVM S3 scan is expected. Native readback
+and object manifests must remain unchanged by all application reads.
+
+Original seed, caller, readback and supervisor exits, stdout/stderr, policies,
+source publication receipts, UUID/name bindings and per-case artifacts are
+retained. A failure is never replayed by the runner. Spark Hub writes,
+streaming and deployment adoption remain incomplete, and no existing pipeline
+or default legacy route switches automatically. All other M0 gaps remain open.

@@ -81,10 +81,26 @@ def record_view_prerequisite(bridge,name,factory,operation,output,phase):
     return value,ref(path)
 
 
+def seed_table(spark, request, table, data):
+    """Seed a fresh owned prefix or reopen it without accessing a writer."""
+    assert request["mode"] in ("seed", "verify"), "Unknown native mode"
+    if request["mode"] == "seed":
+        from s3_objects import OwnedObjects
+        assert not OwnedObjects(request["primary"], table["prefix"]).manifest(), "Fresh isolated seed prefix required"
+        data.write.format("delta").mode("errorifexists").save(table["location"])
+    return spark.read.format("delta").load(table["location"])
+
+
+def fixture_data(spark, request):
+    """Keep the historical seed unless an isolated caller supplies explicit rows."""
+    if "fixtureRows" in request:
+        return spark.createDataFrame(request["fixtureRows"], "id LONG, region STRING, email STRING")
+    return spark.sql("SELECT 1L id, 'east' region, 'z' email, 's1' secret UNION ALL SELECT 2L,'east','a','s2' UNION ALL SELECT 3L,'east',CAST(NULL AS STRING),'s3' UNION ALL SELECT 4L,'west','hidden','s4' UNION ALL SELECT 5L,'east','b','s5'")
+
+
 def native_seed(request):
     from pyspark.sql import SparkSession
     from harness import credentials
-    from s3_objects import OwnedObjects
     access, secret = credentials(request["primary"]["credentialsFile"])
     builder = SparkSession.builder.master("local[2]").appName("read-parity-native-seed")
     settings = {"spark.ui.enabled":"false", "spark.driver.host":"127.0.0.1",
@@ -103,11 +119,9 @@ def native_seed(request):
         assert spark.version == request["spark"]
         assert spark.sparkContext._jsc.sc().sparkUser() == request["nativeIdentity"]
         assert spark._jvm.org.apache.hadoop.security.UserGroupInformation.getCurrentUser().getShortUserName() == request["nativeIdentity"]
-        rows="SELECT 1L id, 'east' region, 'z' email, 's1' secret UNION ALL SELECT 2L,'east','a','s2' UNION ALL SELECT 3L,'east',CAST(NULL AS STRING),'s3' UNION ALL SELECT 4L,'west','hidden','s4' UNION ALL SELECT 5L,'east','b','s5'"
-        data=spark.sql(rows)
+        data=fixture_data(spark, request)
         observations={}
         for table in request["tables"]:
-            assert not OwnedObjects(request["primary"],table["prefix"]).manifest(), "Fresh isolated seed prefix required"
             frame=data
             if table["name"]=="primitive":
                 frame=spark.sql("""SELECT 1L id, 'east' region, 'z' email, 7L nlong,
@@ -116,10 +130,10 @@ def native_seed(request):
                   UNION ALL SELECT 2L,'east',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL
                   UNION ALL SELECT 4L,'west','hidden',9L,'hidden',false,2.0D,99.99,
                     DATE '2026-10-27',TIMESTAMP '2026-10-27 00:00:00'""")
-            frame.write.format("delta").mode("errorifexists").save(table["location"])
-            actual=spark.read.format("delta").load(table["location"])
+            actual=seed_table(spark, request, table, frame)
             detail=spark.sql("DESCRIBE DETAIL delta.`"+table["location"]+"`").collect()[0].asDict()
             observations[table["name"]]={"id":detail["id"],"location":detail["location"],
+                "version":int(spark._jvm.org.apache.spark.sql.delta.DeltaLog.forTable(spark._jsparkSession,table["location"]).update().version()),
                 "schema":actual.schema.jsonValue(),"rows":[[normalize(v) for v in row] for row in actual.orderBy("id").collect()]}
         origins={}
         loader=spark._jvm.java.lang.Thread.currentThread().getContextClassLoader()
@@ -132,7 +146,7 @@ def native_seed(request):
 
 def main(request_path):
     request=json.loads(Path(request_path).read_text())
-    if request.get("mode")=="seed":
+    if request.get("mode") in ("seed", "verify"):
         native_seed(request)
         return
     from pyspark import SparkContext

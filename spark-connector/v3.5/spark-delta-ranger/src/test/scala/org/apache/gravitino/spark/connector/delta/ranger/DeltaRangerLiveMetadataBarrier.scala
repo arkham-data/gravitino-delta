@@ -116,6 +116,7 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
     private var metadataObserved = false
     private var metadataPrefix: String = _
     private var metadataPaths = Set.empty[String]
+    private var namedAttempts = Vector.empty[Map[String, Any]]
     private var witness: Vector[String] = Vector.empty
     server.createContext("/", (exchange: HttpExchange) => forward(exchange))
     server.setExecutor(executor)
@@ -139,6 +140,11 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
         "Invalid named metadata observation"
       )
       metadataPrefix = prefix; metadataPrincipal = principal
+    }
+
+    /** Detached snapshots of every relevant attempted request, including non-200 responses. */
+    def namedRequests(): java.util.List[java.util.Map[String, Any]] = synchronized {
+      namedAttempts.map(_.asJava).asJava
     }
 
     def requireMetadataObserved(fileName: String = "metadata-identity.json"): Unit = synchronized {
@@ -238,6 +244,17 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
 
     private def forward(exchange: HttpExchange): Unit = {
       var releasing = false
+      val attempt = synchronized {
+        val path = exchange.getRequestURI.getRawPath
+        if (path == target || (metadataPrefix != null && path.startsWith(metadataPrefix))) {
+          val index = namedAttempts.size
+          namedAttempts :+= Map[String, Any](
+            "sequence" -> (index.toLong + 1L), "method" -> exchange.getRequestMethod,
+            "path" -> path, "status" -> 0
+          )
+          Some(index)
+        } else None
+      }
       try {
         val metadata = synchronized {
           metadataPrincipal != null && exchange.getRequestMethod == "GET" && (exchange.getRequestURI.getRawPath == target || (metadataPrefix != null && exchange.getRequestURI.getRawPath
@@ -270,6 +287,11 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
           else HttpRequest.BodyPublishers.ofByteArray(body)
         )
         val response = client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray())
+        synchronized {
+          attempt.foreach(index => namedAttempts = namedAttempts.updated(
+            index, namedAttempts(index).updated("status", response.statusCode())
+          ))
+        }
         response.headers().map().asScala.foreach { case (name, values) =>
           if (!hopHeaders(name.toLowerCase(java.util.Locale.ROOT)))
             values.asScala.foreach(v => exchange.getResponseHeaders.add(name, v))

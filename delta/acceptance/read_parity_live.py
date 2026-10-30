@@ -39,11 +39,11 @@ from cdf_read_live_package import verify_runtime
 from read_parity_checks import verify_result
 
 
-def start(argv, environment, directory):
+def start(argv, environment, directory, *, cwd=None):
     directory.mkdir(mode=0o700)
     save(directory/"argv.json",list(map(str,argv)))
     stdout=(directory/"stdout").open("wb");stderr=(directory/"stderr").open("wb")
-    process=subprocess.Popen(list(map(str,argv)),cwd=ROOT,env=environment,stdout=stdout,stderr=stderr)
+    process=subprocess.Popen(list(map(str,argv)),cwd=ROOT if cwd is None else cwd,env=environment,stdout=stdout,stderr=stderr)
     return process,stdout,stderr
 
 
@@ -57,10 +57,12 @@ def finish(process,stdout,stderr,directory,terminate=False):
     return code
 
 
-def seed(plan,runtime,output):
+def seed(plan,runtime,output,mode="seed"):
+    """Use one original native process for fresh setup or mutation-free readback."""
     output.mkdir(mode=0o700)
     request={key:plan[key] for key in ["primary","tables"]}
-    request.update(mode="seed",spark=runtime["spark"],delta=runtime["delta"],
+    if "fixtureRows" in plan:request["fixtureRows"]=plan["fixtureRows"]
+    request.update(mode=mode,spark=runtime["spark"],delta=runtime["delta"],
                    nativeIdentity=plan["serviceAdmin"],output=str(output))
     save(output/"request.private.json",request)
     environment=clean_environment(plan)
@@ -91,7 +93,8 @@ def fixture_resources(kind,plan,columns):
     return {key:{"values":value,"isExcludes":False,"isRecursive":False} for key,value in values.items()}
 
 
-def provision(runtime,inputs,output,association,handles):
+def provision(runtime,inputs,output,association,handles,*,fixture_rows=None,
+              unpublished_tables=(),table_names=("source","primitive"),python=None):
     output.mkdir(mode=0o700)
     for name in ["private","public-trace","ranger-trace"]:(output/name).mkdir()
     nonce=uuid.uuid4().hex[:12];endpoints=read(inputs["endpoints"]);admin=envfile(inputs["rangerAdminFile"])
@@ -107,8 +110,11 @@ def provision(runtime,inputs,output,association,handles):
           "rangerAdmin":{"username":admin["RANGER_ADMIN_USER"],"password":admin["RANGER_ADMIN_PASSWORD"]},
           "plugin":{"username":"read_download_"+nonce,"password":"Aa1!"+secrets.token_urlsafe(24)},
           "deployedRangerEvidence":str(association),"deployedRangerEvidenceSha256":sha(association)}
+    if python is not None:plan["python"]=str(python)
+    if fixture_rows is not None:plan["fixtureRows"]=fixture_rows
+    assert set(unpublished_tables)<=set(table_names),"Unknown unpublished fixture table"
     plan["tables"]=[{"name":name,"prefix":plan["prefix"]+"/adoption/"+name+"/",
-                     "location":"s3a://delta-fixtures/"+plan["prefix"]+"/adoption/"+name} for name in ["source","primitive"]]
+                     "location":"s3a://delta-fixtures/"+plan["prefix"]+"/adoption/"+name} for name in table_names]
     save(output/"state.private.json",plan)
     ranger=Ranger(plan,output/"ranger-trace");owned=[]
     def create(kind,path,body):
@@ -138,8 +144,8 @@ def provision(runtime,inputs,output,association,handles):
     receipts={}
     for table in plan["tables"]:
         receipt=submit(rest,base,plan["catalog"],table["name"],command("ADOPT",token=str(uuid.uuid4()),location=table["location"],runId=str(uuid.uuid4()),reference="owned-native-seed-exit-zero"))
-        receipts[table["name"]]=submit(rest,base,plan["catalog"],table["name"],command("PUBLISH",expected=identity(receipt)))
-        assert receipts[table["name"]][RECEIPT+"state"]=="PUBLISHED"
+        receipts[table["name"]]=receipt if table["name"] in unpublished_tables else submit(rest,base,plan["catalog"],table["name"],command("PUBLISH",expected=identity(receipt)))
+        assert receipts[table["name"]][RECEIPT+"state"]==("ADOPTING" if table["name"] in unpublished_tables else "PUBLISHED")
     save(output/"receipts.private.json",receipts)
     def obj(kind,name,priv):return {"type":kind,"fullName":name,"privileges":[{"name":priv,"condition":"ALLOW"}]}
     use=[obj("CATALOG",plan["catalog"],"USE_CATALOG"),obj("SCHEMA",plan["catalog"]+"."+plan["database"],"USE_SCHEMA")]
@@ -200,7 +206,7 @@ def snapshot(plan,output):
     return result
 
 
-def change_policy(plan,phase,output):
+def change_policy(plan,phase,output,*,mask_expression="'M'"):
     output.mkdir(mode=0o700);ranger=Ranger(plan,output/"ranger-trace")
     if phase=="revoke-id":
         policy=ranger.call("GET","/service/public/v2/api/policy/"+str(plan["policyIds"]["id-only"]))
@@ -214,7 +220,7 @@ def change_policy(plan,phase,output):
             policy={"service":plan["resourceService"],"name":"read_mask_"+plan["nonce"],"policyType":1,"isEnabled":True,"isAuditEnabled":True,
                     "policyLabels":["read-parity-fixture-authored"],"resources":resources,"dataMaskPolicyItems":[]}
         policy["dataMaskPolicyItems"]=[{"users":list(plan["subjects"].values()),"roles":[],"groups":[],
-            "accesses":[{"type":"select","isAllowed":True}],"dataMaskInfo":({"dataMaskType":"CUSTOM","valueExpr":"'M'"} if phase=="constant-mask" else {"dataMaskType":"MASK_NULL"})}]
+            "accesses":[{"type":"select","isAllowed":True}],"dataMaskInfo":({"dataMaskType":"CUSTOM","valueExpr":mask_expression} if phase=="constant-mask" else {"dataMaskType":"MASK_NULL"})}]
         if "id" in policy:ranger.call("PUT","/service/public/v2/api/policy/"+str(policy["id"]),policy)
         else:plan["policyIds"]["mask"]=ranger.call("POST","/service/public/v2/api/policy",policy)["id"]
     return snapshot(plan,output/"after")

@@ -166,6 +166,20 @@
       "repository": "gravitino",
       "revision": "5f02cf687b5f88e47fc29294b25109d6380872af",
       "reference": "docs/delta-cdf-enablement.md"
+    },
+    {
+      "id": "spark-hub-shared-read",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "d01024b6f459ad2743b7b55099226b8c3dc742fd",
+      "reference": "src/shared/services/v3/gravitino_catalog.py:GravitinoDatasetCatalog.get_table_df_by_id"
+    },
+    {
+      "id": "spark-hub-read-profile",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "d01024b6f459ad2743b7b55099226b8c3dc742fd",
+      "reference": "src/shared/services/v2/spark.py:SparkClient.__init__"
     }
   ],
   "cases": [
@@ -200,8 +214,8 @@
       "id": "named-filter-mask",
       "production": {
         "repository": "sparkHub",
-        "path": "src/shared/services/v1/catalog.py",
-        "symbol": "ArkhamCatalog.get_table_df_by_id"
+        "path": "src/shared/services/v3/gravitino_catalog.py",
+        "symbol": "GravitinoDatasetCatalog.get_table_df_by_id"
       },
       "milestone": "M1",
       "scope": "required",
@@ -215,7 +229,8 @@
         "spark.sql.adaptive.enabled": "true",
         "spark.sql.autoBroadcastJoinThreshold": "-1",
         "spark.sql.adaptive.autoBroadcastJoinThreshold": "-1",
-        "spark.sql.shuffle.partitions": "4"
+        "spark.sql.shuffle.partitions": "4",
+        "spark.sql.adaptive.coalescePartitions.initialPartitionNum": "4"
       },
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
       "expectedOutcome": "Exactly (1, east, MASKED), (3, east, MASKED) under the fixture filter and mask; read-only native identity/version unchanged.",
@@ -223,18 +238,21 @@
       "evidenceRefs": [
         "catalog",
         "spark",
-        "read-contract"
+        "read-contract",
+        "spark-hub-shared-read",
+        "spark-hub-read-profile"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
-      ]
+      ],
+      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
     },
     {
       "id": "projected-count",
       "production": {
         "repository": "sparkHub",
-        "path": "src/shared/services/v1/catalog.py",
-        "symbol": "ArkhamCatalog.get_table_df_by_id"
+        "path": "src/shared/services/v3/gravitino_catalog.py",
+        "symbol": "GravitinoDatasetCatalog.get_table_df_by_id"
       },
       "milestone": "M1",
       "scope": "required",
@@ -253,18 +271,21 @@
       "evidenceRefs": [
         "catalog",
         "spark",
-        "read-contract"
+        "read-contract",
+        "spark-hub-shared-read",
+        "spark-hub-read-profile"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
-      ]
+      ],
+      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
     },
     {
       "id": "column-denied",
       "production": {
         "repository": "sparkHub",
-        "path": "src/shared/services/v1/catalog.py",
-        "symbol": "ArkhamCatalog.get_table_df_by_id"
+        "path": "src/shared/services/v3/gravitino_catalog.py",
+        "symbol": "GravitinoDatasetCatalog.get_table_df_by_id"
       },
       "milestone": "M1",
       "scope": "required",
@@ -283,18 +304,21 @@
       "evidenceRefs": [
         "catalog",
         "spark",
-        "read-contract"
+        "read-contract",
+        "spark-hub-shared-read",
+        "spark-hub-read-profile"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
-      ]
+      ],
+      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
     },
     {
       "id": "unknown-binding",
       "production": {
         "repository": "sparkHub",
-        "path": "src/shared/services/v1/catalog.py",
-        "symbol": "ArkhamCatalog.get_table_df_by_id"
+        "path": "src/shared/services/v3/gravitino_catalog.py",
+        "symbol": "GravitinoDatasetCatalog.get_table_df_by_id"
       },
       "milestone": "M1",
       "scope": "required",
@@ -313,18 +337,21 @@
       "evidenceRefs": [
         "catalog",
         "spark",
-        "read-contract"
+        "read-contract",
+        "spark-hub-shared-read",
+        "spark-hub-read-profile"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
-      ]
+      ],
+      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
     },
     {
       "id": "unpublished-registration",
       "production": {
         "repository": "sparkHub",
-        "path": "src/shared/services/v1/catalog.py",
-        "symbol": "ArkhamCatalog.get_table_df_by_id"
+        "path": "src/shared/services/v3/gravitino_catalog.py",
+        "symbol": "GravitinoDatasetCatalog.get_table_df_by_id"
       },
       "milestone": "M1",
       "scope": "required",
@@ -343,18 +370,21 @@
       "evidenceRefs": [
         "catalog",
         "spark",
-        "read-contract"
+        "read-contract",
+        "spark-hub-shared-read",
+        "spark-hub-read-profile"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
-      ]
+      ],
+      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
     },
     {
       "id": "fresh-action-revoke",
       "production": {
         "repository": "sparkHub",
-        "path": "src/shared/services/v1/catalog.py",
-        "symbol": "ArkhamCatalog.get_table_df_by_id"
+        "path": "src/shared/services/v3/gravitino_catalog.py",
+        "symbol": "GravitinoDatasetCatalog.get_table_df_by_id"
       },
       "milestone": "M1",
       "scope": "required",
@@ -373,11 +403,14 @@
       "evidenceRefs": [
         "catalog",
         "spark",
-        "read-contract"
+        "read-contract",
+        "spark-hub-shared-read",
+        "spark-hub-read-profile"
       ],
       "predecessorIds": [
         "raw-path-glue-migration"
-      ]
+      ],
+      "qualificationStage": "Harness and pure checker prepared; four-pair original live evidence and review pending."
     },
     {
       "id": "raw-path-glue-migration",

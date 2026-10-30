@@ -161,6 +161,7 @@ final class DeltaRangerLiveReadParity(requestPath: String) extends AutoCloseable
   private val requests = new ConcurrentLinkedQueue[JavaMap[String, Any]]()
   private val queries = new ConcurrentLinkedQueue[QueryExecution]()
   private val callbacks = new ConcurrentLinkedQueue[JavaMap[String, Any]]()
+  private var tableRequestsBefore: java.util.List[java.util.Map[String, Any]] = null
   @volatile private var caseSequence = 0L
   @volatile private var activeCase = ""
   private val originalProcessor = SparkRangerAdminPlugin.getResultProcessor
@@ -280,6 +281,7 @@ final class DeltaRangerLiveReadParity(requestPath: String) extends AutoCloseable
   /** Begin serial per-case observations after draining prior asynchronous callbacks. */
   def begin(name: String): Unit = {
     drain(); requests.clear(); queries.clear(); callbacks.clear()
+    tableRequestsBefore = gateway.namedRequests()
     caseSequence += 1; activeCase = name
     spark.sparkContext.setJobGroup(name, name)
   }
@@ -369,6 +371,8 @@ final class DeltaRangerLiveReadParity(requestPath: String) extends AutoCloseable
     writeJson(
       path,
       Map[String, Any](
+        "tableRequestsBefore" -> tableRequestsBefore,
+        "tableRequestsAfter" -> gateway.namedRequests(),
         "originalDemands" -> demands.asJava,
         "rangerRequests" -> requests.asScala.toVector.asJava,
         "requestObservation" -> (if (requests.isEmpty) "no evaluation observed"
