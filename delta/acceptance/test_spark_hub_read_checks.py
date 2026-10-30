@@ -802,6 +802,21 @@ class TestObserverClassification(unittest.TestCase):
 
 
 class TestReadFixtureExtension(unittest.TestCase):
+    def test_native_version_uses_explicit_delta_snapshot_update_arguments(self):
+        from read_parity_pyspark import native_version
+        from unittest.mock import MagicMock
+
+        spark = MagicMock()
+        jvm = spark._jvm
+        jvm.scala.Option.empty.return_value = "empty-option"
+        delta_log = jvm.org.apache.spark.sql.delta.DeltaLog.forTable.return_value
+        delta_log.update.return_value.version.return_value = 42
+        self.assertEqual(native_version(spark, "s3a://bucket/table"), 42)
+        jvm.org.apache.spark.sql.delta.DeltaLog.forTable.assert_called_once_with(
+            spark._jsparkSession, "s3a://bucket/table"
+        )
+        delta_log.update.assert_called_once_with(False, "empty-option", "empty-option")
+
     def test_process_capture_uses_explicit_clean_working_directory(self):
         import sys
         from read_parity_live import start, finish

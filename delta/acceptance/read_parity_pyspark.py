@@ -98,6 +98,13 @@ def fixture_data(spark, request):
     return spark.sql("SELECT 1L id, 'east' region, 'z' email, 's1' secret UNION ALL SELECT 2L,'east','a','s2' UNION ALL SELECT 3L,'east',CAST(NULL AS STRING),'s3' UNION ALL SELECT 4L,'west','hidden','s4' UNION ALL SELECT 5L,'east','b','s5'")
 
 
+def native_version(spark, location):
+    """Read the native snapshot using the existing explicit Delta update boundary."""
+    jvm = spark._jvm
+    log = jvm.org.apache.spark.sql.delta.DeltaLog.forTable(spark._jsparkSession, location)
+    return int(log.update(False, jvm.scala.Option.empty(), jvm.scala.Option.empty()).version())
+
+
 def native_seed(request):
     from pyspark.sql import SparkSession
     from harness import credentials
@@ -133,7 +140,7 @@ def native_seed(request):
             actual=seed_table(spark, request, table, frame)
             detail=spark.sql("DESCRIBE DETAIL delta.`"+table["location"]+"`").collect()[0].asDict()
             observations[table["name"]]={"id":detail["id"],"location":detail["location"],
-                "version":int(spark._jvm.org.apache.spark.sql.delta.DeltaLog.forTable(spark._jsparkSession,table["location"]).update().version()),
+                "version":native_version(spark, table["location"]),
                 "schema":actual.schema.jsonValue(),"rows":[[normalize(v) for v in row] for row in actual.orderBy("id").collect()]}
         origins={}
         loader=spark._jvm.java.lang.Thread.currentThread().getContextClassLoader()
