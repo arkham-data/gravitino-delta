@@ -249,8 +249,10 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
         if (path == target || (metadataPrefix != null && path.startsWith(metadataPrefix))) {
           val index = namedAttempts.size
           namedAttempts :+= Map[String, Any](
-            "sequence" -> (index.toLong + 1L), "method" -> exchange.getRequestMethod,
-            "path" -> path, "status" -> 0
+            "sequence" -> (index.toLong + 1L),
+            "method" -> exchange.getRequestMethod,
+            "path" -> path,
+            "status" -> 0
           )
           Some(index)
         } else None
@@ -288,9 +290,12 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
         )
         val response = client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray())
         synchronized {
-          attempt.foreach(index => namedAttempts = namedAttempts.updated(
-            index, namedAttempts(index).updated("status", response.statusCode())
-          ))
+          attempt.foreach(index =>
+            namedAttempts = namedAttempts.updated(
+              index,
+              namedAttempts(index).updated("status", response.statusCode())
+            )
+          )
         }
         response.headers().map().asScala.foreach { case (name, values) =>
           if (!hopHeaders(name.toLowerCase(java.util.Locale.ROOT)))

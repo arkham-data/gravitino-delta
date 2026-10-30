@@ -29,14 +29,18 @@ import org.junit.jupiter.api.Test
 
 /** Finite transport observations include rejected attempts without changing forwarding. */
 class TestDeltaRangerLiveNamedRequests {
+
   /** A later request cannot mutate an earlier boundary snapshot. */
   @Test
   def snapshotsRetainRepeatedAllowedAndDeniedRequests(): Unit = {
     val upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
-    upstream.createContext("/", exchange => {
-      val status = if (exchange.getRequestURI.getPath.endsWith("denied")) 403 else 200
-      exchange.sendResponseHeaders(status, -1); exchange.close()
-    })
+    upstream.createContext(
+      "/",
+      exchange => {
+        val status = if (exchange.getRequestURI.getPath.endsWith("denied")) 403 else 200
+        exchange.sendResponseHeaders(status, -1); exchange.close()
+      }
+    )
     upstream.start()
     val gateway = new DeltaRangerLiveMetadataBarrier.Gateway(
       URI.create("http://127.0.0.1:" + upstream.getAddress.getPort),
@@ -47,11 +51,19 @@ class TestDeltaRangerLiveNamedRequests {
       gateway.observeTables(prefix, "metadata")
       val empty = gateway.namedRequests()
       val client = HttpClient.newHttpClient()
-      def get(table: String): Int = client.send(
-        HttpRequest.newBuilder(gateway.uri.resolve(prefix + table))
-          .header("Authorization", "Basic " + Base64.getEncoder.encodeToString("metadata:ignored".getBytes("UTF-8")))
-          .GET().build(), HttpResponse.BodyHandlers.discarding()
-      ).statusCode()
+      def get(table: String): Int = client
+        .send(
+          HttpRequest
+            .newBuilder(gateway.uri.resolve(prefix + table))
+            .header(
+              "Authorization",
+              "Basic " + Base64.getEncoder.encodeToString("metadata:ignored".getBytes("UTF-8"))
+            )
+            .GET()
+            .build(),
+          HttpResponse.BodyHandlers.discarding()
+        )
+        .statusCode()
       assertEquals(200, get("source"))
       val first = gateway.namedRequests()
       assertEquals(403, get("denied"))
@@ -64,10 +76,12 @@ class TestDeltaRangerLiveNamedRequests {
       assertEquals(403, last.get(1).get("status"))
       assertEquals(prefix + "denied", last.get(1).get("path"))
       assertEquals(3L, last.get(2).get("sequence"))
-      assertEquals(Set("sequence", "method", "path", "status"), {
-        import scala.collection.JavaConverters._
-        last.get(0).keySet().asScala.toSet
-      })
+      assertEquals(
+        Set("sequence", "method", "path", "status"), {
+          import scala.collection.JavaConverters._
+          last.get(0).keySet().asScala.toSet
+        }
+      )
     } finally { gateway.close(); upstream.stop(0) }
   }
 
@@ -75,15 +89,18 @@ class TestDeltaRangerLiveNamedRequests {
   @Test
   def failedAuthenticationIsRetainedWithoutSecrets(): Unit = {
     val gateway = new DeltaRangerLiveMetadataBarrier.Gateway(
-      URI.create("http://127.0.0.1:1"), Files.createTempDirectory("failed-named-request")
+      URI.create("http://127.0.0.1:1"),
+      Files.createTempDirectory("failed-named-request")
     )
     try {
       val prefix = "/api/metalakes/lake/catalogs/catalog/schemas/schema/tables/"
       gateway.observeTables(prefix, "metadata")
-      val response = HttpClient.newHttpClient().send(
-        HttpRequest.newBuilder(gateway.uri.resolve(prefix + "source")).GET().build(),
-        HttpResponse.BodyHandlers.discarding()
-      )
+      val response = HttpClient
+        .newHttpClient()
+        .send(
+          HttpRequest.newBuilder(gateway.uri.resolve(prefix + "source")).GET().build(),
+          HttpResponse.BodyHandlers.discarding()
+        )
       assertEquals(503, response.statusCode())
       val requests = gateway.namedRequests()
       assertEquals(1, requests.size())
