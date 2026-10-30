@@ -100,8 +100,15 @@ def verify_fixture_contract(case, result):
     """Check the fixture's actual downloaded grants, filter and mask definitions."""
     policies = read_ref(case["policySnapshot"])["policies"]
     rules = {rule["id"]: rule for rule in policies}
+    revoked = case.get("policyPhase") == "revoke-id"
+    if revoked:
+        assert (
+            result["policyIds"]["id-only"] not in rules
+        ), "revoked policy still downloaded"
     selected = {
-        name: rules[identifier] for name, identifier in result["policyIds"].items()
+        name: rules[identifier]
+        for name, identifier in result["policyIds"].items()
+        if not (revoked and name == "id-only")
     }
     for name, rule in selected.items():
         resources = rule["resources"]
@@ -112,9 +119,7 @@ def verify_fixture_contract(case, result):
             resource.get("isExcludes") is False and resource.get("isRecursive") is False
             for resource in resources.values()
         ), "fixture resource scope differs"
-        assert rule["isEnabled"] is (
-            case.get("policyPhase") != "revoke-id" or name != "id-only"
-        ), "fixture grant generation differs"
+        assert rule["isEnabled"] is True, "fixture grant generation differs"
     grants = [
         ("id-only", "policyItems", ["id"], [result["subjects"]["id-only"]]),
         (
@@ -131,6 +136,8 @@ def verify_fixture_contract(case, result):
         ),
     ]
     for name, field, columns, users in grants:
+        if revoked and name == "id-only":
+            continue
         rule = selected[name]
         assert (
             rule["policyType"] == 0 and rule["resources"]["column"]["values"] == columns
@@ -411,7 +418,7 @@ def verify_observations(result: dict) -> None:
             ), "unpublished source binding differs"
             assert (
                 case["error"]["class"] != "KeyError"
-                and "Published registration metadata is unavailable"
+                and "Native Delta registration binding is unavailable"
                 in case["error"]["message"]
             ), "unpublished named rejection absent"
             assert any(
@@ -462,6 +469,39 @@ def verify_observations(result: dict) -> None:
                 case["freshConstruction"] is True and case["policyPhase"] == "revoke-id"
             ), "fresh revoke action absent"
             precondition = read_ref(case["precondition"])
+            verify_fixture_contract(dict(precondition, identityProfile=profile), result)
+            prior = read_ref(precondition["policySnapshot"])
+            prior_rule = next(
+                rule
+                for rule in prior["policies"]
+                if rule["id"] == result["policyIds"]["id-only"]
+            )
+            trace = (
+                Path(result["nativeBefore"]["path"]).parent.parent.parent
+                / "id-only/revoke-id/ranger-trace"
+            )
+            assert case["revokeRequest"] == file_ref(
+                trace / "0002.request.private.json"
+            ) and case["revokeResponse"] == file_ref(
+                trace / "0002.response.private.bin"
+            ), "revoke original trace differs"
+            request = read_ref(case["revokeRequest"])
+            response = read_ref(case["revokeResponse"])
+            disabled = request["body"]
+            assert request["method"] == "PUT" and request[
+                "path"
+            ] == "/service/public/v2/api/policy/" + str(
+                prior_rule["id"]
+            ), "revoke request differs"
+            for field in ("id", "service", "resources", "policyItems", "policyType"):
+                assert (
+                    disabled[field] == response[field] == prior_rule[field]
+                ), "revoke policy differs"
+            assert (
+                prior_rule["isEnabled"] is True
+                and disabled["isEnabled"] is False
+                and response["isEnabled"] is False
+            ), "revoke disable failed"
             assert (
                 precondition["outcome"] == "allowed"
                 and precondition["actualActionQueries"] > 0
@@ -531,6 +571,95 @@ def verify_python_runtime(caller, package, runtime):
         assert (
             actual == provider["sha256"] == package["pythonProviders"][name]["sha256"]
         ), "actual Python provider bytes differ"
+
+
+def verify_metadata_authority(result):
+    """Bind the isolated metadata principal's actual existence-only grant."""
+    authority = result["metadataAuthority"]
+    assert set(authority) == {
+        "createRequest",
+        "createResponse",
+        "grantRequest",
+        "grantResponse",
+    }, "metadata authority inventory"
+    root = Path(result["nativeBefore"]["path"]).parent.parent
+    trace = root / "public-trace"
+    for first, second in (
+        ("createRequest", "createResponse"),
+        ("grantRequest", "grantResponse"),
+    ):
+        path = Path(authority[first]["path"])
+        assert path.parent == trace and path.name.endswith(
+            ".request.private.json"
+        ), "metadata trace path differs"
+        stem = path.name.removesuffix(".request.private.json")
+        assert stem.isdigit() and authority[second] == file_ref(
+            trace / (stem + ".response.private.json")
+        ), "metadata response trace differs"
+    assert (
+        int(Path(authority["grantRequest"]["path"]).name.split(".")[0])
+        == int(Path(authority["createRequest"]["path"]).name.split(".")[0]) + 1
+    ), "metadata trace sequence differs"
+    create, created, grant, granted = (
+        read_ref(authority[key])
+        for key in ("createRequest", "createResponse", "grantRequest", "grantResponse")
+    )
+    role, principal = result["metadataRole"], result["metadataPrincipal"]
+    expected = [
+        {
+            "type": "catalog",
+            "fullName": result["catalog"],
+            "privileges": [{"name": "use_catalog", "condition": "allow"}],
+        },
+        {
+            "type": "schema",
+            "fullName": result["catalog"] + "." + result["database"],
+            "privileges": [
+                {"name": "use_schema", "condition": "allow"},
+                {"name": "probe_table_like", "condition": "allow"},
+            ],
+        },
+        {
+            "type": "table",
+            "fullName": result["catalog"] + "." + result["database"] + ".source",
+            "privileges": [{"name": "select_table", "condition": "allow"}],
+        },
+    ]
+
+    def normalize(objects):
+        return [
+            {
+                "type": o["type"].lower(),
+                "fullName": o["fullName"],
+                "privileges": [
+                    {"name": p["name"].lower(), "condition": p["condition"].lower()}
+                    for p in o["privileges"]
+                ],
+            }
+            for o in objects
+        ]
+
+    assert (
+        create["method"] == "POST"
+        and create["path"].endswith("/roles")
+        and create["body"]["name"] == role
+        and normalize(create["body"]["securableObjects"]) == expected
+    ), "metadata role request differs"
+    assert (
+        created["code"] == 0
+        and created["role"]["name"] == role
+        and normalize(created["role"]["securableObjects"]) == expected
+    ), "metadata role response differs"
+    assert (
+        grant["method"] == "PUT"
+        and grant["path"].endswith("/permissions/users/" + principal + "/grant/")
+        and grant["body"] == {"roleNames": [role]}
+    ), "metadata grant request differs"
+    assert (
+        granted["code"] == 0
+        and granted["user"]["name"] == principal
+        and role in granted["user"]["roles"]
+    ), "metadata grant response differs"
 
 
 def verify_process_provenance(result):
@@ -671,6 +800,7 @@ def verify_result(result: dict) -> None:
     """Full live gate: original processes, finite semantics, packages and security."""
     verify_observations(result)
     assert result.get("evidenceKind") == "actual-live", "not live qualification"
+    verify_metadata_authority(result)
     verify_process_provenance(result)
     from cdf_read_live_package import verify_runtime
     from read_parity_checks import verify_jar_property

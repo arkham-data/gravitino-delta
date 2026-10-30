@@ -60,6 +60,7 @@ class TestSparkHubReadChecks(unittest.TestCase):
                 }
             return {
                 "id": identifier,
+                "service": "service",
                 "policyType": kind,
                 "isEnabled": True,
                 "resources": resource,
@@ -167,7 +168,9 @@ class TestSparkHubReadChecks(unittest.TestCase):
                 }
             },
         }
-        self.value["nativeBefore"] = self.artifact(native)
+        self.value["nativeBefore"] = self.path_artifact(
+            "cell/fixture/native-seed/result.json", native
+        )
         self.value["nativeAfter"] = self.artifact(native)
         for profile, subject in self.value["subjects"].items():
             self.value["profiles"][profile] = {
@@ -354,7 +357,7 @@ class TestSparkHubReadChecks(unittest.TestCase):
             if name == "unpublished-registration":
                 case["error"] = {
                     "class": "Py4JJavaError",
-                    "message": "java.lang.SecurityException: Published registration metadata is unavailable",
+                    "message": "java.lang.SecurityException: Native Delta registration binding is unavailable",
                 }
                 case["tableRequestsAfter"] = [
                     {
@@ -368,9 +371,26 @@ class TestSparkHubReadChecks(unittest.TestCase):
                 case["policyPhase"] = "revoke-id"
                 revoked = copy.deepcopy(policy)
                 revoked["policyVersion"] = 11
-                revoked["policies"][0]["isEnabled"] = False
+                revoked["policies"] = revoked["policies"][1:]
                 case["policySnapshot"] = self.artifact(revoked)
                 case["appliedPolicy"] = self.applied_policy(revoked)
+                disabled = dict(
+                    copy.deepcopy(policy["policies"][0]),
+                    service="service",
+                    isEnabled=False,
+                )
+                case["revokeRequest"] = self.path_artifact(
+                    "cell/id-only/revoke-id/ranger-trace/0002.request.private.json",
+                    {
+                        "method": "PUT",
+                        "path": "/service/public/v2/api/policy/1",
+                        "body": disabled,
+                    },
+                )
+                case["revokeResponse"] = self.path_artifact(
+                    "cell/id-only/revoke-id/ranger-trace/0002.response.private.bin",
+                    disabled,
+                )
                 case["precondition"] = self.artifact(
                     {
                         "outcome": "allowed",
@@ -388,6 +408,12 @@ class TestSparkHubReadChecks(unittest.TestCase):
 
     def artifact(self, value):
         return self.text_artifact(json.dumps(value))
+
+    def path_artifact(self, name, value):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value))
+        return file_ref(path)
 
     def text_artifact(self, value):
         self.serial += 1
@@ -564,7 +590,35 @@ class TestSparkHubReadChecks(unittest.TestCase):
         case["policySnapshot"] = self.policy
         case["appliedPolicy"] = self.applied
         self.refresh(case)
-        self.rejects("revoke generation|fixture grant generation")
+        self.rejects("revoke generation|revoked policy")
+
+    def test_revoke_rejects_wrong_policy_or_unsuccessful_disable(self):
+        for key, field, value in (
+            ("revokeRequest", "id", 99),
+            ("revokeRequest", "isEnabled", True),
+            ("revokeResponse", "id", 99),
+            ("revokeResponse", "isEnabled", True),
+        ):
+            with self.subTest(key=key, field=field):
+                case = self.case("fresh-action-revoke")
+                original = case[key]
+                path = Path(original["path"])
+                original_text = path.read_text()
+                record = json.loads(original_text)
+                (record["body"] if key == "revokeRequest" else record)[field] = value
+                path.write_text(json.dumps(record))
+                case[key] = file_ref(path)
+                self.refresh(case)
+                self.rejects("revoke")
+                path.write_text(original_text)
+                case[key] = original
+                self.refresh(case)
+
+    def test_revoke_rejects_substituted_response(self):
+        case = self.case("fresh-action-revoke")
+        case["revokeResponse"] = self.artifact({"id": 1, "isEnabled": False})
+        self.refresh(case)
+        self.rejects("revoke original trace")
 
     def test_native_source_cannot_change(self):
         native = json.loads(Path(self.value["nativeAfter"]["path"]).read_text())
@@ -808,6 +862,21 @@ class TestObserverClassification(unittest.TestCase):
 
 
 class TestReadFixtureExtension(unittest.TestCase):
+    def test_metadata_schema_probe_is_fixture_only_and_not_data_permission(self):
+        from read_parity_live import metadata_schema_privileges
+
+        self.assertEqual(
+            metadata_schema_privileges(False),
+            [{"name": "USE_SCHEMA", "condition": "ALLOW"}],
+        )
+        self.assertEqual(
+            metadata_schema_privileges(True),
+            [
+                {"name": "USE_SCHEMA", "condition": "ALLOW"},
+                {"name": "PROBE_TABLE_LIKE", "condition": "ALLOW"},
+            ],
+        )
+
     def test_metadata_grants_only_existing_published_tables(self):
         from read_parity_live import metadata_grant_tables
 
@@ -932,6 +1001,109 @@ class TestReadFixtureExtension(unittest.TestCase):
         )
         self.assertIn("'s1' secret", fixture_data(Spark(), {}))
         self.assertIn("SELECT 5L", fixture_data(Spark(), {}))
+
+
+class TestMetadataAuthority(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve() / "cell/fixture"
+        self.trace = self.root / "public-trace"
+        self.trace.mkdir(parents=True)
+        native = self.root / "native-seed/result.json"
+        native.parent.mkdir()
+        native.write_text("{}")
+        objects = [
+            {
+                "type": "CATALOG",
+                "fullName": "c",
+                "privileges": [{"name": "USE_CATALOG", "condition": "ALLOW"}],
+            },
+            {
+                "type": "SCHEMA",
+                "fullName": "c.db",
+                "privileges": [
+                    {"name": "USE_SCHEMA", "condition": "ALLOW"},
+                    {"name": "PROBE_TABLE_LIKE", "condition": "ALLOW"},
+                ],
+            },
+            {
+                "type": "TABLE",
+                "fullName": "c.db.source",
+                "privileges": [{"name": "SELECT_TABLE", "condition": "ALLOW"}],
+            },
+        ]
+        self.values = {
+            "createRequest": {
+                "method": "POST",
+                "path": "/api/metalakes/lake/roles",
+                "body": {"name": "metadata-role", "securableObjects": objects},
+            },
+            "createResponse": {
+                "code": 0,
+                "role": {
+                    "name": "metadata-role",
+                    "securableObjects": copy.deepcopy(objects),
+                },
+            },
+            "grantRequest": {
+                "method": "PUT",
+                "path": "/api/metalakes/lake/permissions/users/metadata/grant/",
+                "body": {"roleNames": ["metadata-role"]},
+            },
+            "grantResponse": {
+                "code": 0,
+                "user": {"name": "metadata", "roles": ["metadata-role"]},
+            },
+        }
+        self.paths = {
+            "createRequest": "0020.request.private.json",
+            "createResponse": "0020.response.private.json",
+            "grantRequest": "0021.request.private.json",
+            "grantResponse": "0021.response.private.json",
+        }
+        self.result = {
+            "catalog": "c",
+            "database": "db",
+            "metadataRole": "metadata-role",
+            "metadataPrincipal": "metadata",
+            "nativeBefore": file_ref(native),
+            "metadataAuthority": {},
+        }
+        for key in self.values:
+            self.write(key)
+
+    def write(self, key):
+        path = self.trace / self.paths[key]
+        path.write_text(json.dumps(self.values[key]))
+        self.result["metadataAuthority"][key] = file_ref(path)
+
+    def test_original_metadata_authority(self):
+        from spark_hub_read_checks import verify_metadata_authority
+
+        verify_metadata_authority(self.result)
+
+    def test_probe_and_grant_receipts_cannot_be_substituted(self):
+        from spark_hub_read_checks import verify_metadata_authority
+
+        for key in ("createRequest", "createResponse", "grantRequest", "grantResponse"):
+            with self.subTest(key=key):
+                before = copy.deepcopy(self.values[key])
+                if key == "createRequest":
+                    self.values[key]["body"]["securableObjects"][1]["privileges"][1][
+                        "name"
+                    ] = "MODIFY_TABLE"
+                elif key == "createResponse":
+                    self.values[key]["role"]["securableObjects"][1]["privileges"].pop()
+                elif key == "grantRequest":
+                    self.values[key]["body"]["roleNames"] = ["other"]
+                else:
+                    self.values[key]["code"] = 1
+                self.write(key)
+                with self.assertRaises(AssertionError):
+                    verify_metadata_authority(self.result)
+                self.values[key] = before
+                self.write(key)
 
 
 class TestProcessProvenance(unittest.TestCase):

@@ -329,6 +329,10 @@ def run_cases(spark, bridge, request, product):
         }
         if name == "fresh-action-revoke":
             value["freshConstruction"] = True
+            if not precondition:
+                trace = Path(request["output"]).parent / "revoke-id/ranger-trace"
+                value["revokeRequest"] = ref(trace / "0002.request.private.json")
+                value["revokeResponse"] = ref(trace / "0002.response.private.bin")
         if not precondition:
             expected = CASE_SPECS[name][2]
             assert outcome == expected, (name, outcome, error)

@@ -385,6 +385,7 @@ def worker(runtime_path, spark_hub_root, inputs_path, output):
             unpublished_tables=("unpublished",),
             table_names=("source", "unpublished"),
             python=package["python"],
+            metadata_probe=True,
         )
         change_policy(
             plan, "constant-mask", output / "mask-policy", mask_expression="'MASKED'"
@@ -467,6 +468,28 @@ def worker(runtime_path, spark_hub_root, inputs_path, output):
             "subjects": {profile: plan["subjects"][profile] for profile in profiles},
             "setupIdentity": plan["serviceAdmin"],
             "metadataPrincipal": plan["metadataPrincipal"],
+            "metadataRole": plan["roles"]["metadata"],
+            "metadataAuthority": {
+                key: file_ref(plan[trace] + suffix)
+                for key, trace, suffix in (
+                    (
+                        "createRequest",
+                        "metadataRoleCreateTrace",
+                        ".request.private.json",
+                    ),
+                    (
+                        "createResponse",
+                        "metadataRoleCreateTrace",
+                        ".response.private.json",
+                    ),
+                    ("grantRequest", "metadataRoleGrantTrace", ".request.private.json"),
+                    (
+                        "grantResponse",
+                        "metadataRoleGrantTrace",
+                        ".response.private.json",
+                    ),
+                )
+            },
             "profiles": profiles,
             "cases": cases,
             "binding": bindings[0],
