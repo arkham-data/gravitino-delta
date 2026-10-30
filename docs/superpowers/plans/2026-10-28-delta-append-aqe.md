@@ -105,23 +105,28 @@ Let **M**=`spark-connector/v3.5/spark-delta-ranger/src/main/scala/org/apache/gra
 
 ## Task 4: Frozen public-grant matrix, documentation and closure
 
-**In progress:** bounded public-grant native PySpark development validation passed
-seven profiles / 14 attempts with original supervisor exit0 and independent
-public/runtime/payload/native checks. Supplemental CDF/cache assertions pass those
-same retained records; focused Python tests pass25 and full acceptance129. Exact
-final installed selection is67 methods/12 classes after the added native AQE warm
-regression. Candidate freeze and the complete four-pair 26-profile/42-attempt
-matrix remain required; task/whole-branch review and push belong to the controller.
+**Implementation/runtime complete; controller acceptance pending:** producing
+candidate `6834b18f9349fab8c97decd1cec0de0140a69666` passed all four frozen
+Spark/Delta pairs with 66 installed methods/12 classes and 26 public native PySpark
+profiles/42 application attempts each (264 installed/104 profiles/168 attempts).
+Original 67-inventory/supervisor exit 1 is preserved; exact Task2→Task3 rename proof and
+additive independent verification establish current 66 without replay. Checker fix
+`6b5a496d95a533983a63406c6a4f2041fc5daea4` adds strict actual inventory/process/maintenance joins;
+its complete external gate passed every qualifying cell while producing source was
+still frozen, before exact checker/test-only apply. Independent source/class/JAR,
+public-policy/payload/native checks and later documentation-input equality remain
+explicit. Task/whole-branch review, milestone closure and push belong to the
+controller.
 
 **Files:** live runner/thin app/package profile and final support docs from map; extend `A/append_aqe_checks.py` and tests with actual Delta result verification.
 
 **Interfaces:** `verify_delta_append(result: dict) -> None`; `append_aqe_live.py --runtime <manifest> --inputs <private-inputs> --out <fresh-dir>`; `E/final-evidence-index.json` joins frozen source, installed and real live results, original command exits and immutable runtime artifacts.
 
-- [ ] Add checker RED mutants for missing source SELECT/target UPDATE decisions, false generic-error denials, missing public grant/download/application linkage, false duplicate success with second publication, wrong checkpoint/cache results, postcommit failure mislabeled rollback and metadata-only AQE. Run GREEN before the final matrix.
-- [ ] Reuse the accepted public append fixture to propagate real Gravitino MODIFY/SELECT grants and revokes to Ranger2.8.0. New cases run actual native PySpark append without changing session AQE. Keep admin/downloader/metadata/application identities separate and retain canonical registration before/after persistence/restart where the existing fixture requires it.
-- [ ] Freeze candidate source/tests/harness and inventory disk/services. Run new installed append/maintenance suites and affected regressions on all four Spark/Delta pairs with original nonzero method inventories and no failures/errors/skips. Reuse unaffected earlier checks only with exact executed-input proof.
-- [ ] Build fresh immutable matching packages and execute four live cells serially. Each covers both named frontends, partitioned/unpartitioned committed rows, source masks/filter, denied source and target, authorized/denied duplicates, public revoke after file generation before commit, both warm-cache orders and late readback, required CDF continued-use and checkpoint outcomes. Observe adaptive write payload separately from metadata/readback; record actual Ranger server/client2.8.0 and loaded providers.
-- [ ] Reuse Task1 comparator results only if its executed runtime/harness/source inputs remain equal. Re-run affected reference cells if those inputs changed; never relabel previous exits. Index all final references, hashes, source/class/package joins and independent check results. Retain all original failures.
+- [x] Add checker RED mutants for missing source SELECT/target UPDATE decisions, false generic-error denials, missing public grant/download/application linkage, false duplicate success with second publication, wrong checkpoint/cache results, postcommit failure mislabeled rollback and metadata-only AQE. Run GREEN before the final matrix.
+- [x] Reuse the accepted public append fixture to propagate real Gravitino MODIFY/SELECT grants and revokes to Ranger2.8.0. New cases run actual native PySpark append without changing session AQE. Keep admin/downloader/metadata/application identities separate and retain canonical registration before/after persistence/restart where the existing fixture requires it.
+- [x] Freeze candidate source/tests/harness and inventory disk/services. Run new installed append/maintenance suites and affected regressions on all four Spark/Delta pairs with original nonzero method inventories and no failures/errors/skips. Reuse unaffected earlier checks only with exact executed-input proof.
+- [x] Build fresh immutable matching packages and execute four live cells serially. Each covers both named frontends, partitioned/unpartitioned committed rows, source masks/filter, denied source and target, authorized/denied duplicates, public revoke after file generation before commit, both warm-cache orders and late readback, required CDF continued-use and checkpoint outcomes. Observe adaptive write payload separately from metadata/readback; record actual Ranger server/client2.8.0 and loaded providers.
+- [x] Reuse Task1 comparator results only if its executed runtime/harness/source inputs remain equal. Re-run affected reference cells if those inputs changed; never relabel previous exits. Index all final references, hashes, source/class/package joins and independent check results. Retain all original failures.
 - [ ] Update support docs with exact native APIs, source/schema/options limits, existing extra Delta revalidation guarantees and measured Iceberg differences. Obtain fresh task review then separate whole-branch review. Resolve findings with affected verification, close the milestone, push the intended branch under standing authorization and preserve the worktree/evidence. Catalog-demo stays deferred.
 
 ## Commands and evidence discipline

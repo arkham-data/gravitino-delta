@@ -32,6 +32,7 @@ must not be admitted because their schema resembles a qualified relation.
 | Insert-only optimization | Unsupported | Owned native branch with original column demands, masks/filters, output and denial evidence |
 | Column mapping and defaults | Unsupported | Protocol/schema profiles, native features, authored-expression provenance and raw copy-forward |
 | AQE | Bounded named ordinary reads, CDF and native MERGE use trusted stock adaptive execution; caller chooses the profile | Four-pair installed defaults/coalescing and representative optimization branches; seven fresh packaged Python/Ranger/MinIO phases per pair, exact original artifacts/exits and operation-boundary revocation. See [current contract](delta-cdf-merge.md#trusted-stock-adaptive-execution) |
+| Named DataFrame append with caller AQE | Two existing matching-schema native classic PySpark append APIs passed the local four-pair runtime matrix | 66 installed methods/12 classes and 26 public-grant profiles/42 application attempts per pair; exact source/runtime/process and strengthened checker receipts. Fresh late cache-key queries, native CDF continued use and classic multipart checkpoints retain the [bounded append scope](delta-native-governed-append.md#caller-selected-adaptive-append); controller reviews remain separate |
 | Schema evolution | Unsupported | Native schema evolution with registration/publication and policy demand correctness |
 | Row tracking and deletion vectors | Unsupported write profiles | Exact native feature semantics and owned action/reconstruction evidence |
 | Broader source grammar/clauses | One bounded CDF source with finite scalar grammar | Defined joins/windows/aggregates and NOT MATCHED BY SOURCE semantics; no admission by schema equivalence |
@@ -67,15 +68,24 @@ read bounds, [governed MERGE](delta-cdf-merge.md) for policy/checkpoint semantic
 and the separate [builder](superpowers/plans/2026-10-22-delta-cdf-merge-builder.md)
 and [deployment](superpowers/plans/2026-10-22-delta-cdf-merge-demo.md) plans.
 
-## Adaptive append candidate
+## Adaptive append qualification
 
 The [append continuation](delta-native-governed-append.md#caller-selected-adaptive-append)
-implements the two existing native classic PySpark append frontends with caller
-AQE preserved. A bounded seven-profile / 14-attempt public-grant development
-subset has passed; the final frozen four-pair installed/live matrix remains
-pending. Native cache-key maintenance uses fresh late native queries; it does not
-promise that a previously executed Dataset/QueryExecution refreshes. Existing
-schema, option, source, transaction and feature limits remain in force.
+passed the four-pair runtime aggregate for the two existing native classic
+PySpark append frontends with caller AQE preserved: 66 installed methods/12 classes
+and 26 public-grant profiles/42 application attempts per pair. Original commands,
+source/class/package identity and strengthened independent checker receipts remain
+separate in the private final index. The obsolete 67-entry installed expectation
+and first supervisor exit 1 are retained alongside the corrected 66-method proof; no
+installed tests were replayed for that inventory error.
+
+Native cache-key maintenance uses fresh late native queries; live records retain
+replacement owners/head before reads and exact row readback, while installed
+checks also inspect accepted ownership/final plans after fresh reads. Reusing a
+previously executed Dataset/QueryExecution remains unqualified. Existing schema,
+option, source, transaction and feature limits remain in force. Controller task
+and whole-milestone reviews are separate gates; catalog-demo and deployment remain
+deferred.
 
 ## Revised adaptive execution boundary
 

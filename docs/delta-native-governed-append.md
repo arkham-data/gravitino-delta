@@ -92,7 +92,11 @@ an uncertain write; postcommit observation failure is not rollback.
 Native target and direct attribute-Project cache keys are maintained in both
 insertion orders, including duplicate and late readback. Late readback constructs
 fresh native DataFrames in the retained native session after the append owner
-exits. Reusing an already executed Dataset/QueryExecution is a separate boundary:
+exits. Live records prove replacement ownership/head and cold state before those
+fresh reads, plus their exact returned rows; the stronger installed maintenance
+checks also inspect accepted ownership/final plans after fresh reads. Live rows
+alone do not prove consumption of a particular replacement builder.
+Reusing an already executed Dataset/QueryExecution is a separate boundary:
 a development attempt returned its old rows even though replacement cache owners
 selected the new head. That observation is retained; refreshing such retained
 QueryExecutions is not qualified here. Native CacheManager's existing compilation
@@ -124,13 +128,27 @@ manifested Hadoop/S3A 3.3.6 MinIO profile. One writer job per dataset is assumed
 Catalog-demo, Connect/streaming, separate workers, production authentication and
 full Delta support remain separate work.
 
-The development subset has 14 actual application attempts across seven profiles,
-with original exits and independent public/runtime/payload/native checks passing.
-This remains candidate evidence. Final qualification requires all four frozen
-Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 cells, each with 67 selected installed methods
-and 26 live profiles / 42 application write attempts. The final index is retained
-at `.superpowers/sdd/2026-10-28-delta-append-aqe/final-evidence-index.json` when that
-matrix and independent reviews complete. No final four-pair result is claimed yet.
+The Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 aggregate passed all four cells:
+66 installed methods / 12 classes and 26 live profiles / 42 application attempts
+per cell, totaling 264 installed methods and 168 qualifying live attempts. The
+four installed Gradle and package commands and each qualifying live command
+exited 0, with no installed failures/errors/skips. The first fourth-cell live
+attempt was interrupted without an exit receipt; a fresh isolated fourth-cell
+attempt supplied its own complete qualification. The first installed supervisor
+exited 1 because the original 67-entry inventory
+counted an obsolete Task2 method alongside its Task3 replacement. Both original
+outcomes remain retained; additive independent verification establishes the exact
+current 66-method inventory without a test replay.
+
+Producing candidate `6834b18f9349fab8c97decd1cec0de0140a69666` and its 9158 inputs
+remained frozen through all runtime cells. Checker fix `6b5a496d95a533983a63406c6a4f2041fc5daea4`
+adds fail-closed actual profile/attempt/process/maintenance joins. Its complete
+external checker passed every retained cell before source divergence, including
+the unchanged runtime gate. Exact byte/input equality proves the later tracked
+checker/test-only change and separate documentation-only closure; no package
+metadata, original result or exit is relabeled. The private index is
+`.superpowers/sdd/2026-10-28-delta-append-aqe/final-evidence-index.json`.
+Controller task and whole-milestone reviews remain separate acceptance gates.
 
 ## Native cache and checkpoint scope
 
