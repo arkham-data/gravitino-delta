@@ -93,6 +93,11 @@ def fixture_resources(kind,plan,columns):
     return {key:{"values":value,"isExcludes":False,"isRecursive":False} for key,value in values.items()}
 
 
+def metadata_grant_tables(table_names, unpublished_tables):
+    """Grant metadata access only to registered tables visible to the server."""
+    return tuple(name for name in table_names if name not in unpublished_tables)
+
+
 def provision(runtime,inputs,output,association,handles,*,fixture_rows=None,
               unpublished_tables=(),table_names=("source","primitive"),python=None):
     output.mkdir(mode=0o700)
@@ -153,7 +158,7 @@ def provision(runtime,inputs,output,association,handles,*,fixture_rows=None,
     for profile,user in dict(subjects,metadata=plan["metadataPrincipal"]).items():
         role="read_role_"+profile.replace("-","_")+"_"+nonce;roles[profile]=role
         rest.call("POST",base+"/users",{"name":user})
-        selected=[obj("TABLE",plan["catalog"]+"."+plan["database"]+"."+table["name"],"SELECT_TABLE") for table in plan["tables"]] if profile=="metadata" else []
+        selected=[obj("TABLE",plan["catalog"]+"."+plan["database"]+"."+name,"SELECT_TABLE") for name in metadata_grant_tables(table_names,unpublished_tables)] if profile=="metadata" else []
         rest.call("POST",base+"/roles",{"name":role,"properties":{},"securableObjects":use+selected})
         rest.call("PUT",base+"/permissions/users/"+quote(user,safe="")+"/grant/",{"roleNames":[role]})
     plan["roles"]=roles

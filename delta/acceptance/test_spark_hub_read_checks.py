@@ -361,7 +361,7 @@ class TestSparkHubReadChecks(unittest.TestCase):
                         "sequence": 1,
                         "method": "GET",
                         "path": "/api/metalakes/lake/catalogs/c/schemas/db/tables/unpublished",
-                        "status": 200,
+                        "status": 404,
                     }
                 ]
             if name == "fresh-action-revoke":
@@ -540,6 +540,12 @@ class TestSparkHubReadChecks(unittest.TestCase):
         case["error"] = {"class": "KeyError", "message": "missing"}
         self.refresh(case)
         self.rejects("unpublished named rejection")
+
+    def test_unpublished_cannot_use_authorization_failure_as_named_rejection(self):
+        case = self.case("unpublished-registration")
+        case["tableRequestsAfter"][0]["status"] = 403
+        self.refresh(case)
+        self.rejects("unpublished named request")
 
     def test_denial_requires_actual_denied_email_select(self):
         case = self.case("column-denied")
@@ -802,6 +808,17 @@ class TestObserverClassification(unittest.TestCase):
 
 
 class TestReadFixtureExtension(unittest.TestCase):
+    def test_metadata_grants_only_existing_published_tables(self):
+        from read_parity_live import metadata_grant_tables
+
+        self.assertEqual(
+            metadata_grant_tables(("source", "primitive"), ()), ("source", "primitive")
+        )
+        self.assertEqual(
+            metadata_grant_tables(("source", "unpublished"), ("unpublished",)),
+            ("source",),
+        )
+
     def test_native_version_uses_explicit_delta_snapshot_update_arguments(self):
         from read_parity_pyspark import native_version
         from unittest.mock import MagicMock

@@ -417,8 +417,9 @@ def verify_observations(result: dict) -> None:
             assert any(
                 request["method"] == "GET"
                 and request["path"].endswith("/tables/unpublished")
+                and request["status"] == 404
                 for request in after_requests[len(before_requests) :]
-            ), "unpublished named request absent"
+            ), "unpublished named request did not return not-found"
         else:
             assert case["sourceBinding"] == binding, "case source binding differs"
             verify_decisions(case, result, columns, outcome == "allowed")
