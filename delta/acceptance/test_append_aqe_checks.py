@@ -718,6 +718,7 @@ class TestDeltaAppendAqeChecks(unittest.TestCase):
             ]
         return dict(
             schemaVersion=1,
+            qualification=False,
             spark="3.5.4",
             delta="3.3.0",
             subject="app",
@@ -1341,6 +1342,390 @@ class TestAppendAqePackageProfile(unittest.TestCase):
         self.assertEqual("readParityLiveThinJar", app_profile("read-parity")["task"])
         with self.assertRaises(AssertionError):
             app_profile("unknown-append")
+
+
+class TestDeltaQualificationInventory(unittest.TestCase):
+    """The finite qualification inventory comes from actual bound evidence."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+
+    def write(self, relative, value):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value))
+        return file_ref(path)
+
+    def exit(self, relative):
+        descriptor = self.write(relative, dict(exitCode=0, timedOut=False, pid=123))
+        self.write(str(Path(relative).with_name("process.json")), dict(pid=123))
+        return descriptor
+
+    def fixture(self, qualifying=True, names=None):
+        from append_aqe_profiles import case_specs
+        from append_aqe_checks import _delta_attempts, _delta_expected_outcome
+
+        specs = [s for s in case_specs() if names is None or s["name"] in names]
+        tables = [
+            dict(
+                name=s["target"],
+                prefix=s["target"] + "/",
+                location="s3a://bucket/" + s["target"],
+            )
+            for s in specs
+        ]
+        result = dict(
+            qualification=qualifying,
+            runtime=self.write("package/manifest.json", dict(sparkHome="/spark")),
+            fixturePlan=self.write(
+                "fixture/state.private.json", dict(nonce="nonce", tables=tables)
+            ),
+            persistenceBefore=self.write(
+                "registrations-before-restart.private.json", {}
+            ),
+            persistenceAfter=self.write("registrations-after-restart.private.json", {}),
+            caseInventory=[s["name"] for s in specs],
+            subject="writer",
+            cases=[],
+            processExits={
+                key: self.exit(key)
+                for key in (
+                    "fixture-command/exit.json",
+                    "fixture/native-seed/process/exit.json",
+                )
+            },
+        )
+        exits = result["processExits"]
+        for spec in specs:
+            base = "cases/" + spec["name"]
+            directory = self.root / base
+            attempts = _delta_attempts(spec)
+            request = self.write(
+                base + "/request/request.private.json",
+                dict(
+                    caseName=spec["name"],
+                    frontend=spec["api"],
+                    source="source",
+                    target=spec["target"],
+                    duplicate=spec["duplicate"],
+                    denyDuplicate=spec["profile"] == "denied-duplicate",
+                    warmOrder=spec["warmOrder"],
+                    barrier=spec["profile"] == "revoke",
+                    appendCount=spec["appendCount"],
+                    transactionVersions=[version for _, version in attempts],
+                    targetLocation="s3a://bucket/" + spec["target"],
+                    output=str(directory / "jvm"),
+                    pythonOutput=str(directory / "python"),
+                    controlDirectory=str(directory / "request/control"),
+                ),
+            )
+            writer_key = base + "/writer/exit.json"
+            exits[writer_key] = self.exit(writer_key)
+            self.write(
+                base + "/writer/command.json",
+                dict(
+                    argv=[
+                        "/spark/bin/spark-submit",
+                        "/repo/append_aqe_pyspark.py",
+                        request["path"],
+                    ]
+                ),
+            )
+            previous = "before"
+            version = 2 if spec["profile"].startswith("cdf-") else 0
+
+            def image(side, current):
+                native = self.write(base + "/" + side + "/native/result.json", {})
+                key = base + "/" + side + "/native/process/exit.json"
+                exits[key] = self.exit(key)
+                objects = {}
+                if current > (2 if spec["profile"].startswith("cdf-") else 0):
+                    txn_version = (
+                        1
+                        if spec["duplicate"]
+                        else current - (2 if spec["profile"].startswith("cdf-") else 0)
+                    )
+                    txn = self.write(
+                        base + "/" + side + "/txn.json",
+                        dict(
+                            txn=dict(
+                                appId="append-aqe-nonce-" + spec["name"],
+                                version=txn_version,
+                            )
+                        ),
+                    )
+                    objects[
+                        spec["target"]
+                        + "/_delta_log/"
+                        + str(current).zfill(20)
+                        + ".json"
+                    ] = txn
+                return self.write(
+                    base + "/" + side + "/image.json",
+                    dict(
+                        nativeTable=spec["target"],
+                        nativeEvidence=native,
+                        version=current,
+                        objects=objects,
+                    ),
+                )
+
+            before = image(previous, version)
+            for index, (attempt, txn_version) in enumerate(attempts):
+                name = spec["name"] + "-" + attempt
+                outcome = _delta_expected_outcome(spec, attempt)
+                version += int(outcome == "committed")
+                after = image("after-" + attempt, version)
+                caller = dict(
+                    transactionAppId="append-aqe-nonce-" + spec["name"],
+                    transactionVersion=str(txn_version),
+                    jvmThread=10,
+                )
+                failure, callbacks, requests = [], [], []
+                case = dict(
+                    name=name,
+                    api=spec["api"],
+                    profile=spec["profile"],
+                    target=spec["target"],
+                    source="source",
+                    outcome=outcome,
+                    request=request,
+                    before=before,
+                    after=after,
+                    callerBefore=caller,
+                    callerAfter=copy.deepcopy(caller),
+                    failure=failure,
+                    callbacks=callbacks,
+                    rangerRequests=requests,
+                )
+                case["callerEvidence"] = self.write(
+                    base + "/python/" + name + "-caller.json",
+                    dict(before=caller, after=caller),
+                )
+                case["observation"] = self.write(
+                    base + "/jvm/" + name + "-append.json",
+                    dict(
+                        writerThreadId=10,
+                        subject="writer",
+                        aqe=True,
+                        failure=failure,
+                        callbacks=callbacks,
+                        rangerRequests=requests,
+                    ),
+                )
+                if spec["warmOrder"] != "none":
+                    warm_before = self.write(base + "/jvm/warm-before.json", {})
+                    warm_after = self.write(base + "/jvm/" + name + "-warm.json", {})
+                    case["warm"] = self.write(
+                        base + "/" + name + "-warm-result.json",
+                        dict(
+                            order=spec["warmOrder"],
+                            before=warm_before,
+                            after=warm_after,
+                        ),
+                    )
+                if spec["profile"] == "checkpoint" and index == len(attempts) - 1:
+                    case["checkpoint"] = self.write(
+                        base + "/checkpoint-result.json", {}
+                    )
+                if spec["profile"] == "revoke":
+                    case["barrier"] = self.write(base + "/barrier-result.json", {})
+                result["cases"].append(case)
+                before = after
+        first = specs[0]["name"]
+        for alias, path in {
+            "writer": "writer",
+            "native-before": "before/native/process",
+            "native-after": "after-first/native/process",
+        }.items():
+            exits[alias] = exits["cases/" + first + "/" + path + "/exit.json"]
+        exits["supervisor"] = self.exit("supervisor/exit.json")
+        argv = [
+            "python",
+            "/repo/append_aqe_live.py",
+            "--runtime",
+            result["runtime"]["path"],
+            "--out",
+            str(self.root),
+        ]
+        if not qualifying:
+            for spec in specs:
+                argv.extend(["--case", spec["name"]])
+        self.write("supervisor/command.json", dict(argv=argv))
+        return result
+
+    def check(self, result):
+        from append_aqe_checks import _verify_delta_contract
+
+        _verify_delta_contract(result)
+
+    def rewrite(self, case, key, change):
+        value = json.loads(Path(case[key]["path"]).read_text())
+        change(value)
+        Path(case[key]["path"]).write_text(json.dumps(value))
+        case[key] = file_ref(case[key]["path"])
+
+    def test_full_inventory_and_explicit_bounded_development(self):
+        self.check(self.fixture())
+        self.check(self.fixture(False, ["saveAsTable_checkpoint"]))
+
+    def test_qualifying_mode_requires_runtime_even_with_reported_full_inventory(self):
+        from append_aqe_checks import verify_delta_append
+
+        fixture = TestDeltaAppendAqeChecks()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        value = fixture.fixture()
+        value["qualification"] = True
+        value["caseInventory"] = [
+            s["name"] for s in __import__("append_aqe_profiles").case_specs()
+        ]
+        value["cases"] = [
+            dict(copy.deepcopy(value["cases"][0]), name="cloned-" + str(i))
+            for i in range(42)
+        ]
+        with self.assertRaisesRegex(AssertionError, "requires runtime"):
+            verify_delta_append(value)
+
+    def test_actual_inventory_rejects_clones_missing_and_substituted_profiles(self):
+        original = self.fixture()
+        mutations = [
+            lambda v: v["cases"].pop(),
+            lambda v: v["cases"].__setitem__(
+                1, dict(copy.deepcopy(v["cases"][0]), name=v["cases"][1]["name"])
+            ),
+            lambda v: v["cases"][0].__setitem__(
+                "name", "saveAsTable_plain-first-substituted"
+            ),
+            lambda v: v["caseInventory"].pop(),
+        ]
+        for mutate in mutations:
+            value = copy.deepcopy(original)
+            mutate(value)
+            with self.subTest(mutation=mutate), self.assertRaises(AssertionError):
+                self.check(value)
+
+    def test_rejects_api_target_profile_attempt_outcome_and_request_drift(self):
+        original = self.fixture()
+        for key, wrong in dict(
+            api="saveAsTable",
+            target="save_plain",
+            source="other",
+            profile="partitioned",
+            outcome="duplicate",
+        ).items():
+            value = copy.deepcopy(original)
+            value["cases"][0][key] = wrong
+            with self.subTest(field=key), self.assertRaises(AssertionError):
+                self.check(value)
+        for key, wrong in dict(
+            frontend="saveAsTable",
+            target="save_plain",
+            transactionVersions=[2],
+            appendCount=2,
+            duplicate=True,
+            warmOrder="target-first",
+        ).items():
+            value = self.fixture()
+            self.rewrite(
+                value["cases"][0], "request", lambda v: v.__setitem__(key, wrong)
+            )
+            with self.subTest(request=key), self.assertRaises(AssertionError):
+                self.check(value)
+
+    def test_exact_original_process_inventory_and_receipt_binding(self):
+        original = self.fixture()
+        for key in list(original["processExits"]):
+            value = copy.deepcopy(original)
+            value["processExits"].pop(key)
+            with self.subTest(missing=key), self.assertRaises(AssertionError):
+                self.check(value)
+        for key in [
+            "fixture-command/exit.json",
+            "fixture/native-seed/process/exit.json",
+            "cases/saveAsTable_plain/writer/exit.json",
+            "cases/saveAsTable_checkpoint/after-append3/native/process/exit.json",
+            "writer",
+            "native-before",
+            "native-after",
+        ]:
+            value = copy.deepcopy(original)
+            value["processExits"][key] = original["processExits"]["supervisor"]
+            with self.subTest(substituted=key), self.assertRaises(AssertionError):
+                self.check(value)
+        value = copy.deepcopy(original)
+        value["processExits"]["unrelated"] = original["processExits"]["supervisor"]
+        with self.assertRaises(AssertionError):
+            self.check(value)
+
+    def test_required_maintenance_attachments_cannot_be_removed_or_borrowed(self):
+        original = self.fixture()
+        for index, case in enumerate(original["cases"]):
+            for key in ("warm", "checkpoint", "barrier"):
+                if key not in case:
+                    continue
+                value = copy.deepcopy(original)
+                value["cases"][index].pop(key)
+                with (
+                    self.subTest(case=case["name"], missing=key),
+                    self.assertRaises(AssertionError),
+                ):
+                    self.check(value)
+                value = copy.deepcopy(original)
+                value["cases"][index][key] = original["cases"][0]["request"]
+                with (
+                    self.subTest(case=case["name"], substituted=key),
+                    self.assertRaises(AssertionError),
+                ):
+                    self.check(value)
+
+    def test_caller_observation_native_evidence_and_transaction_sequence_are_bound(
+        self,
+    ):
+        for key in ("before", "after", "request", "callerEvidence", "observation"):
+            value = self.fixture()
+            value["cases"][0][key] = value["cases"][1][key]
+            with self.subTest(substituted=key), self.assertRaises(AssertionError):
+                self.check(value)
+        for field, wrong in (
+            ("transactionVersion", "2"),
+            ("transactionAppId", "another-app"),
+        ):
+            value = self.fixture()
+            case = value["cases"][0]
+            case["callerBefore"][field] = case["callerAfter"][field] = wrong
+            self.rewrite(
+                case,
+                "callerEvidence",
+                lambda v: (
+                    v["before"].__setitem__(field, wrong),
+                    v["after"].__setitem__(field, wrong),
+                ),
+            )
+            with self.subTest(caller=field), self.assertRaises(AssertionError):
+                self.check(value)
+        value = self.fixture()
+        self.rewrite(
+            value["cases"][0],
+            "observation",
+            lambda v: v.__setitem__("writerThreadId", 11),
+        )
+        with self.assertRaises(AssertionError):
+            self.check(value)
+        value = self.fixture()
+        case = value["cases"][0]
+        after = json.loads(Path(case["after"]["path"]).read_text())
+        log = next(iter(after["objects"].values()))
+        Path(log["path"]).write_text(
+            json.dumps(dict(txn=dict(appId="other", version=1)))
+        )
+        after["objects"][next(iter(after["objects"]))] = file_ref(log["path"])
+        Path(case["after"]["path"]).write_text(json.dumps(after))
+        case["after"] = file_ref(case["after"]["path"])
+        with self.assertRaises(AssertionError):
+            self.check(value)
 
 
 if __name__ == "__main__":

@@ -487,17 +487,35 @@ Ranger 2.8 policy/role downloads and distinct admin/downloader/metadata/applicat
 identities. The bridge binds the actual pinned Python connection's JVM thread;
 its revocation witness must hold that thread after helper file generation. Policy
 ACKs, generic errors and metadata/readback adaptive plans cannot qualify a write.
-Fresh late native DataFrames verify maintained cache keys after owner exit. A
-retained already executed Dataset/QE is a separate, unqualified refresh boundary.
+Fresh late native DataFrames return exact rows after owner exit. Live evidence
+records replacement cache ownership/head and cold state before these reads;
+installed maintenance checks also inspect accepted owners/final plans after fresh
+reads. Live row readback alone does not prove which replacement builder it used.
+A retained already executed Dataset/QE is a separate, unqualified refresh boundary.
 CDF histories are native setup before ADOPT; checkpoint qualification requires
 actual parts/pointer and native reopen rows/version. See the
 [append scope](../../docs/delta-native-governed-append.md#caller-selected-adaptive-append).
 
-The seven-profile / 14-attempt development subset has passed. Final qualification
-still requires the frozen 67-method installed selection and complete live
-inventory on all four pairs, independent checks and controller-owned reviews.
-Catalog-demo and deployment remain deferred.
+All four frozen pairs passed 66 installed methods/12 classes and 26 live profiles/
+42 attempts each: 264 installed methods and 168 application attempts overall. Each
+complete strengthened independent gate joins 100 receipt entries (97 original
+processes and three aliases), exact API/profile/target/attempt/outcome and native
+transaction sequence, mandatory warm/checkpoint/barrier evidence and the full
+runtime/package/public-policy/persistence joins. A qualifying result without its
+runtime is rejected; runtime-free single-case checks are explicit nonqualifying
+diagnostics.
 
+The producing candidate is `6834b18f9349fab8c97decd1cec0de0140a69666`. Checker fix
+`6b5a496d95a533983a63406c6a4f2041fc5daea4` was externally verified on every qualifying cell while
+the 9158 producing inputs remained frozen, then applied with exact byte equality
+and a checker/test-only input proof. The later documentation commit has its own
+input proof. Original manifests, old/new checker identities and all exits remain
+separate. The first installed supervisor exit 1 records an obsolete 67-entry union; the
+actual Gradle 66 all-pass run is reused through additive corrected verification,
+without a test replay. The private index is
+`.superpowers/sdd/2026-10-28-delta-append-aqe/final-evidence-index.json`.
+Controller-owned task/whole-milestone reviews, catalog-demo and deployment remain
+separate.
 
 ## Spark Hub opt-in shared named reads
 

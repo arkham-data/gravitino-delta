@@ -345,15 +345,288 @@ DELTA_APPEND_ROWS = [[1, "MASKED", "allowed"], [3, "MASKED", "allowed"]]
 def verify_delta_append(result: dict) -> None:
     """Check retained Delta cases without treating metadata AQE or errors as write proof.
 
-    This validates each supplied case. The final matrix inventory separately establishes
-    required frontend, maintenance, target-form and runtime coverage.
+    Qualifying records require the complete runtime, actual case/attempt inventory,
+    mandatory maintenance artifacts and bound original process receipts. Explicit
+    runtime-free single-case checks remain nonqualifying diagnostics.
     """
     try:
+        _verify_delta_contract(result)
         _verify_delta_append(result)
         if "runtime" in result:
             _verify_delta_runtime_cases(result)
     except (KeyError, TypeError, ValueError) as error:
         raise AssertionError("Missing or malformed Delta append evidence") from error
+
+
+def _delta_attempts(spec):
+    versions = [1, 1] if spec["duplicate"] else list(range(1, spec["appendCount"] + 1))
+    return [
+        (
+            "first"
+            if index == 0
+            else "duplicate"
+            if spec["duplicate"]
+            else "append" + str(index + 1),
+            version,
+        )
+        for index, version in enumerate(versions)
+    ]
+
+
+def _delta_expected_outcome(spec, attempt):
+    if spec["profile"] == "revoke":
+        return "after-helper-revoked"
+    if spec["profile"] in ("source-denied", "target-denied"):
+        return spec["profile"]
+    if attempt == "duplicate":
+        return (
+            "denied-duplicate" if spec["profile"] == "denied-duplicate" else "duplicate"
+        )
+    return "committed"
+
+
+def _delta_bound_json(descriptor, path):
+    assert Path(descriptor["path"]).resolve() == path.resolve(), (
+        "Substituted per-case evidence"
+    )
+    return read_ref(descriptor)
+
+
+def _delta_original_exit(descriptor, path=None):
+    if path is not None:
+        assert Path(descriptor["path"]).resolve() == path.resolve(), (
+            "Substituted original process receipt"
+        )
+    value = read_ref(descriptor)
+    assert value["exitCode"] == 0 and value["timedOut"] is False
+    assert type(value["pid"]) is int and value["pid"] > 0
+    process = json.loads(Path(descriptor["path"]).with_name("process.json").read_text())
+    assert value["pid"] == process["pid"], "Original exit/process identity differs"
+
+
+def _verify_delta_contract(result):
+    """Bind qualification to the actual finite profile, attempt and original process inventory."""
+    from append_aqe_profiles import case_specs as delta_case_specs
+
+    assert type(result.get("qualification")) is bool, (
+        "Explicit qualification mode required"
+    )
+    qualifying = result["qualification"]
+    if "runtime" not in result:
+        assert qualifying is False, "Qualification requires runtime/package evidence"
+        assert not (
+            {"caseInventory", "fixturePlan", "persistenceBefore", "persistenceAfter"}
+            & set(result)
+        )
+        assert len(result["cases"]) == 1, (
+            "Runtime-free checks are nonqualifying single-case diagnostics"
+        )
+        return
+    assert {
+        "fixturePlan",
+        "persistenceBefore",
+        "persistenceAfter",
+        "caseInventory",
+    } <= set(result)
+    runtime = read_ref(result["runtime"])
+    plan = read_ref(result["fixturePlan"])
+    root = Path(result["fixturePlan"]["path"]).resolve().parent.parent
+    _delta_bound_json(result["fixturePlan"], root / "fixture/state.private.json")
+    _delta_bound_json(
+        result["persistenceBefore"], root / "registrations-before-restart.private.json"
+    )
+    _delta_bound_json(
+        result["persistenceAfter"], root / "registrations-after-restart.private.json"
+    )
+    all_specs = delta_case_specs()
+    inventory = result["caseInventory"]
+    assert (
+        isinstance(inventory, list)
+        and inventory
+        and len(set(inventory)) == len(inventory)
+    )
+    specs = [spec for spec in all_specs if spec["name"] in inventory]
+    assert inventory == [spec["name"] for spec in specs], (
+        "Unknown or substituted profile inventory"
+    )
+    if qualifying:
+        assert inventory == [spec["name"] for spec in all_specs]
+    assert len(result["cases"]) == sum(len(_delta_attempts(spec)) for spec in specs)
+    actual = {case["name"]: case for case in result["cases"]}
+    assert len(actual) == len(result["cases"]), "Duplicate attempt name"
+    expected_names = {
+        spec["name"] + "-" + attempt
+        for spec in specs
+        for attempt, _ in _delta_attempts(spec)
+    }
+    assert set(actual) == expected_names, (
+        "Missing or substituted actual required attempts"
+    )
+    expected_exits = {
+        "fixture-command/exit.json",
+        "fixture/native-seed/process/exit.json",
+    }
+    for spec in specs:
+        prefix = "cases/" + spec["name"]
+        expected_exits.update(
+            {prefix + "/writer/exit.json", prefix + "/before/native/process/exit.json"}
+        )
+        expected_exits.update(
+            prefix + "/after-" + attempt + "/native/process/exit.json"
+            for attempt, _ in _delta_attempts(spec)
+        )
+    exits = result["processExits"]
+    assert set(exits) == expected_exits | {
+        "writer",
+        "native-before",
+        "native-after",
+        "supervisor",
+    }, "Incomplete original process inventory"
+    for key in expected_exits:
+        _delta_original_exit(exits[key], root / key)
+    first = specs[0]["name"]
+    for alias, key in {
+        "writer": "cases/" + first + "/writer/exit.json",
+        "native-before": "cases/" + first + "/before/native/process/exit.json",
+        "native-after": "cases/" + first + "/after-first/native/process/exit.json",
+    }.items():
+        assert exits[alias] == exits[key], "Unbound generic exit alias"
+    _delta_original_exit(exits["supervisor"])
+    command = json.loads(
+        Path(exits["supervisor"]["path"]).with_name("command.json").read_text()
+    )["argv"]
+    assert Path(command[1]).name == "append_aqe_live.py"
+    assert command[command.index("--out") + 1] == str(root)
+    assert command[command.index("--runtime") + 1] == result["runtime"]["path"]
+    selected = [
+        command[index + 1] for index, value in enumerate(command) if value == "--case"
+    ]
+    assert (not selected) if qualifying else set(selected) == set(inventory)
+    tables = {table["name"]: table for table in plan["tables"]}
+    for spec in specs:
+        directory = root / "cases" / spec["name"]
+        request_ref = actual[spec["name"] + "-first"]["request"]
+        request = _delta_bound_json(
+            request_ref, directory / "request/request.private.json"
+        )
+        versions = [version for _, version in _delta_attempts(spec)]
+        required_request = {
+            "caseName": spec["name"],
+            "frontend": spec["api"],
+            "source": "source",
+            "target": spec["target"],
+            "duplicate": spec["duplicate"],
+            "denyDuplicate": spec["profile"] == "denied-duplicate",
+            "warmOrder": spec["warmOrder"],
+            "barrier": spec["profile"] == "revoke",
+            "appendCount": spec["appendCount"],
+            "transactionVersions": versions,
+            "targetLocation": tables[spec["target"]]["location"],
+            "output": str(directory / "jvm"),
+            "pythonOutput": str(directory / "python"),
+            "controlDirectory": str(directory / "request/control"),
+        }
+        assert all(
+            request.get(key) == value for key, value in required_request.items()
+        ), "Actual request/profile differs"
+        writer_command = json.loads((directory / "writer/command.json").read_text())[
+            "argv"
+        ]
+        assert writer_command[0] == runtime["sparkHome"] + "/bin/spark-submit"
+        assert (
+            Path(writer_command[-2]).name == "append_aqe_pyspark.py"
+            and writer_command[-1] == request_ref["path"]
+        )
+        previous = "before"
+        for index, (attempt, version) in enumerate(_delta_attempts(spec)):
+            name = spec["name"] + "-" + attempt
+            case = actual[name]
+            assert case["api"] == spec["api"] and case["profile"] == spec["profile"]
+            assert case["target"] == spec["target"] and case["source"] == "source"
+            assert case["outcome"] == _delta_expected_outcome(spec, attempt), (
+                "Actual attempt outcome differs"
+            )
+            assert case["request"] == request_ref
+            assert ("warm" in case) is (spec["warmOrder"] != "none"), (
+                "Required warm evidence missing or substituted"
+            )
+            assert ("checkpoint" in case) is (
+                spec["profile"] == "checkpoint" and index == len(versions) - 1
+            ), "Required final checkpoint evidence missing or substituted"
+            assert ("barrier" in case) is (spec["profile"] == "revoke"), (
+                "Required revoke barrier evidence missing"
+            )
+            if "warm" in case:
+                warm = _delta_bound_json(
+                    case["warm"], directory / (name + "-warm-result.json")
+                )
+                assert warm["order"] == spec["warmOrder"]
+                _delta_bound_json(warm["before"], directory / "jvm/warm-before.json")
+                _delta_bound_json(
+                    warm["after"], directory / ("jvm/" + name + "-warm.json")
+                )
+            if "checkpoint" in case:
+                _delta_bound_json(
+                    case["checkpoint"], directory / "checkpoint-result.json"
+                )
+            if "barrier" in case:
+                _delta_bound_json(case["barrier"], directory / "barrier-result.json")
+            before = _delta_bound_json(
+                case["before"], directory / previous / "image.json"
+            )
+            after = _delta_bound_json(
+                case["after"], directory / ("after-" + attempt) / "image.json"
+            )
+            for image, side in [(before, previous), (after, "after-" + attempt)]:
+                assert image["nativeTable"] == spec["target"]
+                _delta_bound_json(
+                    image["nativeEvidence"], directory / side / "native/result.json"
+                )
+            caller = _delta_bound_json(
+                case["callerEvidence"], directory / ("python/" + name + "-caller.json")
+            )
+            assert (
+                caller["before"] == case["callerBefore"]
+                and caller["after"] == case["callerAfter"]
+            )
+            assert case["callerBefore"] == case["callerAfter"]
+            expected_app = "append-aqe-" + plan["nonce"] + "-" + spec["name"]
+            assert case["callerBefore"]["transactionAppId"] == expected_app
+            assert case["callerBefore"]["transactionVersion"] == str(version), (
+                "Incorrect transaction sequence"
+            )
+            observation = _delta_bound_json(
+                case["observation"], directory / ("jvm/" + name + "-append.json")
+            )
+            assert observation["writerThreadId"] == case["callerBefore"]["jvmThread"]
+            assert (
+                observation["subject"] == result["subject"]
+                and observation["aqe"] is True
+            )
+            for field in ["rangerRequests", "callbacks", "failure"]:
+                assert observation[field] == case[field]
+            if case["outcome"] in ("committed", "duplicate", "denied-duplicate"):
+                key = (
+                    tables[spec["target"]]["prefix"]
+                    + "_delta_log/"
+                    + str(after["version"]).zfill(20)
+                    + ".json"
+                )
+                actions = [
+                    json.loads(line)
+                    for line in Path(after["objects"][key]["path"])
+                    .read_text()
+                    .splitlines()
+                    if line
+                ]
+                assert file_ref(after["objects"][key]["path"]) == after["objects"][key]
+                assert [action["txn"] for action in actions if "txn" in action] and any(
+                    action["txn"]["appId"] == expected_app
+                    and action["txn"]["version"] == version
+                    for action in actions
+                    if "txn" in action
+                ), "Native transaction does not match caller attempt"
+            previous = "after-" + attempt
 
 
 def _verify_delta_append(result):
