@@ -27,7 +27,7 @@
 
 **Spec:** [Adoption design](../specs/2026-10-29-spark-hub-adoption-design.md).
 
-Status: the approved [M0/M1 plan](2026-10-29-spark-hub-catalog-foundation.md) has four original six-case runtime cells and independent full-check passes. The coverage register records that bounded read profile; whole-milestone review and push remain separate. Work lives on `codex/spark-hub-adoption-plan` and Spark Hub `codex/gravitino-catalog-foundation`, separately from the append-AQE worktree. Later milestones remain design-gated.
+Status: M0/M1 and append AQE are independently reviewed, closed and pushed. Adoption closure is Gravitino `c7681d08a0f8a562375e20bc6517c8c6d6c6da45` and Spark Hub `d01024b6f459ad2743b7b55099226b8c3dc742fd`; append closure is `90a0e1c65db133ecdbff8a2758c71a4b749c58f1`. The four original six-case read cells qualify only the bounded read profile. Next is the [M2 first-task plan](2026-10-30-spark-hub-write-foundation.md); later milestones remain design-gated. Historical dependency instructions below describe sequencing, not pending predecessor work.
 
 ## Global Constraints
 
@@ -72,9 +72,9 @@ Independent catalog-service code, test harness preparation and pure Python check
 
 ## Immediate steps
 
-- [ ] Finish the existing append-AQE matrix and reviews, then push that reviewed milestone under standing authorization.
-- [ ] Review this proposed design/roadmap and M0/M1 task plan as one concrete planning package.
-- [ ] Start M0/M1 with the existing subagent-driven execution method; use isolated worktrees for both repositories and retain their current user changes.
+- [x] Finish the existing append-AQE matrix and reviews, then push that reviewed milestone under standing authorization.
+- [x] Review this proposed design/roadmap and M0/M1 task plan as one concrete planning package.
+- [x] Start M0/M1 with the existing subagent-driven execution method; use isolated worktrees for both repositories and retain their current user changes.
 - [ ] At each later milestone boundary, write its exact source-level plan from the accepted contract and predecessor evidence; do not open all implementations at once.
 - [ ] Keep a single coverage register so completed capabilities, unresolved gaps and rejected/unqualified cases remain visible without rerunning unrelated evidence.
 

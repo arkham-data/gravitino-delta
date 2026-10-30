@@ -17,7 +17,7 @@
 
 # Spark Hub adoption of governed Delta — design
 
-Status: M0/M1 execution was approved on 2026-10-29 using the selected subagent-driven workflow. The workload register, bindings, optional startup profile and named-read service are implemented and reviewed. Four original six-case Task 4 cells and independent full checks passed for the bounded fixture; whole-milestone review remains separate. Later milestone contracts require their own designs.
+Status: M0/M1 and append AQE are independently reviewed, closed and pushed. M0/M1 closure is Gravitino `c7681d08a0f8a562375e20bc6517c8c6d6c6da45` and Spark Hub `d01024b6f459ad2743b7b55099226b8c3dc742fd`. Later milestone contracts require their own designs; the next proposed slice is the [M2 write foundation](2026-10-30-spark-hub-write-foundation-design.md). References below to running predecessor work preserve the original planning context; those prerequisites are now satisfied.
 
 ## Intent and baseline
 
