@@ -594,3 +594,100 @@ subsequent metadata 403 did not qualify unpublished admission, and a further
 unsupported probe grant returned an ambiguous 400. Those original attempts and
 objects remain separate and were not replayed. Fresh isolated successor fixtures
 produced the four passing cells.
+
+## Spark Hub native write characterization (Task 1 only)
+
+`spark_hub_write_native.py` runs one fixed native-only Spark 3.5.6 / Delta 3.3.2
+cell with Java 17, Scala 2.12.21 and local MinIO. It uses the real Spark Hub
+`ExecutionProperties`, `WriteStrategy`, `ComputeProperties` and
+`DeltaClient._resolve_write_options` imports. It does not construct DeltaClient
+or AWS clients. The ordinary helper import also constructs Spark Hub's Kafka
+producer, so the task-owned local Kafka fixture must be available on
+`127.0.0.1:62912`; the probe publishes no events. No Ranger extension is enabled.
+This measures native compatibility, never Gravitino creation authority or governed
+support. It does not close M2.
+
+Supply an existing verified runtime manifest and a private version-1 input file:
+
+```json
+{
+  "schemaVersion": 1,
+  "python": "/absolute/python311-environment/bin/python",
+  "primary": {
+    "endpoint": "http://127.0.0.1:9000",
+    "region": "us-east-1",
+    "bucket": "fixture-bucket",
+    "credentialsFile": "/absolute/private-minio-credentials"
+  },
+  "prefix": "exclusive-new-native-write-prefix",
+  "nativeIdentity": "fixture_actor"
+}
+```
+
+Only HTTP loopback/local Docker MinIO hosts are accepted. The interpreter must
+be Python 3.11 with the actual Spark Hub import dependencies and the pinned
+PySpark/Delta packages. Credential values stay in the existing private file.
+Use a new exclusive prefix and nonexistent output directory on every attempt,
+including attempts after a runner/setup failure. Existing targets are refused;
+there is no automatic replay or arbitrary scenario/callback input.
+
+```bash
+M2_RUNTIME=/absolute/existing/verified/package/manifest.json
+M2_INPUTS=/absolute/private-native-inputs.json
+M2_OUT=/absolute/fresh-native-output
+python3 delta/acceptance/spark_hub_write_native.py \
+  --runtime "$M2_RUNTIME" \
+  --spark-hub-root /Users/jacobo.calderon/Code/Arkham/spark_hub/.worktrees/gravitino-catalog-foundation \
+  --inputs "$M2_INPUTS" --out "$M2_OUT"
+python3 -m unittest discover -s delta/acceptance \
+  -p 'test_spark_hub_write_native_checks.py' -v
+```
+
+The launcher records the actual Gravitino HEAD for each new run and archives the
+consumed probe source bytes, checking that they stay unchanged during execution.
+It verifies the immutable native runtime/JARs and their producer receipts separately;
+current Gravitino product classes are not executed by this stock-native oracle.
+Spark Hub must still match its exact pinned revision with clean tracked sources.
+The updated preflight therefore works after this harness is committed. The measured
+cell in the findings used the separately archived original launcher at the historical
+planning HEAD; those original revisions/source snapshots remain unchanged, and no
+new native run was used to validate this preflight update.
+
+The Python interface is
+`run(runtime_path: Path, spark_hub_root: Path, inputs_path: Path, output: Path) -> Path`.
+The child consumes one private request JSON path. Its fixed register compares
+legacy empty-create/data-write, native V2 staged create and absent-only
+createOrReplace; append/evolution/explicit false; ordinary, empty and partitioned
+full overwrite; both refresh helper outputs with APPEND; option/session precedence;
+native duplicate suppression; and enabled ordinary write/compaction/symlink hooks.
+The bounded compaction profile uses six tiny writes, minimum three small files,
+1 MiB target files and 512 KiB minimum small-file size. It issues no fallback
+OPTIMIZE and leaves all required ordinary defaults enabled.
+
+Version-1 output includes original command/exit/stdout/stderr receipts, pinned
+revisions, runtime/JAR origins, archived probe sources, the newly measured sink
+helper import closure, sequential before/after observations, native UUID/version,
+rows/schema/properties/protocol and original Delta JSON actions. Data, native
+metadata/create and maintenance outcomes are separate
+`committed|not-committed|unknown` values. `executedPhases` and `phaseStatus` identify
+unexecuted phases; missing readback makes outcomes unknown. Native suppression
+of changed rows/options is evidence of missing intent validation.
+
+Recheck the original result without launching any process:
+
+```bash
+PYTHONPATH=delta/acceptance python3 - <<'PYCODE'
+from pathlib import Path
+from spark_hub_write_native_checks import verify_result
+print(verify_result(Path("/absolute/fresh-native-output/result.json")))
+PYCODE
+```
+
+`validate_inputs(dict)` and `verify_observations(dict)` have no process, Spark or
+network side effects. `verify_result(Path)` rehashes installed/archived artifacts,
+original receipts and native objects, reparses the original logs, and checks every
+sequential observation. Its conclusions distinguish `characterizationComplete`
+from `nativeCandidateViable`; `governedSupport` is always false. An original exit
+zero alone does not select a creation candidate. Rejected candidates, unknown
+phases and missing public hook/recovery boundaries remain explicit gaps. See
+[the measured findings](../../docs/superpowers/specs/2026-10-30-spark-hub-write-native-findings.md).

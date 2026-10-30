@@ -17,7 +17,7 @@
 
 # Spark Hub M2 write foundation — design and first task
 
-Status: proposed on 2026-10-30. The approved architecture is retained. This document defines the M2 destination and a bounded first native-characterization task; it does not claim that M2 implementation seams or runtime support have been proven. No Spark Hub write routing changes are authorized by a passing native probe alone.
+Status: approved and first characterization task completed/reviewed on 2026-10-30; see [measured findings](2026-10-30-spark-hub-write-native-findings.md). The approved architecture is retained. This document defines the M2 destination and the bounded first task; it does not claim that M2 implementation seams or governed runtime support have been proven. No Spark Hub write routing changes are authorized by a passing native probe alone.
 
 ## Baselines and outcome
 
