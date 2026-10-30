@@ -1,0 +1,1052 @@
+{
+  "schemaVersion": 1,
+  "repositories": {
+    "sparkHub": "74b71155478d4a5f78360108002c95399310a998",
+    "gravitino": "5f02cf687b5f88e47fc29294b25109d6380872af"
+  },
+  "description": "M0 finite source-level workload register. Scope required means source-reachable requirement, not deployed prevalence. No Spark Hub runtime has been qualified. supported-building-block is connector capability only. Original runtime reference validation is structural; Task 4 independent acceptance checks original artifacts/outcomes.",
+  "evidence": [
+    {
+      "id": "catalog",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/services/v1/catalog.py"
+    },
+    {
+      "id": "spark",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/services/v2/spark.py"
+    },
+    {
+      "id": "writer",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/services/v2/delta.py"
+    },
+    {
+      "id": "legacy-writer",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/services/v1/delta.py"
+    },
+    {
+      "id": "options",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/schemas/v2/base_jobs.py"
+    },
+    {
+      "id": "runner",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/commands/job_runner.py"
+    },
+    {
+      "id": "jdbc",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/data_platform/sources/jdbc/v2/main.py"
+    },
+    {
+      "id": "join",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/data_platform/transformations/join/v4/main.py"
+    },
+    {
+      "id": "select",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/data_platform/transformations/select/v1/main.py"
+    },
+    {
+      "id": "cdf",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/services/v3/cdf_reader.py"
+    },
+    {
+      "id": "state",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/utils/incremental/state_manager.py"
+    },
+    {
+      "id": "scd",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/utils/incremental/scd_processor.py"
+    },
+    {
+      "id": "stream",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/streaming/v1/base.py"
+    },
+    {
+      "id": "stream-entry",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/data_platform/sources/streaming/v1/main.py"
+    },
+    {
+      "id": "progress",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/commands/progress_tracker.py"
+    },
+    {
+      "id": "merge-source",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/utils/incremental/merge_executor.py"
+    },
+    {
+      "id": "aws",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "src/shared/services/v1/aws.py"
+    },
+    {
+      "id": "requirements",
+      "kind": "source",
+      "repository": "sparkHub",
+      "revision": "74b71155478d4a5f78360108002c95399310a998",
+      "reference": "requirements-base.txt"
+    },
+    {
+      "id": "read-contract",
+      "kind": "contract",
+      "repository": "gravitino",
+      "revision": "5f02cf687b5f88e47fc29294b25109d6380872af",
+      "reference": "docs/delta-spark-parity.md"
+    },
+    {
+      "id": "append-contract",
+      "kind": "contract",
+      "repository": "gravitino",
+      "revision": "5f02cf687b5f88e47fc29294b25109d6380872af",
+      "reference": "docs/delta-native-governed-append.md"
+    },
+    {
+      "id": "merge-contract",
+      "kind": "contract",
+      "repository": "gravitino",
+      "revision": "5f02cf687b5f88e47fc29294b25109d6380872af",
+      "reference": "docs/delta-cdf-merge.md"
+    },
+    {
+      "id": "cdf-contract",
+      "kind": "contract",
+      "repository": "gravitino",
+      "revision": "5f02cf687b5f88e47fc29294b25109d6380872af",
+      "reference": "docs/delta-cdf-consumption.md"
+    },
+    {
+      "id": "cdf-alter-contract",
+      "kind": "contract",
+      "repository": "gravitino",
+      "revision": "5f02cf687b5f88e47fc29294b25109d6380872af",
+      "reference": "docs/delta-cdf-enablement.md"
+    }
+  ],
+  "cases": [
+    {
+      "id": "named-read-building-block",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v1/catalog.py",
+        "symbol": "ArkhamCatalog.get_table_df_by_id"
+      },
+      "milestone": "M1",
+      "scope": "required",
+      "api": "SparkSession.table(quoted_three_part_name)",
+      "planFamily": "bounded-ordinary-named-read",
+      "options": {},
+      "features": [
+        "PUBLISHED registration",
+        "explicit UUID/name binding"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Existing connector ordinary-read building block only; current Spark Hub path call is not integrated or runtime-qualified.",
+      "status": "supported-building-block",
+      "evidenceRefs": [
+        "catalog",
+        "spark",
+        "read-contract"
+      ],
+      "predecessorIds": []
+    },
+    {
+      "id": "named-filter-mask",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v1/catalog.py",
+        "symbol": "ArkhamCatalog.get_table_df_by_id"
+      },
+      "milestone": "M1",
+      "scope": "required",
+      "api": "Two fresh named reads, aliases, inner join, select",
+      "planFamily": "exchange-bearing-ordinary-read",
+      "options": {},
+      "features": [
+        "Task 4 actual production-class runtime evidence required"
+      ],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true",
+        "spark.sql.autoBroadcastJoinThreshold": "-1",
+        "spark.sql.adaptive.autoBroadcastJoinThreshold": "-1",
+        "spark.sql.shuffle.partitions": "4"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Exactly (1, east, MASKED), (3, east, MASKED) under the fixture filter and mask; read-only native identity/version unchanged.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "catalog",
+        "spark",
+        "read-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "projected-count",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v1/catalog.py",
+        "symbol": "ArkhamCatalog.get_table_df_by_id"
+      },
+      "milestone": "M1",
+      "scope": "required",
+      "api": "Named read, select(id), count",
+      "planFamily": "projected-count",
+      "options": {},
+      "features": [
+        "Task 4 actual production-class runtime evidence required"
+      ],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Count equals 2 with id-only SELECT and current row filter; no email privilege required.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "catalog",
+        "spark",
+        "read-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "column-denied",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v1/catalog.py",
+        "symbol": "ArkhamCatalog.get_table_df_by_id"
+      },
+      "milestone": "M1",
+      "scope": "required",
+      "api": "Named read, select(email), action",
+      "planFamily": "column-demand-denial",
+      "options": {},
+      "features": [
+        "Task 4 actual production-class runtime evidence required"
+      ],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Actual email SELECT denial is preserved; no native/path fallback.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "catalog",
+        "spark",
+        "read-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "unknown-binding",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v1/catalog.py",
+        "symbol": "ArkhamCatalog.get_table_df_by_id"
+      },
+      "milestone": "M1",
+      "scope": "required",
+      "api": "UUID dictionary lookup before SparkSession.table",
+      "planFamily": "missing-binding",
+      "options": {},
+      "features": [
+        "Task 4 actual production-class runtime evidence required"
+      ],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Unknown UUID raises KeyError and issues no table request.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "catalog",
+        "spark",
+        "read-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "unpublished-registration",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v1/catalog.py",
+        "symbol": "ArkhamCatalog.get_table_df_by_id"
+      },
+      "milestone": "M1",
+      "scope": "required",
+      "api": "Named read of pre-existing unpublished fixture",
+      "planFamily": "registration-state-denial",
+      "options": {},
+      "features": [
+        "Task 4 actual production-class runtime evidence required"
+      ],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Unpublished registration rejects before reading data; no path load or implicit creation.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "catalog",
+        "spark",
+        "read-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "fresh-action-revoke",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v1/catalog.py",
+        "symbol": "ArkhamCatalog.get_table_df_by_id"
+      },
+      "milestone": "M1",
+      "scope": "required",
+      "api": "Fresh supported named-read action after confirmed policy refresh",
+      "planFamily": "fresh-action-policy-refresh",
+      "options": {},
+      "features": [
+        "Task 4 actual production-class runtime evidence required"
+      ],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "A newly constructed action is denied after confirmed applied revoke; no stale/copied authority.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "catalog",
+        "spark",
+        "read-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "raw-path-glue-migration",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v1/catalog.py",
+        "symbol": "ArkhamCatalog.create_dataset_path"
+      },
+      "milestone": "M1",
+      "scope": "required",
+      "api": "get_table_df_by_id -> load_delta_table; force_table_update -> Glue/Athena",
+      "planFamily": "uuid-routing-and-registration",
+      "options": {},
+      "features": [
+        "no second authoritative metastore",
+        "no default backend switch"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Explicit configured UUID -> quoted name routing, Gravitino-owned PUBLISHED registration; no Glue/Athena or path fallback on missing/denied reads. Legacy production route remains unchanged in M1.",
+      "status": "adaptation-required",
+      "evidenceRefs": [
+        "catalog",
+        "spark",
+        "aws",
+        "read-contract"
+      ],
+      "predecessorIds": []
+    },
+    {
+      "id": "external-ingestion-create",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient.create_external_table"
+      },
+      "milestone": "M2",
+      "scope": "required",
+      "api": "JDBC external DataFrame -> job_wrapper -> write_dataset -> native location create",
+      "planFamily": "external-input-and-create",
+      "options": {
+        "delta.enableChangeDataFeed": "true",
+        "primary_key": "payload",
+        "table_properties": "payload"
+      },
+      "features": [
+        "native create/publish",
+        "source admission"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Preserve external/constructed inputs, input schema, primary key and native table properties; qualify owned create/publish and original commit outcomes before shared-sink adoption.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "writer",
+        "jdbc",
+        "runner",
+        "legacy-writer",
+        "append-contract"
+      ],
+      "predecessorIds": []
+    },
+    {
+      "id": "append-options",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient.write_dataset"
+      },
+      "milestone": "M2",
+      "scope": "required",
+      "api": "df.write.options(**write_options).mode(APPEND).save(path)",
+      "planFamily": "external-or-transformed-batch",
+      "options": {
+        "userMetadata": "payload JSON",
+        "overwriteSchema": "payload, default false",
+        "mergeSchema": "payload, default true"
+      },
+      "features": [],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true",
+        "spark.databricks.delta.autoCompact.enabled": "true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Preserve userMetadata and schema options, including explicit false values. Current named append excludes writer options and path save; classify native commit outcome before retry.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "writer",
+        "options",
+        "runner",
+        "legacy-writer",
+        "append-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "overwrite-schema-evolution",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient._resolve_write_options"
+      },
+      "milestone": "M2",
+      "scope": "required",
+      "api": "write_dataset -> mode(OVERWRITE).options(...).save(path)",
+      "planFamily": "full-refresh-schema-evolution",
+      "options": {
+        "overwriteSchema": "true for full/step refresh",
+        "mergeSchema": "true for full/step refresh"
+      },
+      "features": [
+        "schema evolution",
+        "default OVERWRITE"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "OVERWRITE is the platform default; full/step refresh forces overwriteSchema and mergeSchema true. Preserve replacement/schema and registration consistency, do not substitute append.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "writer",
+        "options",
+        "runner",
+        "append-contract"
+      ],
+      "predecessorIds": [
+        "external-ingestion-create"
+      ]
+    },
+    {
+      "id": "snapshot-delete-by-absence",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient._write_merge_all"
+      },
+      "milestone": "M3",
+      "scope": "required",
+      "api": "DeltaTable.forPath.merge.whenMatchedUpdateAll.whenNotMatchedInsertAll.whenNotMatchedBySourceDelete",
+      "planFamily": "snapshot-merge",
+      "options": {},
+      "features": [
+        "NOT MATCHED BY SOURCE DELETE",
+        "schema evolution"
+      ],
+      "settings": {
+        "spark.databricks.delta.schema.autoMerge.enabled": "payload merge_schema, default true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Preserve snapshot delete-by-absence and single/composite visible-key semantics; named facade method existence does not qualify this unsupported clause or ordinary snapshot source.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "writer",
+        "legacy-writer",
+        "options",
+        "merge-contract"
+      ],
+      "predecessorIds": [
+        "overwrite-schema-evolution"
+      ]
+    },
+    {
+      "id": "transformed-checkpointed-merge",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/data_platform/transformations/join/v4/main.py",
+        "symbol": "_run_incremental_join"
+      },
+      "milestone": "M3",
+      "scope": "required",
+      "api": "CDF joins/unions/dedup/SCD -> localCheckpoint(eager=True) -> write_dataset",
+      "planFamily": "multiple-sources-windows-aggregates-checkpoints",
+      "options": {},
+      "features": [
+        "multi-source joins",
+        "unions",
+        "window dedup",
+        "aggregation",
+        "hash expressions",
+        "optional UDFs",
+        "eager localCheckpoint",
+        "target SCD lookup"
+      ],
+      "settings": {
+        "spark.databricks.delta.schema.autoMerge.enabled": "payload merge_schema, default true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Preserve original source authority through transformations and materialization. Current fresh single-CDF Project/Filter/Alias admission excludes actual job plans; no local-row reconstruction workaround.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "join",
+        "select",
+        "merge-source",
+        "writer",
+        "merge-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "bounded-cdf",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v3/cdf_reader.py",
+        "symbol": "CDFReader.read_incremental_from_state"
+      },
+      "milestone": "M4",
+      "scope": "required",
+      "api": "spark.read.format(delta).options(readChangeFeed,startingVersion).load(path)",
+      "planFamily": "bounded-named-batch-cdf",
+      "options": {
+        "readChangeFeed": "true",
+        "startingVersion": "last_processed + 1",
+        "endingVersion": "currently omitted; must capture"
+      },
+      "features": [
+        "native CDF identity",
+        "all native event images"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Capture an explicit inclusive integer end before processing and route by canonical name. Current production passes end_version=None; preserve filters/masks and exact processed interval, including empty filtered intervals.",
+      "status": "adaptation-required",
+      "evidenceRefs": [
+        "cdf",
+        "select",
+        "join",
+        "cdf-contract",
+        "merge-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "snapshot-bootstrap",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v3/cdf_reader.py",
+        "symbol": "CDFReader.read_snapshot_with_cdf_metadata"
+      },
+      "milestone": "M4",
+      "scope": "required",
+      "api": "path snapshot + separately observed native history + synthetic INSERT metadata",
+      "planFamily": "snapshot-bootstrap-and-rebootstrap",
+      "options": {},
+      "features": [
+        "first run",
+        "missing state",
+        "CDF enablement boundary",
+        "source advancement race"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Bind snapshot rows and metadata to one native source version/identity, define disappearance reconciliation, and qualify snapshot-to-sink source admission. Snapshot is not a fresh bounded CDF source.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "cdf",
+        "cdf-contract",
+        "merge-contract"
+      ],
+      "predecessorIds": [
+        "bounded-cdf"
+      ]
+    },
+    {
+      "id": "cdf-gap-recovery",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v3/cdf_reader.py",
+        "symbol": "CDFReader._detect_and_handle_gap"
+      },
+      "milestone": "M4",
+      "scope": "required",
+      "api": "native history -> FAIL/FULL_RELOAD/WARN branch",
+      "planFamily": "retention-gap-recovery",
+      "options": {
+        "on_gap": "FAIL/FULL_RELOAD/WARN"
+      },
+      "features": [],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Prove retained log/data completeness; fail gaps instead of claiming complete feed. Current FULL_RELOAD logs only and state-managed unbounded calls skip proactive gap detection. Any reload is separately authorized reconciliation.",
+      "status": "adaptation-required",
+      "evidenceRefs": [
+        "cdf",
+        "cdf-contract"
+      ],
+      "predecessorIds": [
+        "bounded-cdf"
+      ]
+    },
+    {
+      "id": "named-head-history-identity",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v3/cdf_reader.py",
+        "symbol": "CDFReader.get_latest_version"
+      },
+      "milestone": "M4",
+      "scope": "required",
+      "api": "DeltaTable.forPath.history; isDeltaTable; timestamp-to-version lookup",
+      "planFamily": "metadata-observation",
+      "options": {},
+      "features": [
+        "native identity",
+        "history",
+        "existence",
+        "timestamp utility"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Qualify named authorized head/history/native identity and existence observation separately. Current path metadata utilities are not a governed named observation surface.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "cdf",
+        "state",
+        "cdf-contract"
+      ],
+      "predecessorIds": [
+        "raw-path-glue-migration"
+      ]
+    },
+    {
+      "id": "incremental-state",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/utils/incremental/state_manager.py",
+        "symbol": "StateTableManager.update_state"
+      },
+      "milestone": "M4",
+      "scope": "required",
+      "api": "createDataFrame(local state).write.mode(overwrite).save(pair_path)",
+      "planFamily": "control-state-overwrite-and-checkpoint",
+      "options": {},
+      "features": [
+        "path-pair state",
+        "local one-row source",
+        "separate sink/state commits",
+        "single writer per dataset does not freeze sources"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Store exact captured processed end plus native source identity after successful sink publication; source advancement/replacement and sink-committed/state-failed recovery must not skip data or blindly replay unknown outcomes. Current hooks query fresh head after sink.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "state",
+        "select",
+        "join",
+        "cdf-contract",
+        "merge-contract"
+      ],
+      "predecessorIds": [
+        "bounded-cdf",
+        "named-head-history-identity"
+      ]
+    },
+    {
+      "id": "masked-keys-visibility-reconciliation",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/data_platform/transformations/select/v1/main.py",
+        "symbol": "read_source_data"
+      },
+      "milestone": "M4",
+      "scope": "required",
+      "api": "INSERT + UPDATE_POSTIMAGE -> dedup/SCD -> sink",
+      "planFamily": "incremental-output-semantics",
+      "options": {},
+      "features": [
+        "discarded deletes/preimages",
+        "mask collisions",
+        "policy-only changes",
+        "target read filters"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Define APPEND/history versus replica/upsert/OVERWRITE semantics under deletes, visibility exits and policy-only changes. Preserve masked key/hash/version behavior; hidden target rows retain read semantics and do not prohibit authorized insert.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "select",
+        "scd",
+        "merge-source",
+        "cdf-contract",
+        "merge-contract"
+      ],
+      "predecessorIds": [
+        "transformed-checkpointed-merge",
+        "bounded-cdf"
+      ]
+    },
+    {
+      "id": "generated-partitions",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient._create_table_partitions"
+      },
+      "milestone": "M5",
+      "scope": "required",
+      "api": "DeltaTable.createIfNotExists.addColumn(generatedAlwaysAs=YEAR/MONTH/DAY).partitionedBy",
+      "planFamily": "generated-date-partitions",
+      "options": {},
+      "features": [
+        "generated columns",
+        "YEAR",
+        "MONTH",
+        "DAY"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Qualify native generated YEAR/MONTH/DAY columns and actual non-date partition types without reducing them to fixed STRING partition coverage.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "writer",
+        "legacy-writer",
+        "append-contract",
+        "merge-contract"
+      ],
+      "predecessorIds": [
+        "external-ingestion-create"
+      ]
+    },
+    {
+      "id": "auto-compaction",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/schemas/v2/base_jobs.py",
+        "symbol": "ComputeProperties"
+      },
+      "milestone": "M5",
+      "scope": "required",
+      "api": "effective startup defaults applied before append",
+      "planFamily": "auto-compact-and-optimized-write",
+      "options": {},
+      "features": [
+        "native postcommit side effects"
+      ],
+      "settings": {
+        "spark.databricks.delta.autoCompact.enabled": "true",
+        "spark.databricks.delta.optimizeWrite.enabled": "true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Preserve autoCompact=true; current append admission explicitly rejects effective auto-compaction. Qualify optimizeWrite and feature settings without disabling platform options.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "options",
+        "spark",
+        "writer",
+        "append-contract"
+      ],
+      "predecessorIds": [
+        "append-options"
+      ]
+    },
+    {
+      "id": "retention-vacuum",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient._run_scheduled_maintenance"
+      },
+      "milestone": "M5",
+      "scope": "required",
+      "api": "FULL_SCHEDULED -> retention ALTER + DeltaTable.forPath.vacuum",
+      "planFamily": "scheduled-maintenance",
+      "options": {
+        "delta.logRetentionDuration": "45 days default; reconciled",
+        "delta.deletedFileRetentionDuration": "364 days default; not reconciled by current helper"
+      },
+      "features": [
+        "FULL_SCHEDULED",
+        "VACUUM",
+        "no scheduled OPTIMIZE"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Qualify retention mutation and VACUUM with current authority and visible failures. Do not confuse swallowed maintenance failure with successful completion or rollback of an already committed sink.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "writer",
+        "options",
+        "cdf-alter-contract"
+      ],
+      "predecessorIds": [
+        "external-ingestion-create"
+      ]
+    },
+    {
+      "id": "manifest-handling",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient._generate_symlink_manifest"
+      },
+      "milestone": "M5",
+      "scope": "required",
+      "api": "generate(symlink_format_manifest); hook-failure recovery; force_table_update",
+      "planFamily": "postcommit-manifest-and-external-catalog",
+      "options": {},
+      "features": [
+        "symlink hook suppression",
+        "batch recovery",
+        "session-mode explicit-generate skip"
+      ],
+      "settings": {
+        "spark.databricks.delta.properties.defaults.compatibility.symlinkFormatManifest.enabled": "true"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Preserve or explicitly migrate manifest/Glue/Athena consumer behavior. Distinguish native committed, not committed and unknown outcomes before retries; session-mode skip is an existing separate behavior.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "writer",
+        "catalog",
+        "aws",
+        "legacy-writer",
+        "options",
+        "append-contract"
+      ],
+      "predecessorIds": [
+        "append-options"
+      ]
+    },
+    {
+      "id": "cdf-property-reconciliation",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient._ensure_cdf_enabled"
+      },
+      "milestone": "M5",
+      "scope": "required",
+      "api": "native detail -> ALTER TABLE delta.`path` SET TBLPROPERTIES -> forPath reload",
+      "planFamily": "cdf-property-enable",
+      "options": {
+        "delta.enableChangeDataFeed": "true"
+      },
+      "features": [],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Use separately authorized named canonical CDF enablement under its qualified profile. Append AQE success does not qualify this path ALTER or its caller settings.",
+      "status": "adaptation-required",
+      "evidenceRefs": [
+        "writer",
+        "cdf-alter-contract"
+      ],
+      "predecessorIds": [
+        "external-ingestion-create"
+      ]
+    },
+    {
+      "id": "structured-streaming",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/streaming/v1/base.py",
+        "symbol": "StreamingConsumer.write_to_delta"
+      },
+      "milestone": "M7",
+      "scope": "required",
+      "api": "writeStream.format(delta).option(checkpointLocation).option(mergeSchema).trigger(once=True).start(delta_path)",
+      "planFamily": "structured-streaming-and-bronze-batch-tail",
+      "options": {
+        "checkpointLocation": "payload",
+        "mergeSchema": "payload",
+        "trigger": "once=True"
+      },
+      "features": [
+        "Bronze batch tail",
+        "target watermark",
+        "nested JSON flattening"
+      ],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Separate design must qualify offsets/checkpoints, restart/replay, policy refresh/schema changes and batch tail watermark/nested transforms. Trigger-once is streaming, not qualified batch append.",
+      "status": "connector-gap",
+      "evidenceRefs": [
+        "stream",
+        "stream-entry",
+        "append-contract",
+        "read-contract"
+      ],
+      "predecessorIds": []
+    },
+    {
+      "id": "deployed-identity-session",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/spark.py",
+        "symbol": "SparkClient.__init__"
+      },
+      "milestone": "M6",
+      "scope": "required",
+      "api": "configure_spark_with_delta_pip(builder).getOrCreate; background read-count thread",
+      "planFamily": "distributed-runtime-identity-and-session-reuse",
+      "options": {},
+      "features": [
+        "Livy/session mode",
+        "distributed executors",
+        "background thread count",
+        "artifact origin",
+        "no default backend switch"
+      ],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true",
+        "spark.sql.extensions": "legacy native Delta default; governed profile requires explicit validation"
+      },
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "Pin and verify actual Spark/Delta/Ranger artifacts and authority, distributed executors/session reuse/background actions, transaction identity/retry and journal/restart behavior. User/group payload metadata is not authenticated principal evidence.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "spark",
+        "options",
+        "runner",
+        "progress",
+        "requirements",
+        "read-contract",
+        "append-contract"
+      ],
+      "predecessorIds": [
+        "named-filter-mask"
+      ]
+    },
+    {
+      "id": "optional-optimize",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient.optimize"
+      },
+      "milestone": "M5",
+      "scope": "optional-unused",
+      "api": "native forPath utility",
+      "planFamily": "unused-maintenance-utility",
+      "options": {},
+      "features": [],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "No production invocation located in audited tracked src; method existence is not active workload or runtime support. Qualify separately if adopted.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "writer",
+        "legacy-writer"
+      ],
+      "predecessorIds": []
+    },
+    {
+      "id": "optional-standalone-delete",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v2/delta.py",
+        "symbol": "DeltaClient.delete"
+      },
+      "milestone": "M5",
+      "scope": "optional-unused",
+      "api": "native forPath utility",
+      "planFamily": "unused-maintenance-utility",
+      "options": {},
+      "features": [],
+      "settings": {},
+      "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
+      "expectedOutcome": "No production invocation located in audited tracked src; method existence is not active workload or runtime support. Qualify separately if adopted.",
+      "status": "unqualified",
+      "evidenceRefs": [
+        "writer",
+        "legacy-writer"
+      ],
+      "predecessorIds": []
+    }
+  ]
+}
