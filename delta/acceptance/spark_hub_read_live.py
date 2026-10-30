@@ -385,7 +385,7 @@ def worker(runtime_path, spark_hub_root, inputs_path, output):
             unpublished_tables=("unpublished",),
             table_names=("source", "unpublished"),
             python=package["python"],
-            metadata_probe=True,
+            metadata_schema_owner=True,
         )
         change_policy(
             plan, "constant-mask", output / "mask-policy", mask_expression="'MASKED'"
@@ -469,6 +469,7 @@ def worker(runtime_path, spark_hub_root, inputs_path, output):
             "setupIdentity": plan["serviceAdmin"],
             "metadataPrincipal": plan["metadataPrincipal"],
             "metadataRole": plan["roles"]["metadata"],
+            "metadataAuthorityMode": "isolated-schema-owner",
             "metadataAuthority": {
                 key: file_ref(plan[trace] + suffix)
                 for key, trace, suffix in (
@@ -486,6 +487,26 @@ def worker(runtime_path, spark_hub_root, inputs_path, output):
                     (
                         "grantResponse",
                         "metadataRoleGrantTrace",
+                        ".response.private.json",
+                    ),
+                    (
+                        "ownerSetRequest",
+                        "metadataOwnerSetTrace",
+                        ".request.private.json",
+                    ),
+                    (
+                        "ownerSetResponse",
+                        "metadataOwnerSetTrace",
+                        ".response.private.json",
+                    ),
+                    (
+                        "ownerReadRequest",
+                        "metadataOwnerReadTrace",
+                        ".request.private.json",
+                    ),
+                    (
+                        "ownerReadResponse",
+                        "metadataOwnerReadTrace",
                         ".response.private.json",
                     ),
                 )

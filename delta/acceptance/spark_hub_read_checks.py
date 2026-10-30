@@ -574,19 +574,28 @@ def verify_python_runtime(caller, package, runtime):
 
 
 def verify_metadata_authority(result):
-    """Bind the isolated metadata principal's actual existence-only grant."""
+    """Bind the isolated metadata principal's role and schema ownership receipts."""
     authority = result["metadataAuthority"]
     assert set(authority) == {
         "createRequest",
         "createResponse",
         "grantRequest",
         "grantResponse",
+        "ownerSetRequest",
+        "ownerSetResponse",
+        "ownerReadRequest",
+        "ownerReadResponse",
     }, "metadata authority inventory"
+    assert (
+        result["metadataAuthorityMode"] == "isolated-schema-owner"
+    ), "metadata authority mode differs"
     root = Path(result["nativeBefore"]["path"]).parent.parent
     trace = root / "public-trace"
     for first, second in (
         ("createRequest", "createResponse"),
         ("grantRequest", "grantResponse"),
+        ("ownerSetRequest", "ownerSetResponse"),
+        ("ownerReadRequest", "ownerReadResponse"),
     ):
         path = Path(authority[first]["path"])
         assert path.parent == trace and path.name.endswith(
@@ -616,7 +625,6 @@ def verify_metadata_authority(result):
             "fullName": result["catalog"] + "." + result["database"],
             "privileges": [
                 {"name": "use_schema", "condition": "allow"},
-                {"name": "probe_table_like", "condition": "allow"},
             ],
         },
         {
@@ -660,6 +668,70 @@ def verify_metadata_authority(result):
         and granted["user"]["name"] == principal
         and role in granted["user"]["roles"]
     ), "metadata grant response differs"
+    owner_set, owner_set_response, owner_read, owner_read_response = (
+        read_ref(authority[key])
+        for key in (
+            "ownerSetRequest",
+            "ownerSetResponse",
+            "ownerReadRequest",
+            "ownerReadResponse",
+        )
+    )
+    owner_path = (
+        create["path"].removesuffix("/roles")
+        + "/owners/schema/"
+        + result["catalog"]
+        + "."
+        + result["database"]
+    )
+    assert (
+        owner_set["method"] == "PUT"
+        and owner_set["path"] == owner_path
+        and owner_set["body"] == {"name": principal, "type": "USER"}
+    ), "metadata owner request differs"
+    assert (
+        owner_set_response["code"] == 0 and owner_set_response["set"] is True
+    ), "metadata owner set failed"
+    assert (
+        owner_read["method"] == "GET" and owner_read["path"] == owner_path
+    ), "metadata owner read request differs"
+    assert (
+        owner_read_response["code"] == 0
+        and owner_read_response["owner"]["name"] == principal
+        and owner_read_response["owner"]["type"].lower() == "user"
+    ), "metadata owner readback differs"
+
+
+def verify_metadata_owner_policy(case, result):
+    """Require the fixture's broad schema-owner Ranger grant to be explicit."""
+    policies = read_ref(case["policySnapshot"])["policies"]
+    expected = {
+        "catalog": [result["catalog"]],
+        "database": [result["database"]],
+        "table": ["*"],
+        "column": ["*"],
+    }
+    matching = [
+        p
+        for p in policies
+        if {key: value.get("values") for key, value in p["resources"].items()}
+        == expected
+    ]
+    assert len(matching) == 1, "metadata schema owner policy absent"
+    assert matching[0]["isEnabled"] is True and all(
+        resource.get("isExcludes") is False and resource.get("isRecursive") is False
+        for resource in matching[0]["resources"].values()
+    ), "metadata schema owner policy scope differs"
+    items = matching[0]["policyItems"]
+    owners = [
+        item for item in items if "GRAVITINO_OWNER_ROLE" in (item.get("roles") or [])
+    ]
+    assert (
+        len(owners) == 1
+        and set(owners[0].get("users") or []) == {result["metadataPrincipal"]}
+        and not (owners[0].get("groups") or [])
+        and owners[0]["accesses"] == [{"type": "all", "isAllowed": True}]
+    ), "metadata schema owner policy differs"
 
 
 def verify_process_provenance(result):
@@ -801,6 +873,8 @@ def verify_result(result: dict) -> None:
     verify_observations(result)
     assert result.get("evidenceKind") == "actual-live", "not live qualification"
     verify_metadata_authority(result)
+    for case in result["cases"]:
+        verify_metadata_owner_policy(case, result)
     verify_process_provenance(result)
     from cdf_read_live_package import verify_runtime
     from read_parity_checks import verify_jar_property

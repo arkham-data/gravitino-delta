@@ -98,14 +98,8 @@ def metadata_grant_tables(table_names, unpublished_tables):
     return tuple(name for name in table_names if name not in unpublished_tables)
 
 
-def metadata_schema_privileges(probe):
-    """Keep metadata existence probing separate from application data grants."""
-    return [{"name": name, "condition": "ALLOW"} for name in
-            (("USE_SCHEMA", "PROBE_TABLE_LIKE") if probe else ("USE_SCHEMA",))]
-
-
 def provision(runtime,inputs,output,association,handles,*,fixture_rows=None,
-              unpublished_tables=(),table_names=("source","primitive"),python=None,metadata_probe=False):
+              unpublished_tables=(),table_names=("source","primitive"),python=None,metadata_schema_owner=False):
     output.mkdir(mode=0o700)
     for name in ["private","public-trace","ranger-trace"]:(output/name).mkdir()
     nonce=uuid.uuid4().hex[:12];endpoints=read(inputs["endpoints"]);admin=envfile(inputs["rangerAdminFile"])
@@ -165,16 +159,19 @@ def provision(runtime,inputs,output,association,handles,*,fixture_rows=None,
         role="read_role_"+profile.replace("-","_")+"_"+nonce;roles[profile]=role
         rest.call("POST",base+"/users",{"name":user})
         selected=[obj("TABLE",plan["catalog"]+"."+plan["database"]+"."+name,"SELECT_TABLE") for name in metadata_grant_tables(table_names,unpublished_tables)] if profile=="metadata" else []
-        role_use=use
-        if profile=="metadata":
-            role_use=[use[0],{"type":"SCHEMA","fullName":plan["catalog"]+"."+plan["database"],"privileges":metadata_schema_privileges(metadata_probe)}]
-        rest.call("POST",base+"/roles",{"name":role,"properties":{},"securableObjects":role_use+selected})
+        rest.call("POST",base+"/roles",{"name":role,"properties":{},"securableObjects":use+selected})
         if profile=="metadata":
             plan["metadataRoleCreateTrace"]=str(output/"public-trace"/f"{rest.counter:04d}")
         rest.call("PUT",base+"/permissions/users/"+quote(user,safe="")+"/grant/",{"roleNames":[role]})
         if profile=="metadata":
             plan["metadataRoleGrantTrace"]=str(output/"public-trace"/f"{rest.counter:04d}")
     plan["roles"]=roles
+    if metadata_schema_owner:
+        owner_path=base+"/owners/schema/"+quote(plan["catalog"]+"."+plan["database"],safe="")
+        rest.call("PUT",owner_path,{"name":plan["metadataPrincipal"],"type":"USER"})
+        plan["metadataOwnerSetTrace"]=str(output/"public-trace"/f"{rest.counter:04d}")
+        rest.call("GET",owner_path)
+        plan["metadataOwnerReadTrace"]=str(output/"public-trace"/f"{rest.counter:04d}")
     def policy(name,kind,columns,users):
         resource=fixture_resources(kind,plan,columns)
         body={"service":plan["resourceService"],"name":name+"_"+nonce,"policyType":kind,"isEnabled":True,"isAuditEnabled":True,

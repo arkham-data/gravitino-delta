@@ -862,21 +862,6 @@ class TestObserverClassification(unittest.TestCase):
 
 
 class TestReadFixtureExtension(unittest.TestCase):
-    def test_metadata_schema_probe_is_fixture_only_and_not_data_permission(self):
-        from read_parity_live import metadata_schema_privileges
-
-        self.assertEqual(
-            metadata_schema_privileges(False),
-            [{"name": "USE_SCHEMA", "condition": "ALLOW"}],
-        )
-        self.assertEqual(
-            metadata_schema_privileges(True),
-            [
-                {"name": "USE_SCHEMA", "condition": "ALLOW"},
-                {"name": "PROBE_TABLE_LIKE", "condition": "ALLOW"},
-            ],
-        )
-
     def test_metadata_grants_only_existing_published_tables(self):
         from read_parity_live import metadata_grant_tables
 
@@ -1024,7 +1009,6 @@ class TestMetadataAuthority(unittest.TestCase):
                 "fullName": "c.db",
                 "privileges": [
                     {"name": "USE_SCHEMA", "condition": "ALLOW"},
-                    {"name": "PROBE_TABLE_LIKE", "condition": "ALLOW"},
                 ],
             },
             {
@@ -1055,18 +1039,38 @@ class TestMetadataAuthority(unittest.TestCase):
                 "code": 0,
                 "user": {"name": "metadata", "roles": ["metadata-role"]},
             },
+            "ownerSetRequest": {
+                "method": "PUT",
+                "path": "/api/metalakes/lake/owners/schema/c.db",
+                "body": {"name": "metadata", "type": "USER"},
+            },
+            "ownerSetResponse": {"code": 0, "set": True},
+            "ownerReadRequest": {
+                "method": "GET",
+                "path": "/api/metalakes/lake/owners/schema/c.db",
+                "body": None,
+            },
+            "ownerReadResponse": {
+                "code": 0,
+                "owner": {"name": "metadata", "type": "user"},
+            },
         }
         self.paths = {
             "createRequest": "0020.request.private.json",
             "createResponse": "0020.response.private.json",
             "grantRequest": "0021.request.private.json",
             "grantResponse": "0021.response.private.json",
+            "ownerSetRequest": "0022.request.private.json",
+            "ownerSetResponse": "0022.response.private.json",
+            "ownerReadRequest": "0023.request.private.json",
+            "ownerReadResponse": "0023.response.private.json",
         }
         self.result = {
             "catalog": "c",
             "database": "db",
             "metadataRole": "metadata-role",
             "metadataPrincipal": "metadata",
+            "metadataAuthorityMode": "isolated-schema-owner",
             "nativeBefore": file_ref(native),
             "metadataAuthority": {},
         }
@@ -1083,27 +1087,86 @@ class TestMetadataAuthority(unittest.TestCase):
 
         verify_metadata_authority(self.result)
 
-    def test_probe_and_grant_receipts_cannot_be_substituted(self):
+    def test_role_and_owner_receipts_cannot_be_substituted(self):
         from spark_hub_read_checks import verify_metadata_authority
 
-        for key in ("createRequest", "createResponse", "grantRequest", "grantResponse"):
+        for key in self.values:
             with self.subTest(key=key):
                 before = copy.deepcopy(self.values[key])
                 if key == "createRequest":
-                    self.values[key]["body"]["securableObjects"][1]["privileges"][1][
-                        "name"
-                    ] = "MODIFY_TABLE"
+                    self.values[key]["body"]["securableObjects"][1][
+                        "privileges"
+                    ].append({"name": "MODIFY_TABLE", "condition": "ALLOW"})
                 elif key == "createResponse":
                     self.values[key]["role"]["securableObjects"][1]["privileges"].pop()
                 elif key == "grantRequest":
                     self.values[key]["body"]["roleNames"] = ["other"]
-                else:
+                elif key == "grantResponse":
                     self.values[key]["code"] = 1
+                elif key == "ownerSetRequest":
+                    self.values[key]["body"]["name"] = "other"
+                elif key == "ownerSetResponse":
+                    self.values[key]["set"] = False
+                elif key == "ownerReadRequest":
+                    self.values[key]["path"] += "other"
+                else:
+                    self.values[key]["owner"]["name"] = "other"
                 self.write(key)
                 with self.assertRaises(AssertionError):
                     verify_metadata_authority(self.result)
                 self.values[key] = before
                 self.write(key)
+
+    def test_schema_owner_policy_binds_distinct_metadata_principal(self):
+        from spark_hub_read_checks import verify_metadata_owner_policy
+
+        policy = {
+            "policies": [
+                {
+                    "isEnabled": True,
+                    "resources": {
+                        key: {
+                            "values": value,
+                            "isExcludes": False,
+                            "isRecursive": False,
+                        }
+                        for key, value in {
+                            "catalog": ["c"],
+                            "database": ["db"],
+                            "table": ["*"],
+                            "column": ["*"],
+                        }.items()
+                    },
+                    "policyItems": [
+                        {
+                            "roles": ["GRAVITINO_OWNER_ROLE"],
+                            "users": ["metadata"],
+                            "groups": [],
+                            "accesses": [{"type": "all", "isAllowed": True}],
+                        }
+                    ],
+                }
+            ]
+        }
+        path = self.root / "policy.json"
+        path.write_text(json.dumps(policy))
+        case = {"policySnapshot": file_ref(path)}
+        verify_metadata_owner_policy(case, self.result)
+        policy["policies"][0]["isEnabled"] = False
+        path.write_text(json.dumps(policy))
+        case["policySnapshot"] = file_ref(path)
+        with self.assertRaisesRegex(
+            AssertionError, "metadata schema owner policy scope"
+        ):
+            verify_metadata_owner_policy(case, self.result)
+        policy["policies"][0]["isEnabled"] = True
+        policy["policies"][0]["policyItems"][0]["users"] = ["application"]
+        path.write_text(json.dumps(policy))
+        case["policySnapshot"] = file_ref(path)
+        with self.assertRaisesRegex(
+            AssertionError, "metadata schema owner policy differs"
+        ):
+            verify_metadata_owner_policy(case, self.result)
 
 
 class TestProcessProvenance(unittest.TestCase):
