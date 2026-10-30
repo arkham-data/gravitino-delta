@@ -731,6 +731,76 @@ class TestSparkHubPackageBoundaries(unittest.TestCase):
             sys.setprofile(previous)
 
 
+class TestObserverClassification(unittest.TestCase):
+    def test_adapter_native_and_forbidden_boundaries(self):
+        from types import SimpleNamespace
+        from spark_hub_read_pyspark import CallObserver
+
+        observer = CallObserver()
+
+        def call(module, method, locals=None):
+            frame = SimpleNamespace(
+                f_globals={"__name__": module},
+                f_code=SimpleNamespace(co_name=method),
+                f_locals=locals or {},
+            )
+            observer.profile(frame, "call", None)
+
+        call(
+            "src.shared.services.v3.gravitino_catalog",
+            "get_table_df_by_id",
+            {"id": "123"},
+        )
+        call("pyspark.sql.session", "table")
+        call("pyspark.sql.dataframe", "collect")
+        call("pyspark.sql.dataframe", "count")
+        for module, method in (
+            ("src.shared.services.v2.spark", "load_delta_table"),
+            ("pyspark.sql.readwriter", "load"),
+            ("delta.tables", "forPath"),
+            ("delta.tables", "isDeltaTable"),
+            ("src.shared.glue.client", "query"),
+            ("src.shared.athena.client", "query"),
+        ):
+            call(module, method)
+        for service in ("glue", "athena", "s3"):
+            client = SimpleNamespace(
+                meta=SimpleNamespace(
+                    service_model=SimpleNamespace(service_name=service)
+                )
+            )
+            call("botocore.client", "_make_api_call", {"self": client})
+        self.assertEqual(
+            observer.adapter,
+            [
+                {
+                    "method": "GravitinoDatasetCatalog.get_table_df_by_id",
+                    "datasetId": "123",
+                }
+            ],
+        )
+        self.assertEqual(
+            [entry["method"] for entry in observer.native],
+            ["table", "collect", "count"],
+        )
+        self.assertEqual(
+            [entry["method"] for entry in observer.forbidden],
+            [
+                "load_delta_table",
+                "load",
+                "forPath",
+                "isDeltaTable",
+                "query",
+                "query",
+                "_make_api_call",
+                "_make_api_call",
+            ],
+        )
+        self.assertEqual(
+            [entry["service"] for entry in observer.forbidden[-2:]], ["glue", "athena"]
+        )
+
+
 class TestReadFixtureExtension(unittest.TestCase):
     def test_process_capture_uses_explicit_clean_working_directory(self):
         import sys
@@ -830,6 +900,207 @@ class TestReadFixtureExtension(unittest.TestCase):
         )
         self.assertIn("'s1' secret", fixture_data(Spark(), {}))
         self.assertIn("SELECT 5L", fixture_data(Spark(), {}))
+
+
+class TestProcessProvenance(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve() / "cell"
+        self.root.mkdir()
+        self.result = {
+            "processExits": {},
+            "processCaptures": {},
+            "profiles": {},
+            "nativeRequests": {},
+        }
+        self.roles = (
+            "supervisor",
+            "nativeSeed",
+            "nativeReadback",
+            "table-wide",
+            "id-only",
+            "denied-email",
+        )
+        self.runtime = self.write(self.root / "runtime.json", {"sparkHome": "/spark"})
+        self.inputs = self.write(self.root / "inputs.json", {})
+        self.package = self.write(self.root / "package.json", {"root": "/source"})
+        self.result.update(
+            runtimeManifest=self.runtime,
+            supervisorInputs=self.inputs,
+            sparkHubPackage=self.package,
+        )
+        for role in self.roles:
+            if role == "supervisor":
+                directory = self.root.parent / "cell-supervisor"
+                argv = [
+                    "/python",
+                    str(Path(__file__).parent / "spark_hub_read_live.py"),
+                    "--worker",
+                    "--runtime",
+                    self.runtime["path"],
+                    "--spark-hub-root",
+                    "/source",
+                    "--inputs",
+                    self.inputs["path"],
+                    "--out",
+                    str(self.root),
+                ]
+            elif role.startswith("native"):
+                output = self.root / (
+                    "fixture/native-seed" if role == "nativeSeed" else "native-readback"
+                )
+                request = self.write(
+                    output / "request.private.json",
+                    {
+                        "mode": "seed" if role == "nativeSeed" else "verify",
+                        "output": str(output),
+                        "nativeIdentity": "setup",
+                        "spark": "3.5.4",
+                        "delta": "3.3.0",
+                    },
+                )
+                self.result["nativeRequests"][role] = request
+                artifact = self.write(output / "result.json", {})
+                self.result[
+                    "nativeBefore" if role == "nativeSeed" else "nativeAfter"
+                ] = artifact
+                directory = output / "process"
+                argv = [
+                    "/spark/bin/spark-submit",
+                    "--driver-memory",
+                    "2g",
+                    str(Path(__file__).parent / "read_parity_pyspark.py"),
+                    request["path"],
+                ]
+            else:
+                output = self.root / role
+                request = self.write(
+                    output / "request/spark-hub-request.private.json",
+                    {
+                        "identityProfile": role,
+                        "pythonOutput": str(output / "python-evidence"),
+                        "output": str(output / "app-evidence"),
+                    },
+                )
+                caller = self.write(
+                    output / "python-evidence/caller.json", {"request": request}
+                )
+                self.result["profiles"][role] = {"caller": caller}
+                directory = output / "process"
+                argv = [
+                    "/spark/bin/spark-submit",
+                    str(Path(__file__).parent / "spark_hub_read_pyspark.py"),
+                    request["path"],
+                ]
+            self.result["processCaptures"][role] = {
+                name: self.write(
+                    directory / name,
+                    argv if name == "argv.json" else "log",
+                    raw=name != "argv.json",
+                )
+                for name in ("argv.json", "stdout", "stderr")
+            }
+            self.result["processExits"][role] = self.write(
+                directory / "exit.json",
+                {"exitCode": 0, "pid": self.roles.index(role) + 1, "terminated": False},
+            )
+        self.result.update(setupIdentity="setup", spark="3.5.4", delta="3.3.0")
+        self.sync_worker()
+
+    def write(self, path, value, raw=False):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(value if raw else json.dumps(value))
+        return file_ref(path)
+
+    def sync_worker(self):
+        worker = copy.deepcopy(self.result)
+        worker.pop("workerResult", None)
+        worker.pop("supervisorInputs", None)
+        worker["processCaptures"].pop("supervisor")
+        worker["processExits"].pop("supervisor")
+        self.result["workerResult"] = self.write(
+            self.root / "result.worker.json", worker
+        )
+
+    def verify(self):
+        from spark_hub_read_checks import verify_process_provenance
+
+        verify_process_provenance(self.result)
+
+    def test_original_six_processes(self):
+        self.verify()
+
+    def test_each_noncaller_exit_substitution_is_rejected(self):
+        for role in ("supervisor", "nativeSeed", "nativeReadback"):
+            with self.subTest(role=role):
+                original = self.result["processExits"][role]
+                self.result["processExits"][role] = self.result["processExits"][
+                    "table-wide"
+                ]
+                self.sync_worker()
+                with self.assertRaisesRegex(
+                    AssertionError, "original process exit differs"
+                ):
+                    self.verify()
+                self.result["processExits"][role] = original
+                self.sync_worker()
+
+    def test_hidden_failing_original_exit_is_rejected(self):
+        original = Path(self.result["processExits"]["nativeSeed"]["path"])
+        original.write_text(json.dumps({"exitCode": 1, "pid": 2, "terminated": False}))
+        self.result["processExits"]["nativeSeed"] = self.result["processExits"][
+            "table-wide"
+        ]
+        self.sync_worker()
+        with self.assertRaisesRegex(AssertionError, "original process exit differs"):
+            self.verify()
+
+    def test_missing_each_caller_log_is_rejected(self):
+        from spark_hub_read_checks import verify_process_provenance
+
+        for role in ("table-wide", "id-only", "denied-email"):
+            for log in ("stdout", "stderr"):
+                original = self.result["processCaptures"][role].pop(log)
+                self.sync_worker()
+                with self.subTest(role=role, log=log), self.assertRaisesRegex(
+                    AssertionError, "process capture inventory"
+                ):
+                    verify_process_provenance(self.result)
+                self.result["processCaptures"][role][log] = original
+                self.sync_worker()
+
+    def test_wrong_native_command_is_rejected(self):
+        capture = self.result["processCaptures"]["nativeSeed"]
+        argv = json.loads(Path(capture["argv.json"]["path"]).read_text())
+        argv[-1] = str(self.root / "native-readback/request.private.json")
+        capture["argv.json"] = self.write(Path(capture["argv.json"]["path"]), argv)
+        self.sync_worker()
+        with self.assertRaisesRegex(AssertionError, "native command differs"):
+            self.verify()
+
+    def test_changed_native_request_is_rejected(self):
+        path = Path(self.result["nativeRequests"]["nativeSeed"]["path"])
+        request = json.loads(path.read_text())
+        request["mode"] = "verify"
+        self.result["nativeRequests"]["nativeSeed"] = self.write(path, request)
+        self.sync_worker()
+        with self.assertRaisesRegex(AssertionError, "native request differs"):
+            self.verify()
+
+    def test_supervisor_cannot_point_to_another_output(self):
+        capture = self.result["processCaptures"]["supervisor"]
+        path = Path(capture["argv.json"]["path"])
+        argv = json.loads(path.read_text())
+        argv[-1] = str(self.root / "other")
+        capture["argv.json"] = self.write(path, argv)
+        with self.assertRaisesRegex(AssertionError, "supervisor command differs"):
+            self.verify()
+
+    def test_changed_worker_result_is_rejected(self):
+        self.result["extra"] = "changed after worker"
+        with self.assertRaisesRegex(AssertionError, "original worker result differs"):
+            self.verify()
 
 
 if __name__ == "__main__":

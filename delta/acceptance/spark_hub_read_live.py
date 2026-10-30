@@ -476,12 +476,24 @@ def worker(runtime_path, spark_hub_root, inputs_path, output):
             "publicationReceipts": file_ref(output / "fixture/receipts.private.json"),
             "nativeBefore": file_ref(plan["nativeSeed"]),
             "nativeAfter": file_ref(output / "native-readback/result.json"),
+            "nativeRequests": {
+                "nativeSeed": file_ref(
+                    output / "fixture/native-seed/request.private.json"
+                ),
+                "nativeReadback": file_ref(
+                    output / "native-readback/request.private.json"
+                ),
+            },
             "processCaptures": {
-                profile: {
-                    name: file_ref(output / profile / "process" / name)
+                role: {
+                    name: file_ref(directory / name)
                     for name in ("argv.json", "stdout", "stderr")
                 }
-                for profile in profiles
+                for role, directory in {
+                    "nativeSeed": output / "fixture/native-seed/process",
+                    "nativeReadback": output / "native-readback/process",
+                    **{profile: output / profile / "process" for profile in profiles},
+                }.items()
             },
             "nativeObjectsBefore": file_ref(output / "objects-before.json"),
             "nativeObjectsAfter": file_ref(output / "objects-after.json"),
@@ -539,6 +551,11 @@ def run_cell(
         code = finish(process, out, err, supervisor, process.poll() is None)
     assert code == 0, "Original Spark Hub supervisor failed; retained without replay"
     result = json.loads((output / "result.worker.json").read_text())
+    result["workerResult"] = file_ref(output / "result.worker.json")
+    result["supervisorInputs"] = file_ref(inputs_path)
+    result["processCaptures"]["supervisor"] = {
+        name: file_ref(supervisor / name) for name in ("argv.json", "stdout", "stderr")
+    }
     result["processExits"]["supervisor"] = file_ref(supervisor / "exit.json")
     save(output / "result.json", result)
     verify_result(result)

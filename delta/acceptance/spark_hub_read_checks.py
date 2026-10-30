@@ -532,10 +532,145 @@ def verify_python_runtime(caller, package, runtime):
         ), "actual Python provider bytes differ"
 
 
+def verify_process_provenance(result):
+    """Join each original exit and capture to its role, command and output."""
+    profiles = {"table-wide", "id-only", "denied-email"}
+    roles = profiles | {"supervisor", "nativeSeed", "nativeReadback"}
+    assert (
+        set(result["processExits"]) == set(result["processCaptures"]) == roles
+    ), "process role inventory"
+    root = Path(result["nativeBefore"]["path"]).parent.parent.parent
+    directories = {
+        "supervisor": root.parent / (root.name + "-supervisor"),
+        "nativeSeed": root / "fixture/native-seed/process",
+        "nativeReadback": root / "native-readback/process",
+        **{profile: root / profile / "process" for profile in profiles},
+    }
+    script_dir = Path(__file__).parent
+    runtime = read_ref(result["runtimeManifest"])
+    commands = {}
+    for role, directory in directories.items():
+        capture = result["processCaptures"][role]
+        assert set(capture) == {
+            "argv.json",
+            "stdout",
+            "stderr",
+        }, "process capture inventory"
+        for name, reference in capture.items():
+            assert reference == file_ref(directory / name), "process capture differs"
+        exit_ref = result["processExits"][role]
+        assert exit_ref == file_ref(
+            directory / "exit.json"
+        ), "original process exit differs"
+        record = read_ref(exit_ref)
+        assert (
+            record["exitCode"] == 0
+            and not record.get("terminated", False)
+            and not record.get("timedOut", False)
+        ), "original process failed"
+        commands[role] = read_ref(capture["argv.json"])
+    assert set(result["nativeRequests"]) == {
+        "nativeSeed",
+        "nativeReadback",
+    }, "native request inventory"
+    native_requests = {}
+    for role, mode, output_key in (
+        ("nativeSeed", "seed", "nativeBefore"),
+        ("nativeReadback", "verify", "nativeAfter"),
+    ):
+        directory = directories[role].parent
+        request_path = directory / "request.private.json"
+        assert result["nativeRequests"][role] == file_ref(
+            request_path
+        ), "native request changed"
+        request = read_ref(result["nativeRequests"][role])
+        native_requests[role] = {
+            key: value
+            for key, value in request.items()
+            if key not in ("mode", "output")
+        }
+        assert result[output_key] == file_ref(
+            directory / "result.json"
+        ), "native output differs"
+        assert (
+            request["mode"] == mode
+            and request["output"] == str(directory)
+            and request["nativeIdentity"] == result["setupIdentity"]
+            and (request["spark"], request["delta"])
+            == (result["spark"], result["delta"])
+        ), "native request differs"
+        assert commands[role] == [
+            runtime["sparkHome"] + "/bin/spark-submit",
+            "--driver-memory",
+            "2g",
+            str(script_dir / "read_parity_pyspark.py"),
+            str(request_path),
+        ], "native command differs"
+    assert (
+        native_requests["nativeSeed"] == native_requests["nativeReadback"]
+    ), "native readback request differs"
+    for profile in profiles:
+        assert result["profiles"][profile]["caller"] == file_ref(
+            root / profile / "python-evidence/caller.json"
+        ), "caller output differs"
+        caller = read_ref(result["profiles"][profile]["caller"])
+        request = caller["request"]
+        assert request == file_ref(
+            root / profile / "request/spark-hub-request.private.json"
+        ), "caller request differs"
+        caller_request = read_ref(request)
+        assert (
+            caller_request["identityProfile"] == profile
+            and caller_request["pythonOutput"]
+            == str(root / profile / "python-evidence")
+            and caller_request["output"] == str(root / profile / "app-evidence")
+        ), "caller role/output differs"
+        assert commands[profile][0] == runtime[
+            "sparkHome"
+        ] + "/bin/spark-submit" and commands[profile][-2:] == [
+            str(script_dir / "spark_hub_read_pyspark.py"),
+            request["path"],
+        ], "caller command differs"
+    package = read_ref(result["sparkHubPackage"])
+    inputs = result["supervisorInputs"]
+    assert inputs == file_ref(inputs["path"]), "supervisor inputs changed"
+    argv = commands["supervisor"]
+    assert argv[1:] == [
+        str(script_dir / "spark_hub_read_live.py"),
+        "--worker",
+        "--runtime",
+        result["runtimeManifest"]["path"],
+        "--spark-hub-root",
+        package["root"],
+        "--inputs",
+        inputs["path"],
+        "--out",
+        str(root),
+    ], "supervisor command differs"
+    assert result["workerResult"] == file_ref(
+        root / "result.worker.json"
+    ), "worker output differs"
+    worker = dict(result)
+    for key in ("workerResult", "supervisorInputs"):
+        worker.pop(key)
+    worker["processCaptures"] = {
+        key: value
+        for key, value in result["processCaptures"].items()
+        if key != "supervisor"
+    }
+    worker["processExits"] = {
+        key: value
+        for key, value in result["processExits"].items()
+        if key != "supervisor"
+    }
+    assert read_ref(result["workerResult"]) == worker, "original worker result differs"
+
+
 def verify_result(result: dict) -> None:
     """Full live gate: original processes, finite semantics, packages and security."""
     verify_observations(result)
     assert result.get("evidenceKind") == "actual-live", "not live qualification"
+    verify_process_provenance(result)
     from cdf_read_live_package import verify_runtime
     from read_parity_checks import verify_jar_property
     from spark_hub_read_live import verify_spark_hub_package
