@@ -121,6 +121,11 @@ private[ranger] final class DeltaRangerAppendCommit(
     try {
       operation = DeltaRangerNativeOperation.commit(this)
       intent.requireArguments(actions, nativeOperation, tags)
+      if (
+        transaction.metadata != transaction.snapshot.metadata ||
+        transaction.protocol != transaction.snapshot.protocol
+      )
+        denied("pending metadata or protocol changed")
       invoked = true
       val result = transaction.commitIfNeeded(actions, nativeOperation, tags = tags)
       nativeResult = Some(result)

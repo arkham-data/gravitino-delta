@@ -7,6 +7,39 @@ continues the [October 14 transaction-source preparation checkpoint](delta-appen
 The [accepted SELECT milestone](delta-ranger-production-results.md) remains a
 separate result. This page records append qualification, not full Delta support.
 
+## Installed-only writer-option continuation (November 4, 2026)
+
+The companion now admits the finite `userMetadata`, `mergeSchema` and
+`overwriteSchema` writer options on the two existing named DataFrame append
+routes. The installed continuation preserves each supplied string, including
+explicit `false` and Spark Hub's Python dictionary metadata string. Writer
+metadata takes native precedence over differing session metadata. Option names
+are case-insensitive; unknown keys, null entries, case collisions and writer
+transaction overrides are refused. Both native boolean parsers run before any
+duplicate shortcut.
+
+This continuation keeps the existing registered-source and matching-schema
+boundary: names, order and types must match, and a non-nullable source may append
+into a nullable target. Schema flags and session auto-merge do not permit schema
+evolution or nullable input into a non-nullable target. Source SELECT, masks,
+filters, target UPDATE, session transaction identity and auto-reset=false remain
+in force, including for duplicates. Captured immutable writer intent is checked
+through fallback execution. Before native commit invocation, changed effective
+transaction metadata or protocol is refused against the retained snapshot; exact
+published-action checks remain in force. This equality fence does not detect a
+redundant identical pending action or constitute a general transaction firewall.
+
+Focused installed tests use the provenance-preserving
+[`append/spark-hub-options.json`](../spark-connector/v3.5/spark-delta-ranger/src/test/resources/append/spark-hub-options.json)
+writer strings with the existing local policy/native fixtures. They retain the
+qualified maintenance profile: auto-compaction is not enabled, and manifest
+maintenance defaults are not applied. Spark Hub's captured auto-compaction and
+manifest defaults remain outside this continuation; enabling auto-compaction
+still fails explicitly. These tests do not qualify full Spark Hub defaults,
+initial creation/publication composition, or new live Ranger 2.8.0/MinIO behavior.
+The historical packaged results below retain their original empty-option scope.
+A separate focused packaged live qualification is still required.
+
 ## Qualified surface and policy
 
 The supported frontends are matching-schema named DataFrame

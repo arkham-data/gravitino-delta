@@ -35,6 +35,8 @@ import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, 
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.connector.write.V1Write
+import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, Project}
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
@@ -946,7 +948,7 @@ class TestDeltaRangerAppendV1Input {
               )
             ) -> "logical binding changed",
             command.copy(writeOptions =
-              Map("mergeSchema" -> "true")
+              AppendWriterOptionsFixture.options.updated("mergeSchema", "false")
             ) -> "command shell changed: options",
             command.copy(write = Some(foreign)) -> "captured inert writer changed"
           )
@@ -970,7 +972,7 @@ class TestDeltaRangerAppendV1Input {
             "planner stage changed"
           )
         }
-      appendSuccess(c, data)
+      appendSuccess(c, data, writerOptions = AppendWriterOptionsFixture.options)
       assertTrue(fired)
   }
 
@@ -1182,16 +1184,60 @@ class TestDeltaRangerAppendV1Input {
     }
 
   @Test
+  def schemaFlagsAndAutoMergeCannotAdmitNullableIntoNativeNonNullableTarget(): Unit =
+    withCase(
+      "nullable-into-nonnullable-options",
+      nativeSetup = native => {
+        val location =
+          Paths.get(NativeSelectFixture.locations("a")).getParent.resolve("optionsnonnull").toString
+        native
+          .sql(
+            s"CREATE TABLE delta.`$location` (id BIGINT NOT NULL, secret STRING, region STRING) USING delta"
+          )
+          .collect()
+        NativeSelectFixture.locations = NativeSelectFixture.locations.updated("a", location)
+      }
+    ) { c =>
+      c.spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+      try {
+        val data = c.spark.sql("SELECT id, secret, region FROM b.db.t")
+        assertTrue(data.queryExecution.analyzed.output.head.nullable)
+        val target = NativeSelectFixture
+          .wrapper(c.spark, "a")
+          .loadTable(Identifier.of(Array("db"), "t"))
+          .asInstanceOf[DeltaTableV2]
+        assertFalse(target.schema()(0).nullable)
+        val error = appendFailure(
+          c,
+          data,
+          writerOptions = Map("mergeSchema" -> "true", "overwriteSchema" -> "true")
+        )
+        assertReason(error, "native source normalization is not qualified")
+        assertEquals(0L, target.deltaLog.unsafeVolatileSnapshot.version)
+      } finally c.spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
+    }
+
+  @Test
   def nativeSourceNormalizationRemainsExplicitlyDenied(): Unit = withCase("normalization-denied") {
     c =>
-      Seq(
-        "SELECT CAST(id AS INT) id, secret, region FROM b.db.t",
-        "SELECT id AS renamed, secret, region FROM b.db.t",
-        "SELECT secret, id, region FROM b.db.t"
-      ).foreach { sql =>
-        val data = c.spark.sql(sql)
-        assertReason(appendFailure(c, data), "native source normalization is not qualified")
-      }
+      c.spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+      try
+        Seq(
+          "SELECT CAST(id AS INT) id, secret, region FROM b.db.t",
+          "SELECT id AS renamed, secret, region FROM b.db.t",
+          "SELECT secret, id, region FROM b.db.t"
+        ).foreach { sql =>
+          val data = c.spark.sql(sql)
+          assertReason(
+            appendFailure(
+              c,
+              data,
+              writerOptions = Map("mergeSchema" -> "true", "overwriteSchema" -> "true")
+            ),
+            "native source normalization is not qualified"
+          )
+        }
+      finally c.spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
   }
 
   @Test
@@ -1393,7 +1439,8 @@ class TestDeltaRangerAppendV1Input {
   private def withCase(
       name: String,
       before: Option[SparkSessionExtensions => Unit] = None,
-      after: Option[SparkSessionExtensions => Unit] = None
+      after: Option[SparkSessionExtensions => Unit] = None,
+      nativeSetup: SparkSession => Unit = _ => ()
   )(body: Case => Unit): Unit = {
     val trace = InstalledAppendBoundaryProbe.fresh("v1-input-" + name)
     val target = new TestDeltaRangerNativeSelect.Fixture
@@ -1487,7 +1534,8 @@ class TestDeltaRangerAppendV1Input {
             after.foreach(_(extensions))
           }
         }),
-        Map("spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false")
+        Map("spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false"),
+        beforeExtension = nativeSetup
       )
     finally {
       NativeSelectFixture.catalogPolicies = previous
@@ -1530,7 +1578,12 @@ class TestDeltaRangerAppendV1Input {
     )
   }
 
-  private def appendSuccess(c: Case, data: Dataset[Row], publishes: Boolean = true): Unit = {
+  private def appendSuccess(
+      c: Case,
+      data: Dataset[Row],
+      publishes: Boolean = true,
+      writerOptions: Map[String, String] = Map.empty
+  ): Unit = {
     val root = Paths.get(NativeSelectFixture.locations("a")).getParent
     val name = "attempt-" + java.util.UUID.randomUUID().toString
     val before =
@@ -1538,7 +1591,7 @@ class TestDeltaRangerAppendV1Input {
     recordPendingSource(c, data, name)
     var returned = false
     try {
-      data.write.mode("append").insertInto("a.db.t")
+      data.write.mode("append").options(writerOptions).insertInto("a.db.t")
       returned = true
       c.successfulReturns += 1
       if (publishes) c.committed += 1
@@ -1573,7 +1626,8 @@ class TestDeltaRangerAppendV1Input {
   private def appendFailure(
       c: Case,
       data: Dataset[Row],
-      recordSource: Boolean = true
+      recordSource: Boolean = true,
+      writerOptions: Map[String, String] = Map.empty
   ): Exception = {
     val root = Paths.get(NativeSelectFixture.locations("a")).getParent
     val name = "attempt-" + java.util.UUID.randomUUID().toString
@@ -1583,7 +1637,10 @@ class TestDeltaRangerAppendV1Input {
     if (recordSource) recordPendingSource(c, data, name)
     try {
       val failure =
-        assertThrows(classOf[Exception], () => data.write.mode("append").insertInto("a.db.t"))
+        assertThrows(
+          classOf[Exception],
+          () => data.write.mode("append").options(writerOptions).insertInto("a.db.t")
+        )
       c.attempts += Map[String, Any](
         "attempt" -> name,
         "frontend" -> "insertInto",

@@ -21,7 +21,7 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{SaveMode, SparkSession}
 import scala.collection.JavaConverters._
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.sql.catalyst.expressions.Literal
@@ -29,7 +29,7 @@ import org.apache.spark.sql.types.StringType
 import org.apache.spark.unsafe.types.UTF8String
 import org.mockito.Mockito.when
 import org.apache.spark.sql.catalyst.plans.logical.{Aggregate, AppendData}
-import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.{DeltaOperations, OptimisticTransaction}
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.junit.jupiter.api.Assertions._
@@ -39,11 +39,70 @@ class TestDeltaRangerAppendIdempotency {
   import NativeIdempotencyProbe._
 
   @Test
+  def changedPendingMetadataRefusesBeforeNativeCommit(): Unit = pendingState("metadata")
+
+  @Test
+  def changedPendingProtocolRefusesBeforeNativeCommit(): Unit = pendingState("protocol")
+
+  private def pendingState(kind: String): Unit = withCase("append-pending-" + kind) { c =>
+    configure(c)
+    val command = captured(c)
+    val target = targetOf(c, command)
+    val before = target.log().unsafeVolatileSnapshot.version
+    target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+      val owner = target.bindTransaction(c.spark, transaction)
+      try {
+        if (kind == "metadata") {
+          transaction
+            .updateMetadata(transaction.metadata.copy(description = "pending append change"))
+          assertNotEquals(transaction.snapshot.metadata, transaction.metadata)
+        } else {
+          transaction.updateProtocol(transaction.protocol.copy(minWriterVersion = 6))
+          assertNotEquals(transaction.snapshot.protocol, transaction.protocol)
+        }
+        owner.requireTransaction(transaction)
+        c.trace.record(
+          "pending-effective-state",
+          s"kind=$kind updateSucceeded=true metadata=${transaction.metadata.json} snapshotMetadata=${transaction.snapshot.metadata.json} protocol=${transaction.protocol.json} snapshotProtocol=${transaction.snapshot.protocol.json}"
+        )
+        val commit = new DeltaRangerAppendCommit(
+          owner,
+          transaction,
+          Nil,
+          DeltaOperations.Write(SaveMode.Append, Some(Nil), None, None),
+          Map.empty
+        )
+        rejected("Delta append commit rejected: pending metadata or protocol changed") {
+          commit.run()
+        }
+        assertNull(DeltaRangerNativeOperation.current())
+        owner.requireTransaction(transaction)
+        assertEquals(before, target.log().unsafeVolatileSnapshot.version)
+      } finally owner.close()
+    }
+    assertTrue(OptimisticTransaction.getActive.isEmpty)
+  }
+
+  @Test
+  def duplicateCannotHideMalformedWriterBoolean(): Unit = withCase("append-malformed-duplicate") {
+    c =>
+      configure(c)
+      Seq("mergeSchema", "overwriteSchema").foreach { key =>
+        val command = captured(c).copy(writeOptions = Map(key -> "malformed"))
+        val error =
+          assertThrows(classOf[IllegalArgumentException], () => { capture(c, command); () })
+        assertTrue(error.getMessage.contains(key), error.toString)
+        assertTrue(c.transaction.isEmpty)
+        assertTrue(c.aggregates.isEmpty)
+      }
+  }
+
+  @Test
   def actualColdFrontendsReturnOnlyNativeScalar(): Unit = {
     for (frontend <- Seq("insertInto", "saveAsTable"); mode <- Seq("duplicate", "new", "higher")) {
       withCase("append-" + frontend + "-" + mode) { c =>
         configure(c, mode)
-        val command = captured(c, frontend)
+        val command = captured(c, frontend).copy(writeOptions = AppendWriterOptionsFixture.options)
         val association = DeltaRangerAppendCommandBinding.capture(
           c.spark,
           command,
@@ -105,7 +164,7 @@ class TestDeltaRangerAppendIdempotency {
       withCase("append-denied-" + change) { c =>
         configure(c)
         c.policy.customCatalog = "b"
-        val command = captured(c)
+        val command = captured(c).copy(writeOptions = AppendWriterOptionsFixture.options)
         val association = capture(c, command)
         change match {
           case "select" => c.policy.denied.add("b:secret")
@@ -583,9 +642,7 @@ class TestDeltaRangerAppendIdempotency {
       sql: String = "SELECT id, secret, region FROM b.db.t"
   ): AppendData = {
     val data = c.spark.sql(sql)
-    val source = data.queryExecution.analyzed
-    val receipt = DeltaRangerDecisionReceipt.consumeOwned(source, c.spark, optimized = false)
-    assertTrue(receipt.obligations.nonEmpty)
+    val pending = data.queryExecution.analyzed
     val failure = assertThrows(
       classOf[SecurityException],
       () => {
@@ -595,9 +652,13 @@ class TestDeltaRangerAppendIdempotency {
     )
     assertEquals("Delta append inventory rejected: resolution rules", failure.getMessage)
     // Unsupported preceding observation captures a genuine early object and keeps scalar state cold.
-    val command = c.appends
-      .filter(a => a.resolved && (a.query eq source) && a.write.isEmpty && a.analyzedQuery.isEmpty)
+    val observed = c.appends
+      .filter(a => a.resolved && (a.query eq pending) && a.write.isEmpty && a.analyzedQuery.isEmpty)
       .last
+    val source = DeltaRangerOrdinaryRead.normalize(pending, c.spark).get
+    val receipt = DeltaRangerDecisionReceipt.consumeOwned(source, c.spark, optimized = false)
+    assertTrue(receipt.obligations.nonEmpty)
+    val command = observed.copy(query = source)
     assertTrue(command.write.isEmpty)
     assertTrue(command.analyzedQuery.isEmpty)
     assertTrue(command.writeOptions.isEmpty)

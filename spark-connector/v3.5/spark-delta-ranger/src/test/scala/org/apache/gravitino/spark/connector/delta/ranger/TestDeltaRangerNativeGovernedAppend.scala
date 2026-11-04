@@ -355,6 +355,51 @@ class TestDeltaRangerNativeGovernedAppend {
   }
 
   @Test
+  def sparkHubWriterOptionsInsertIntoPreservesNativeMetadata(): Unit = successfulAppend(
+    writerOptions = AppendWriterOptionsFixture.options,
+    sessionMetadata = Some("different session metadata"),
+    scenario = "spark-hub-options-insert",
+    testMethod = "sparkHubWriterOptionsInsertIntoPreservesNativeMetadata"
+  )
+
+  @Test
+  def sparkHubWriterOptionsSaveAsTablePreservesNativeMetadata(): Unit = successfulAppend(
+    frontend = "saveAsTable",
+    nullDefault = false,
+    writerOptions = AppendWriterOptionsFixture.options,
+    sessionMetadata = Some("different session metadata"),
+    scenario = "spark-hub-options-save",
+    testMethod = "sparkHubWriterOptionsSaveAsTablePreservesNativeMetadata"
+  )
+
+  @Test
+  def explicitFalseSchemaFlagsPreserveMatchingSchema(): Unit = successfulAppend(
+    writerOptions = AppendWriterOptionsFixture.options ++ Map(
+      "mergeSchema" -> "false",
+      "overwriteSchema" -> "false"
+    ),
+    scenario = "explicit-false-schema-flags",
+    testMethod = "explicitFalseSchemaFlagsPreserveMatchingSchema"
+  )
+
+  @Test
+  def explicitTrueSchemaFlagsPreserveMatchingSchemaWithAdaptiveExchange(): Unit = successfulAppend(
+    adaptive = true,
+    writerOptions = AppendWriterOptionsFixture.options.updated("overwriteSchema", "true"),
+    sourceSql = "SELECT l.id, l.secret, l.region FROM b.db.t l JOIN b.db.t r ON l.id = r.id",
+    scenario = "explicit-true-schema-flags-aqe-exchange",
+    testMethod = "explicitTrueSchemaFlagsPreserveMatchingSchemaWithAdaptiveExchange"
+  )
+
+  @Test
+  def nonNullableSourceStillAppendsIntoNullableTargetWithFlags(): Unit = successfulAppend(
+    writerOptions = AppendWriterOptionsFixture.options.updated("overwriteSchema", "true"),
+    sourceSql = "SELECT coalesce(id, 0L) id, secret, region FROM b.db.t",
+    scenario = "nonnullable-source-with-flags",
+    testMethod = "nonNullableSourceStillAppendsIntoNullableTargetWithFlags"
+  )
+
+  @Test
   def installedNamedAppendCommitsMaskedFilteredSource(): Unit = successfulAppend()
 
   @Test
@@ -612,6 +657,16 @@ class TestDeltaRangerNativeGovernedAppend {
     scenario = "source-revoked-after-helper",
     testMethod = "sourceRevocationAfterHelperPreservesUncommittedFiles",
     revokeAfterHelper = true,
+    writerOptions = AppendWriterOptionsFixture.options,
+    failureCheck = Some(error => assertReason(error, "denied"))
+  )
+
+  @Test
+  def targetRevocationAfterHelperPreservesUncommittedFilesWithOptions(): Unit = successfulAppend(
+    scenario = "target-revoked-after-helper-with-options",
+    testMethod = "targetRevocationAfterHelperPreservesUncommittedFilesWithOptions",
+    revokeTargetAfterHelper = true,
+    writerOptions = AppendWriterOptionsFixture.options,
     failureCheck = Some(error => assertReason(error, "denied"))
   )
 
@@ -692,6 +747,8 @@ class TestDeltaRangerNativeGovernedAppend {
       nullDefault: Boolean = true,
       adaptive: Boolean = false,
       adaptiveBroadcast: Boolean = false,
+      writerOptions: Map[String, String] = Map.empty,
+      sessionMetadata: Option[String] = None,
       restrictiveTargetReads: Boolean = false,
       scenario: String = "masked-filtered-separate-source",
       testMethod: String = "installedNamedAppendCommitsMaskedFilteredSource",
@@ -715,6 +772,7 @@ class TestDeltaRangerNativeGovernedAppend {
         Vector(Row(1L, "b-one-masked", "keep"), Row(3L, null, "keep")),
       checkConstraint: Boolean = false,
       revokeAfterHelper: Boolean = false,
+      revokeTargetAfterHelper: Boolean = false,
       invalidateSourceRegistrationAfterHelper: Boolean = false,
       failureCheck: Option[Throwable => Unit] = None,
       inspectCheckpoint: (DeltaRangerAppendCommit, LogicalPlan) => Unit = (_, _) => (),
@@ -732,7 +790,8 @@ class TestDeltaRangerNativeGovernedAppend {
       )
       Some(path)
     } else None
-    val failBeforeCommit = revokeAfterHelper || invalidateSourceRegistrationAfterHelper
+    val failBeforeCommit =
+      revokeAfterHelper || revokeTargetAfterHelper || invalidateSourceRegistrationAfterHelper
     val target = new TestDeltaRangerNativeSelect.Fixture
     if (restrictiveTargetReads) {
       target.filter = "id < 0"
@@ -763,10 +822,17 @@ class TestDeltaRangerNativeGovernedAppend {
             s"applicationId=${spark.sparkContext.applicationId} session=${trace.id(spark)} targetEngine=${trace.id(target.engine)} sourceEngine=${trace.id(source.engine)}"
           )
           trace.record(
+            "runtime-pins",
+            s"spark=${spark.version} delta=${io.delta.VERSION} scala=${scala.util.Properties.versionNumberString}"
+          )
+          trace.record(
             "worker-java",
             s"version=${System.getProperty("java.version")} home=${System.getProperty("java.home")}"
           )
           val json = new ObjectMapper()
+          sessionMetadata.foreach(
+            spark.conf.set("spark.databricks.delta.commitInfo.userMetadata", _)
+          )
           priorCommitVersion.foreach(version =>
             spark.conf.set("spark.databricks.delta.lastCommitVersionInSession", version.toString)
           )
@@ -890,6 +956,7 @@ class TestDeltaRangerNativeGovernedAppend {
             ) {
               revoked = true
               if (invalidateSourceRegistrationAfterHelper) sourceRegistration.properties.clear()
+              else if (revokeTargetAfterHelper) target.denied.add("a:*")
               else source.denied.add("b:secret")
               trace.record(
                 "after-helper-revocation",
@@ -1060,7 +1127,7 @@ class TestDeltaRangerNativeGovernedAppend {
           var failure: Throwable = null
           try {
             def write(): Unit = {
-              val writer = input.write.mode("append")
+              val writer = input.write.mode("append").options(writerOptions)
               frontend match {
                 case "insertInto"  => writer.insertInto("a.db.t")
                 case "saveAsTable" => writer.saveAsTable("a.db.t")
@@ -1400,6 +1467,16 @@ class TestDeltaRangerNativeGovernedAppend {
               beforeVersion + (if (failBeforeCommit || emptySource) 0 else 1),
               snapshot.version
             )
+            if (writerOptions.nonEmpty && !failBeforeCommit && !emptySource) {
+              val commitPath = Paths.get(location, "_delta_log", f"${snapshot.version}%020d.json")
+              val lines = Files.readAllLines(commitPath).asScala.map(json.readTree)
+              val info = lines.find(_.has("commitInfo")).get.get("commitInfo")
+              assertEquals(writerOptions("userMetadata"), info.get("userMetadata").textValue())
+              assertNotEquals(sessionMetadata.orNull, info.get("userMetadata").textValue())
+              assertEquals("WRITE", info.get("operation").textValue())
+              trace.record("writer-options-json", json.writeValueAsString(writerOptions.asJava))
+              trace.record("native-commit-info-json", info.toString)
+            }
             assertEquals(beforeMetadata, snapshot.metadata.json)
             assertEquals(beforeProtocol, snapshot.protocol.json)
             trace.record(

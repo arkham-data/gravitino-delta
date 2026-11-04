@@ -39,12 +39,16 @@ private[ranger] object DeltaRangerAppendCoordinator {
       input: DeltaRangerAppendV1Input.RetainedV1Input,
       owner: DeltaRangerRegistrationBindings.BoundAppendTransaction,
       transaction: OptimisticTransaction,
-      options: Map[String, String],
       maintenance: Option[DeltaRangerCdfCacheMaintenance.Scope] = None
   ): Unit = {
     def validate(): Unit = input.association.validateRetainedOwned(input, owner, transaction)
     validate()
-    val duplicate = DeltaRangerNativeIdempotency.readInTransaction(owner, transaction, options)
+    val options = DeltaRangerAppendOptions.validate(input.session, input.association.writerOptions)
+    val duplicate = DeltaRangerNativeIdempotency.readInTransaction(
+      owner,
+      transaction,
+      DeltaRangerAppendOptions.transactionOptions
+    )
     validate()
     if (duplicate) {
       validate()

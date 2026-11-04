@@ -170,7 +170,7 @@ private[ranger] object DeltaRangerAppendV1Input {
         "streaming" -> !command.isStreaming,
         "by-name" -> (command.isByName == original.isByName),
         "origin" -> (command.origin == original.origin),
-        "options" -> (command.writeOptions == original.writeOptions && command.writeOptions.isEmpty),
+        "options" -> (command.writeOptions == association.writerOptions),
         "table" -> (actual.table eq table),
         "descriptor" -> table.catalogTable.exists(_ eq descriptor),
         "catalog" -> actual.catalog.exists(_ eq relation.catalog.get),

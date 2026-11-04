@@ -46,9 +46,12 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
 ) {
   import DeltaRangerAppendCommandBinding._
 
+  private[ranger] def writerOptions: Map[String, String] = shape.options
+
   def hasBeenExecuted(candidate: AppendData, session: SparkSession): Boolean = {
     validate(candidate, session)
-    val options = command.writeOptions.iterator.toMap
+    DeltaRangerAppendOptions.validate(session, writerOptions)
+    val options = DeltaRangerAppendOptions.transactionOptions
     DeltaRangerNativeIdempotency.validateOptions(session, options)
     val result = target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
       val owner = target.bindTransaction(session, transaction)
@@ -67,13 +70,16 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
   private[ranger] def coordinate(input: DeltaRangerAppendV1Input.RetainedV1Input): Unit = {
     requireInput(input)
     validate(command, input.session)
-    val options = command.writeOptions.iterator.toMap
-    DeltaRangerNativeIdempotency.validateOptions(input.session, options)
+    DeltaRangerAppendOptions.validate(input.session, writerOptions)
+    DeltaRangerNativeIdempotency.validateOptions(
+      input.session,
+      DeltaRangerAppendOptions.transactionOptions
+    )
     val maintenance = DeltaRangerCdfCacheMaintenance.prepare(input, this, target)
     target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
       val owner = target.bindTransaction(input.session, transaction)
       try
-        DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, options, maintenance)
+        DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, maintenance)
       finally owner.close()
     }
     // DeltaTableV2's V1 writer refreshes this relation after both writes and duplicate returns.
@@ -221,6 +227,7 @@ private[ranger] object DeltaRangerAppendCommandBinding {
       val catalogName: String,
       val database: String,
       val tableName: String,
+      val options: Map[String, String],
       snapshot: Vector[Any]
   ) {
     def requireSame(candidate: AppendData, session: SparkSession): Unit = {
@@ -247,9 +254,10 @@ private[ranger] object DeltaRangerAppendCommandBinding {
       command.analyzedQuery == null || command.writeOptions == null ||
       command.getClass != classOf[AppendData] || !command.resolved ||
       command.isStreaming || !command.query.resolved || command.query.isStreaming ||
-      command.write.nonEmpty || command.analyzedQuery.nonEmpty || command.writeOptions.nonEmpty
+      command.write.nonEmpty || command.analyzedQuery.nonEmpty
     )
       denied("unqualified command stage")
+    val options = DeltaRangerAppendOptions.validate(spark, command.writeOptions)
     val relation = command.table match {
       case r: DataSourceV2Relation if r.getClass == classOf[DataSourceV2Relation] => r
       case _ => denied("unqualified target relation")
@@ -285,7 +293,7 @@ private[ranger] object DeltaRangerAppendCommandBinding {
     val plans = Vector(command, command.query, relation)
     val snapshot = Vector[Any](
       command.isByName,
-      command.writeOptions.toMap,
+      options,
       relation.options.asCaseSensitiveMap().asScala.toMap,
       command.origin,
       identifier.namespace().toVector,
@@ -307,6 +315,7 @@ private[ranger] object DeltaRangerAppendCommandBinding {
       catalogName,
       database,
       tableName,
+      options,
       snapshot
     )
   }

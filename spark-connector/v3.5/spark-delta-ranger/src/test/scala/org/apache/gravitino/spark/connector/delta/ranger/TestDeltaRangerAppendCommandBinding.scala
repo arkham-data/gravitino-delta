@@ -45,6 +45,47 @@ class TestDeltaRangerAppendCommandBinding {
   import InstalledAppendBoundaryProbe._
 
   @Test
+  def finiteWriterOptionsBindBothNamedFrontends(): Unit =
+    Seq("insertInto", "saveAsTable").foreach { frontend =>
+      withObserved(frontend, "SELECT id, secret, region FROM b.db.t") { observed =>
+        val command = observed.command.copy(writeOptions = AppendWriterOptionsFixture.options)
+        val association =
+          DeltaRangerAppendCommandBinding.capture(observed.spark, command, observed.catalog)
+        association.validate(command, observed.spark)
+        assertTrue(observed.targetPolicy.requests.asScala.exists(_.getAccessType == "update"))
+        assertTrue(observed.sourcePolicy.requests.asScala.exists(_.getAccessType == "select"))
+      }
+    }
+
+  @Test
+  def malformedNativeFlagsFailBeforeOpeningDuplicateTransaction(): Unit =
+    withObserved("insertInto", "SELECT id, secret, region FROM b.db.t") { observed =>
+      Seq("mergeSchema", "overwriteSchema").foreach { key =>
+        val command = observed.command.copy(writeOptions = Map(key -> "not-a-boolean"))
+        val error = assertThrows(
+          classOf[IllegalArgumentException],
+          () => {
+            DeltaRangerAppendCommandBinding.capture(observed.spark, command, observed.catalog); ()
+          }
+        )
+        assertTrue(error.getMessage.contains(key), error.toString)
+        assertTrue(OptimisticTransaction.getActive.isEmpty)
+      }
+    }
+
+  @Test
+  def retainedOriginalOptionsCannotMutateTheirCapturedSnapshot(): Unit =
+    withObserved("insertInto", "SELECT id, secret, region FROM b.db.t") { observed =>
+      val options = new AppendWriterOptionsFixture.RetainedMap(AppendWriterOptionsFixture.options)
+      val command = observed.command.copy(writeOptions = options)
+      val association =
+        DeltaRangerAppendCommandBinding.capture(observed.spark, command, observed.catalog)
+      association.validate(command, observed.spark)
+      options.current = options.current.updated("mergeSchema", "false")
+      rejects("command shape changed") { association.validate(command, observed.spark) }
+    }
+
+  @Test
   def actualFrontendInventory(): Unit =
     Seq("insertInto", "saveAsTable").foreach { frontend =>
       withObserved(frontend, "SELECT id, secret, region FROM b.db.t") { observed =>
@@ -102,7 +143,6 @@ class TestDeltaRangerAppendCommandBinding {
       observed.targetPolicy.requests.clear()
       Seq(
         command.copy(analyzedQuery = Some(command.query)),
-        command.copy(writeOptions = Map("mergeSchema" -> "true")),
         command.copy(write = Some(mock(classOf[Write])))
       ).foreach { candidate =>
         rejects("unqualified command stage") {
@@ -803,10 +843,7 @@ class TestDeltaRangerAppendCommandBinding {
           val before = manifest(root, trace.directory.resolve("before"))
           try {
             val data = spark.sql(sourceSql)
-            val sourceRoot = data.queryExecution.analyzed
-            val originalReceipt =
-              DeltaRangerDecisionReceipt.consumeOwned(sourceRoot, spark, optimized = false)
-            assertTrue(originalReceipt.obligations.nonEmpty)
+            val pendingRoot = data.queryExecution.analyzed
             val failure = assertThrows(
               classOf[Exception],
               () => {
@@ -825,10 +862,16 @@ class TestDeltaRangerAppendCommandBinding {
             // This preceding foreign observer is deliberately unsupported. It records the real early
             // command, then the inventory gate rejects before native writer construction.
             val observed = trace.observedAppends.filter(a =>
-              a.resolved && (a.query eq sourceRoot) && a.write.isEmpty && a.analyzedQuery.isEmpty
+              a.resolved && (a.query eq pendingRoot) && a.write.isEmpty && a.analyzedQuery.isEmpty
             )
             assertTrue(observed.nonEmpty, "No actual receipted command/source association observed")
-            val command = observed.last
+            // The foreign observer precedes append normalization; normalize its retained source
+            // through the production ordinary-read seam before testing the association directly.
+            val sourceRoot = DeltaRangerOrdinaryRead.normalize(pendingRoot, spark).get
+            val originalReceipt =
+              DeltaRangerDecisionReceipt.consumeOwned(sourceRoot, spark, optimized = false)
+            assertTrue(originalReceipt.obligations.nonEmpty)
+            val command = observed.last.copy(query = sourceRoot)
             val relation = command.table.asInstanceOf[DataSourceV2Relation]
             trace.record(
               "association-input",

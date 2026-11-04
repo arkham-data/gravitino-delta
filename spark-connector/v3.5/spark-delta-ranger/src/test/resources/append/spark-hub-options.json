@@ -1,0 +1,50 @@
+{
+  "provenance": {
+    "capture": "native-cell-2/stage-create.json",
+    "captureSha256": "9b9857048787454e786c2e2de57e0ea4a64d104185c6a8ccdf5abf822fa4d26e",
+    "resultSha256": "c6cd829c4b3daec3a5919a8ef88c4f9bcb638944b5067df87455644b32a03a97",
+    "sparkHubRevision": "d01024b6f459ad2743b7b55099226b8c3dc742fd",
+    "sourceSha256": {
+      "base_jobs.py": "3dfad83ff031a81b62ac9ab16ccc71cc682af5839b6467b44bebc92e01028a79",
+      "services/v2/delta.py": "35514f0008ed6d68a3044c05453cca0b82e7f3f861b7cbedc372b4096f58cbfc",
+      "spark_hub_write_native_app.py": "4c640e95ead95f6025a7227330787fc2913a3f1b6b915e7eae87bb1ac4731529"
+    }
+  },
+  "actualOptions": {
+    "userMetadata": {
+      "pipelineExecutionId": "9a91a5ef-842e-4a3e-92ef-c0b581a29d99",
+      "clusterId": "9a91a5ef-842e-4a3e-92ef-c0b581a29d99",
+      "comment": "native-characterization",
+      "overwriteSchema": false,
+      "mergeSchema": true
+    },
+    "overwriteSchema": "false",
+    "mergeSchema": "true"
+  },
+  "writerOptions": {
+    "userMetadata": "{'pipelineExecutionId': '9a91a5ef-842e-4a3e-92ef-c0b581a29d99', 'clusterId': '9a91a5ef-842e-4a3e-92ef-c0b581a29d99', 'comment': 'native-characterization', 'overwriteSchema': False, 'mergeSchema': True}",
+    "overwriteSchema": "false",
+    "mergeSchema": "true"
+  },
+  "expectedUserMetadata": "{'pipelineExecutionId': '9a91a5ef-842e-4a3e-92ef-c0b581a29d99', 'clusterId': '9a91a5ef-842e-4a3e-92ef-c0b581a29d99', 'comment': 'native-characterization', 'overwriteSchema': False, 'mergeSchema': True}",
+  "tableProperties": {
+    "delta.compatibility.symlinkFormatManifest.enabled": "true",
+    "delta.deletedFileRetentionDuration": "interval 364 days",
+    "delta.enableChangeDataFeed": "true",
+    "delta.logRetentionDuration": "interval 45 days"
+  },
+  "settings": {
+    "spark.databricks.delta.optimizeWrite.enabled": "true",
+    "spark.databricks.delta.autoCompact.enabled": "true",
+    "spark.databricks.delta.properties.defaults.compatibility.symlinkFormatManifest.enabled": "true",
+    "spark.databricks.delta.snapshotPartitions": "2",
+    "spark.sql.adaptive.enabled": "false",
+    "spark.databricks.delta.schema.autoMerge.enabled": "false",
+    "spark.sql.sources.partitionOverwriteMode": "static",
+    "spark.databricks.delta.autoCompact.minNumFiles": "3",
+    "spark.databricks.delta.autoCompact.maxFileSize": "1048576",
+    "spark.databricks.delta.autoCompact.minFileSize": "524288",
+    "spark.databricks.delta.optimizeWrite.binSize": "1",
+    "spark.databricks.delta.optimizeWrite.numShuffleBlocks": "2"
+  }
+}
