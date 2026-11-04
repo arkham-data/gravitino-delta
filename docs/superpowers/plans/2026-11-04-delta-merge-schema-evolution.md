@@ -107,7 +107,33 @@ Use Java 17 at `/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`;
 
 **Interfaces:** Freeze the meaningful Task 1/2/3 cohort by exact JUnit method identities and source hashes. Reuse qualified source-identical method/pair evidence; run remaining changed cohort sequentially for all Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 combinations, with actual Java/Scala/Ranger origins. Reused evidence is labeled, not counted as a fresh run.
 
-- [ ] Retain fresh logs/XML/runtime/source hash manifests and primary native row/schema/log/receipt/outcome evidence per pair; independently verify exact method cohort, failures/errors/skips and requested pins. No external services or fixtures need be rebuilt merely for this installed matrix. Resolve actual failures before claiming that cell.
-- [ ] Record named SQL and companion support, disabled-extra semantics, permission/recovery guarantees and limitations in public docs. Explicitly state source remains bounded CDF, proper settings scope, no engine/core fork, API version 1, no new deployed Ranger/MinIO result, nested/type/full schema and broader sources remain unqualified. Do not claim Spark Hub integration from a connector-only test.
+- [x] Retain fresh logs/XML/runtime/source hash manifests and primary native row/schema/log/receipt/outcome evidence per pair; independently verify exact method cohort, failures/errors/skips and requested pins. No external services or fixtures need be rebuilt merely for this installed matrix. Resolve actual failures before claiming that cell.
+- [x] Record named SQL and companion support, disabled-extra semantics, permission/recovery guarantees and limitations in public docs. Explicitly state source remains bounded CDF, proper settings scope, no engine/core fork, API version 1, no new deployed Ranger/MinIO result, nested/type/full schema and broader sources remain unqualified. Do not claim Spark Hub integration from a connector-only test.
 - [ ] Self-review against the design and selected four-workstream roadmap. Controller obtains fresh task review and commits documentation/evidence references; then obtains one whole-slice review from baseline, using retained evidence without redundant test reruns.
 - [ ] On clean final review, verify branch/worktree and push existing branch under standing user authorization; verify exact remote SHA. Preserve evidence/worktree. Continue selected schema requirements or the next workstream as appropriate; this checkpoint does not declare all four complete.
+
+
+### Task 4 installed qualification outcome
+
+The exact 94-method cohort is qualified on all four pinned pairs: 31 installed
+evolution, 15 pure intent, 43 affected regressions and five native-control methods
+(11 stock scenarios). Spark 3.5.6/Delta 3.3.0 retains Task 3's impact-qualified
+89 plus five source-identical Task 1 controls; it is not a fresh whole-source
+run. Spark 3.5.6/Delta 3.3.2 executes 89 fresh and reuses those five controls.
+Both Spark 3.5.4 cells execute all 94 fresh. The three new invocations exit 0,
+with exact cohort equality and zero failures/errors/skips, unchanged module
+sources and actual Java 17.0.16/Scala 2.12.21/Ranger-client 2.8.0 origins.
+
+[Results](../specs/2026-11-04-delta-merge-schema-evolution-results.md) and
+`.superpowers/sdd/2026-11-04-delta-merge-schema-evolution/task-4-report.md`
+record exact commands, original evidence, runtime/source/native audits and reuse
+limits. No Task 4 product/test or Spark Hub change was needed. Self-review is
+complete and the independent task review is clean. This documentation commit
+records qualification; whole-slice review and exact-SHA checkpoint push remain
+separate gates. The final two checkboxes remain open until that work finishes.
+
+Ordinary governed CDF across admitted additive schema boundaries remains the next
+required schema-track task. Consolidated live Ranger-server 2.8.0/MinIO acceptance
+and actual Spark Hub input/settings lifecycle integration are still open. This
+installed SQL/JVM result adds no PySpark, provider, server or storage deployment
+claim and does not close schema evolution or the four selected workstreams.

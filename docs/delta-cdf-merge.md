@@ -20,9 +20,11 @@
 The optional Spark 3.5 Ranger companion owns a bounded named SQL MERGE over
 `table_changes`. Gravitino owns registration and authorization configuration;
 Delta's native executors reconstruct rows and produce transaction actions.
-Local qualification completed on Spark 3.5.4/3.5.6 × Delta 3.3.0/3.3.2 with
-actual Ranger 2.8.0, MinIO, JDK 17 and Scala 2.12.21. Separate-worker deployment
-remains unqualified.
+Historical fixed-schema local qualification completed on Spark 3.5.4/3.5.6 ×
+Delta 3.3.0/3.3.2 with actual Ranger 2.8.0, MinIO, JDK 17 and Scala 2.12.21.
+The additive schema-and-data MERGE qualification described below is installed
+fixture evidence; it adds no deployed Ranger server, provider, MinIO or Python
+result. Separate-worker deployment remains unqualified.
 
 ## Trusted stock adaptive execution
 
@@ -230,6 +232,76 @@ This example is an explicit consumer program. It is not a generic replica:
 filtering preimages may leave stale destination rows when source images cross a
 policy boundary. The application must define its desired reconciliation semantics.
 
+## Additive schema-and-data MERGE
+
+The named SQL and JVM companion routes support one native atomic MERGE that adds
+concrete nullable top-level scalar columns while updating/inserting rows. Native
+Delta resolution determines the assigned additions and final target schema. Old
+fields retain exact names, order, types, nullability and metadata; native table
+identity, configuration, partitioning and protocol remain unchanged. There is no
+preliminary catalog ALTER, engine fork, replacement transaction engine or new
+metastore. Gravitino continues to own named registration. The companion API is
+still version 1; Python signatures are unchanged, but this additive slice directly
+qualifies SQL and the JVM companion, without a new PySpark deployment result.
+
+Set `spark.databricks.delta.schema.autoMerge.enabled=true` and the qualified
+`spark.sql.constraintPropagation.enabled=false` operation profile before analyzing
+any governed source or constructing either handle. Keep that scope through
+execution and restore previous settings in `finally`. Setting them only before
+`execute()` is too late. An already analyzed upstream DataFrame is not made fresh
+by constructing a new target handle. AQE remains selected before session setup;
+the connector does not change native settings, checksum behavior or policies.
+
+For evolving stars, explicitly project payload fields out of CDF after applying
+the intended CDF filter. For example, use `SELECT id, value, extra FROM
+table_changes('lake.db.source', 12, 15)` as the source of SQL `UPDATE SET *` and
+`INSERT *`, or project those fields before companion `updateAll`/`insertAll`.
+The connector does not strip authored CDF metadata columns for the caller. With
+autoMerge disabled, native star expansion can ignore an unused extra source field
+and commit existing-field changes; original SELECT obligations for the requested
+payload and predicates remain. Enabled matching-schema operations require no ALTER
+merely for the flag.
+A real addition requires target ALTER and UPDATE on the added written fields at
+the existing live operation boundaries, including known-commit reconciliation.
+Masks and row filters continue to govern added values, keys and authored reads;
+omitted old fields remain raw during native copy-forward. Destination filters
+retain read/match semantics, so a hidden target row cannot suppress an authorized
+insert.
+
+The source remains one fresh bounded named CDF interval and the existing finite
+projection/filter/alias grammar. Ordinary CDF intervals spanning an additive
+schema boundary remain refused and are required next in the schema track.
+Recovery-only source deferral proves an already committed MERGE without opening
+its old payload; it does not authorize ordinary historical reads. Exact retained
+native proof/digest, transaction marker, fresh permissions, original ALTER and
+added-column UPDATE demands, and current compatible named registration remain
+mandatory. Later data-only advancement may reconcile; later Metadata/Protocol
+changes, including a reverted schema, cannot borrow the original proof.
+
+Outcome evidence remains not committed before native invocation, unknown after
+an unproved invocation, or committed after exact native proof. Journal,
+registration or recache acknowledgement failure after proof stays committed with
+observation unconfirmed. Recovery acknowledgement failure also retains that
+verified outcome before durable persistence. Never automatically replay unknown
+or known-committed writes. Native source-loss cases retain proof/outcome with
+named readback explicitly unconfirmed.
+
+Installed controls cover partitioned AQE/CDF writes, metadata-only evolution,
+version-10 native checkpoint reconstruction, masks/permissions, native duplicate
+match and NOT NULL failure, and recovery without another source attempt or commit.
+Evolving target cached plans reject before mutation. Matching-schema raw target
+cache may commit and then fail stock recache; that is committed/unconfirmed,
+not successful cache support. CHECK feature protocols, nested additions, type
+changes, defaults/generated/identity fields, column mapping and broader table
+features remain outside this additive profile. Broader snapshots, joins, windows,
+aggregates, UDFs, arbitrary inputs and NOT MATCHED BY SOURCE remain unqualified.
+
+See the [installed additive MERGE results](superpowers/specs/2026-11-04-delta-merge-schema-evolution-results.md)
+for the exact four-pair cohort, fresh/reused evidence and runtime provenance.
+A consolidated live Ranger server 2.8.0/MinIO gate and actual Spark Hub lifecycle
+integration remain open; connector qualification does not close the schema track
+or the selected creation, input/transformation and overwrite/full-refresh work.
+
 ## Policy semantics
 
 Source SELECT obligations precede row-image filtering, masking and user predicates.
@@ -250,8 +322,9 @@ when writing back to the same exact named registration. Another registration
 aliasing the same physical table is rejected.
 
 Every referenced source/target expression requires SELECT. UPDATE requires UPDATE
-on authored assignment columns; INSERT and DELETE require UPDATE on all physical
-target columns. Public `MODIFY_TABLE` supplies UPDATE and ALTER; MERGE uses the
+on authored assignment columns; INSERT and DELETE require UPDATE on all target
+columns in the finite final write schema. Public `MODIFY_TABLE` supplies UPDATE
+and ALTER; MERGE uses the
 necessary UPDATE demands. Column denies remain effective under table grants.
 Empty input and unreachable clauses retain original authorization obligations.
 
@@ -289,9 +362,10 @@ exactly-once sink guarantee.
 
 ## Bounded support and evidence
 
-The supported target profile includes unpartitioned and partitioned reader-1/classic
-tables, with fixed schema and partition metadata, and explicit nonadaptive or
-trusted-stock adaptive execution. Native
+The target profile includes unpartitioned and partitioned reader-1/classic tables
+and explicit nonadaptive or trusted-stock adaptive execution. The installed
+additive extension above preserves fixed partition metadata and its finite schema
+rules; the historical deployed results below used fixed schema. Native
 constraints, INSERT/UPDATE/DELETE clauses, native source materialization/retries,
 current authorization and known-commit reconciliation have focused local tests.
 The live acceptance entry point is `delta/acceptance/cdf_merge_live.py`; its result
