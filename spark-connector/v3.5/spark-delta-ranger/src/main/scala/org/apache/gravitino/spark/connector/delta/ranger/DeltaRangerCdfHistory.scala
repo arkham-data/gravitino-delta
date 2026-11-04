@@ -89,10 +89,11 @@ private[ranger] object DeltaRangerCdfHistory {
     val start = DeltaRangerCdfReadScans.history(binding, request.start, spark)
     def profile(metadata: Metadata, protocol: Protocol): Unit = {
       if (
-        metadata.id != read.metadata.id || metadata.schemaString != read.metadata.schemaString ||
+        metadata.id != read.metadata.id ||
         metadata.partitionColumns != read.metadata.partitionColumns || protocol != read.protocol
       )
         denied("historical schema or protocol changed")
+      DeltaRangerCdfSchema.requireCompatible(metadata.schema, read.schema)
       if (
         metadata.configuration.get("delta.columnMapping.mode").exists(_ != "none") ||
         metadata.configuration.get("delta.enableDeletionVectors").contains("true") ||
@@ -119,9 +120,16 @@ private[ranger] object DeltaRangerCdfHistory {
     var protocol = start.protocol
     actions.foreach { case (_, entries) =>
       entries.foreach {
-        case value: Metadata => metadata = value
-        case value: Protocol => protocol = value
-        case _               =>
+        case value: Metadata =>
+          // The start snapshot already includes its commit. Compare every encountered action,
+          // including duplicate metadata, without inventing a pre-start history requirement.
+          DeltaRangerCdfSchema.requireCompatible(metadata.schema, value.schema)
+          profile(value, protocol)
+          metadata = value
+        case value: Protocol =>
+          profile(metadata, value)
+          protocol = value
+        case _ =>
       }
       profile(metadata, protocol)
       if (!metadata.configuration.get("delta.enableChangeDataFeed").contains("true"))

@@ -354,7 +354,12 @@ class TestDeltaRangerCdfHistory {
         () => { read(spark, start, end).collect(); () },
         change
       )
-      assertTrue(failure.getMessage.contains("historical"), failure.getMessage)
+      assertTrue(
+        failure.getMessage.contains(
+          if (change == "schema" || change == "collision") "schema" else "historical"
+        ),
+        failure.getMessage
+      )
     }
   }
 
@@ -378,7 +383,7 @@ class TestDeltaRangerCdfHistory {
       val failure =
         assertThrows(classOf[SecurityException], () => { read(spark, start, end).collect(); () })
       assertTrue(
-        failure.getMessage.contains("historical schema or protocol changed"),
+        failure.getMessage.contains("Delta CDF schema rejected"),
         failure.getMessage
       )
       assertEquals(1, read(spark, end, end).filter("_change_type = 'insert'").collect().length)
