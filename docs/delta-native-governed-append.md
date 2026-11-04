@@ -29,6 +29,14 @@ transaction metadata or protocol is refused against the retained snapshot; exact
 published-action checks remain in force. This equality fence does not detect a
 redundant identical pending action or constitute a general transaction firewall.
 
+The focused installed selection passed on Spark 3.5.4 and 3.5.6 crossed with
+Delta 3.3.0 and 3.3.2: **33 required methods in five classes per pair, zero
+failures/errors/skips**. Java 17.0.16, Scala 2.12.21 and loaded Ranger 2.8.0 client
+artifacts were observed. The source-identical first-pair evidence was reused;
+the other three pairs executed the unchanged selection. The
+[installed results](superpowers/specs/2026-11-04-delta-append-writer-options-results.md)
+retain the exact inventory, source hashes, original commands and native outcomes.
+
 Focused installed tests use the provenance-preserving
 [`append/spark-hub-options.json`](../spark-connector/v3.5/spark-delta-ranger/src/test/resources/append/spark-hub-options.json)
 writer strings with the existing local policy/native fixtures. They retain the
@@ -39,6 +47,13 @@ still fails explicitly. These tests do not qualify full Spark Hub defaults,
 initial creation/publication composition, or new live Ranger 2.8.0/MinIO behavior.
 The historical packaged results below retain their original empty-option scope.
 A separate focused packaged live qualification is still required.
+
+Spark Hub should replace Glue completely and adapt to existing Gravitino named
+catalogs, publication ordering and authorization contracts, keeping custom
+connector development limited to necessary Delta gaps. Initial
+`CREATE0 -> publication0 -> option-aware WRITE1` composition and the remaining
+ingestion/refresh contracts are still open; this result supplies the existing-table
+append building block.
 
 ## Qualified surface and policy
 

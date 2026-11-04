@@ -74,10 +74,10 @@
 
 **Interfaces:** reuse Task1's final selected class/method inventory and original successful first-pair evidence if the final candidate source hashes match. No redefinition of acceptance cases from observed output.
 
-- [ ] **Step1: Freeze reviewed source and fixture inventory.** Retain exact hashes and required nonzero methods, with source/resource origin and selected pin receipts. Reuse unchanged passed first-pair evidence; all remaining supported pairs run their actual selected classes, never a cache/up-to-date claim.
-- [ ] **Step2: Execute remaining pairs.** With Java17 run `./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests '<focused class>' ... -PdeltaSparkVersion=<3.5.4|3.5.6> -PdeltaVersion=<3.3.0|3.3.2> -PskipITs --max-workers=1`. Capture fresh original logs/exits/XML before next pair overwrites Gradle output. Use bounded existing JVM settings; no broad unchanged suite/package/live replay.
-- [ ] **Step3: Record bounded result.** Independently parse all four original XML sets, verify required inventory/no failures/errors/skips and producing source hashes. Explain installed versus live qualification and carry remaining auto-compaction/full-sink gaps.
-- [ ] **Step4: Review and checkpoint.** Fresh task review then final whole-slice review, focused checks, commit/push existing branch under standing authorization. Retain worktree and original evidence. Do not create PR/merge/deploy. Next work is focused packaged Ranger2.8/MinIO option profiles and remaining M2 contracts.
+- [x] **Step1: Freeze reviewed source and fixture inventory.** Retain exact hashes and required nonzero methods, with source/resource origin and selected pin receipts. Reuse unchanged passed first-pair evidence; all remaining supported pairs run their actual selected classes, never a cache/up-to-date claim.
+- [x] **Step2: Execute remaining pairs.** With Java17 run `./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests '<focused class>' ... -PdeltaSparkVersion=<3.5.4|3.5.6> -PdeltaVersion=<3.3.0|3.3.2> -PskipITs --max-workers=1`. Capture fresh original logs/exits/XML before next pair overwrites Gradle output. Use bounded existing JVM settings; no broad unchanged suite/package/live replay.
+- [x] **Step3: Record bounded result.** Independently parse all four original XML sets, verify required inventory/no failures/errors/skips and producing source hashes. Explain installed versus live qualification and carry remaining auto-compaction/full-sink gaps.
+- [x] **Step4: Review and checkpoint.** Fresh task review then final whole-slice review, focused checks, commit/push existing branch under standing authorization. Retain worktree and original evidence. Do not create PR/merge/deploy. Next work is focused packaged Ranger2.8/MinIO option profiles and remaining M2 contracts.
 
 ## Self-review
 
