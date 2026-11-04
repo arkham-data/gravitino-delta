@@ -54,10 +54,12 @@ private[ranger] final class DeltaRangerAppendHelper(
     input: DeltaRangerAppendV1Input.RetainedV1Input,
     sourceOwner: DeltaRangerAppendCoordinator.Source,
     transaction: OptimisticTransaction,
-    native: WriteIntoDelta
+    native: WriteIntoDelta,
+    schemaIntent: DeltaRangerAppendSchema.Intent
 ) {
   import DeltaRangerAppendHelper._
   private val spark = input.session
+  private val expectedMetadata = schemaIntent.expectedMetadata
   @volatile private var closed = false
   @volatile private var executing = false
   private var reconstructing = true
@@ -70,13 +72,13 @@ private[ranger] final class DeltaRangerAppendHelper(
   private val nullAsDefault = spark.sessionState.conf.useNullsForMissingDefaultColumnValues
   private val defaults = ColumnWithDefaultExprUtils.tableHasDefaultExpr(
     transaction.protocol,
-    transaction.metadata,
+    expectedMetadata,
     nullAsDefault
   )
-  // Matching schema is the retained frontend contract. Native public field expressions determine
+  // The retained native schema expectation determines the helper recipes. Native field expressions determine
   // the complete additional projection, including column order and quoting.
   private val projection = Project(
-    transaction.metadata.schema
+    expectedMetadata.schema
       .map(SchemaUtils.fieldToColumn)
       .map(_.expr.asInstanceOf[NamedExpression]),
     original
@@ -85,14 +87,14 @@ private[ranger] final class DeltaRangerAppendHelper(
   private val expectedSource = sourcePlans.last
   private val receipt = input.receipt.forHelper(expectedSource)
   private val output = expectedSource.output.map(_.withNullability(true))
-  private val partitionNames = transaction.metadata.partitionSchema.fieldNames.toSet
+  private val partitionNames = expectedMetadata.partitionSchema.fieldNames.toSet
   private val statsOutput = output.filterNot(a => partitionNames(a.name))
   private val statsInputSchema = StructType(
     statsOutput.map(a => StructField(a.name, a.dataType, a.nullable, a.metadata))
   )
   private val collection = new StatisticsCollection {
-    override val columnMappingMode: DeltaColumnMappingMode = transaction.metadata.columnMappingMode
-    override def tableSchema: StructType = transaction.metadata.schema
+    override val columnMappingMode: DeltaColumnMappingMode = expectedMetadata.columnMappingMode
+    override def tableSchema: StructType = expectedMetadata.schema
     override def outputTableStatsSchema: StructType = if (
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA)
     )
@@ -101,7 +103,7 @@ private[ranger] final class DeltaRangerAppendHelper(
     override def outputAttributeSchema: StructType = statsInputSchema
     override val spark: SparkSession = input.session
     override val statsColumnSpec =
-      StatisticsCollection.configuredDeltaStatsColumnSpec(transaction.metadata)
+      StatisticsCollection.configuredDeltaStatsColumnSpec(expectedMetadata)
     override val protocol: Protocol = transaction.protocol
   }
   private val local = LocalRelation(statsOutput)
@@ -116,7 +118,7 @@ private[ranger] final class DeltaRangerAppendHelper(
   )
   private val statsPlans = Vector(local) ++ analysisStages(spark, statsProjection)
 
-  private val constraints = Constraints.getAll(transaction.metadata, spark)
+  private val constraints = Constraints.getAll(expectedMetadata, spark)
   // Mirrors only native extractor substitution; resolution and enforcement remain native.
   // Native invariant analysis runs both before planning and over the qualified optimized output.
   private val constraintOutputs = Vector(
@@ -233,7 +235,7 @@ private[ranger] final class DeltaRangerAppendHelper(
       requireLive()
       val normalized = SchemaUtils.normalizeColumnNames(
         transaction.deltaLog,
-        transaction.metadata.schema,
+        expectedMetadata.schema,
         input.retainedData
       )
       val defaulted =
@@ -243,7 +245,7 @@ private[ranger] final class DeltaRangerAppendHelper(
               transaction.deltaLog,
               transaction.protocol,
               input.queryExecution,
-              transaction.metadata.schema,
+              expectedMetadata.schema,
               normalized,
               nullAsDefault
             )
@@ -255,7 +257,9 @@ private[ranger] final class DeltaRangerAppendHelper(
       DeltaInvariantCheckerExec.buildInvariantChecks(expectedSource.output, constraints, spark)
       reconstructing = false
       executing = true
-      native.writeAndReturnCommitData(transaction, spark)
+      val result = native.writeAndReturnCommitData(transaction, spark)
+      schemaIntent.requirePending(transaction.metadata, transaction.protocol)
+      result
     } finally {
       executing = false
       active.remove()

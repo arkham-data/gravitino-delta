@@ -42,9 +42,14 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
     target: DeltaRangerRegistrationBindings.BoundAppendTarget,
     targetReceipt: DeltaRangerAppendTargetReceipt,
     sourceReceipt: DeltaRangerDecisionReceipt,
+    private[ranger] val schemaIntent: DeltaRangerAppendSchema.Intent,
     context: DeltaRangerAppendCommandBinding.Context
 ) {
   import DeltaRangerAppendCommandBinding._
+
+  // Diagnostic publication evidence outlives transaction cleanup and Spark's outer refresh.
+  private var outcome = DeltaRangerAppendCommit.NotCommitted
+  private[ranger] def failure(cause: Throwable): Throwable = outcome.failure(cause)
 
   private[ranger] def writerOptions: Map[String, String] = shape.options
 
@@ -57,6 +62,8 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
       val owner = target.bindTransaction(session, transaction)
       try {
         validateOwned(candidate, session, owner, transaction)
+        requireSchemaBase(transaction)
+        if (schemaIntent.evolves) owner.authorizeSchemaEvolution()
         val value = DeltaRangerNativeIdempotency.readInTransaction(owner, transaction, options)
         validateOwned(candidate, session, owner, transaction)
         value
@@ -67,7 +74,11 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
   }
 
   /** Finite retained-input entry, with no raw target or caller-supplied transaction body. */
-  private[ranger] def coordinate(input: DeltaRangerAppendV1Input.RetainedV1Input): Unit = {
+  private[ranger] def coordinate(input: DeltaRangerAppendV1Input.RetainedV1Input): Unit =
+    try coordinateRetained(input)
+    catch { case failure: Throwable => throw DeltaRangerAppendCommit.NotCommitted.failure(failure) }
+
+  private def coordinateRetained(input: DeltaRangerAppendV1Input.RetainedV1Input): Unit = {
     requireInput(input)
     validate(command, input.session)
     DeltaRangerAppendOptions.validate(input.session, writerOptions)
@@ -75,20 +86,45 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
       input.session,
       DeltaRangerAppendOptions.transactionOptions
     )
-    val maintenance = DeltaRangerCdfCacheMaintenance.prepare(input, this, target)
-    target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
-      val owner = target.bindTransaction(input.session, transaction)
-      try
-        DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, maintenance)
-      finally owner.close()
+    val maintenance =
+      DeltaRangerCdfCacheMaintenance.prepare(input, this, target, schemaIntent.evolves)
+    try {
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val owner = target.bindTransaction(input.session, transaction)
+        var primary: Throwable = null
+        try {
+          outcome =
+            DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, maintenance)
+        } catch {
+          case failure: Throwable => primary = failure; throw failure
+        } finally {
+          try owner.close()
+          catch {
+            case cleanup: Throwable =>
+              if (primary == null) throw cleanup
+              if (cleanup ne primary) primary.addSuppressed(cleanup)
+          }
+        }
+      }
+      // DeltaTableV2's V1 writer refreshes this relation after both writes and duplicate returns.
+      maintenance match {
+        case Some(owner) => owner.recache()
+        case None =>
+          input.session.sharedState.cacheManager
+            .recacheByPlan(input.session, target.table().toLogicalRelation)
+      }
+    } catch {
+      case failure: Throwable => throw outcome.failure(failure)
     }
-    // DeltaTableV2's V1 writer refreshes this relation after both writes and duplicate returns.
-    maintenance match {
-      case Some(owner) => owner.recache()
-      case None =>
-        input.session.sharedState.cacheManager
-          .recacheByPlan(input.session, target.table().toLogicalRelation)
-    }
+  }
+
+  private[ranger] def requireSchemaBase(transaction: OptimisticTransaction): Unit = {
+    if (
+      transaction.snapshot.metadata != schemaIntent.baseMetadata ||
+      transaction.snapshot.protocol != schemaIntent.protocol ||
+      transaction.metadata != schemaIntent.baseMetadata || transaction.protocol != schemaIntent.protocol
+    )
+      denied("schema intent base changed")
   }
 
   private[ranger] def validateRetainedOwned(
@@ -189,6 +225,13 @@ private[ranger] object DeltaRangerAppendCommandBinding {
       target,
       targetReceipt,
       sourceReceipt,
+      DeltaRangerAppendSchema.derive(
+        spark,
+        shape.table.initialSnapshot.metadata,
+        shape.table.initialSnapshot.protocol,
+        command.query.schema,
+        shape.options
+      ),
       context
     )
     association.validate(command, spark)

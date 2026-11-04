@@ -39,6 +39,59 @@ class TestDeltaRangerAppendIdempotency {
   import NativeIdempotencyProbe._
 
   @Test
+  def evolvingScalarDuplicateRequiresAlterBeforeNativeRead(): Unit =
+    withCase("evolving-scalar-duplicate") { c =>
+      configure(c)
+      val command = captured(c, sql = "SELECT id, secret, region, secret AS added FROM b.db.t")
+        .copy(writeOptions = Map("mergeSchema" -> "true"))
+      val association = capture(c, command)
+      var alterRequested = false
+      c.policy.onRequest = request =>
+        if (request.getAccessType == "alter") {
+          alterRequested = true; c.policy.denied.add("a:*")
+        }
+      try {
+        val error = assertThrows(
+          classOf[SecurityException],
+          () => { association.hasBeenExecuted(command, c.spark); () }
+        )
+        assertSecurity(error, "Delta Ranger access denied")
+        assertTrue(alterRequested)
+        assertTrue(c.aggregates.isEmpty)
+      } finally { c.policy.onRequest = _ => (); c.policy.denied.clear() }
+      assertTrue(association.hasBeenExecuted(command, c.spark))
+      assertFalse(c.aggregates.isEmpty)
+    }
+
+  @Test
+  def evolvingCommitRefusesArbitraryPendingMutation(): Unit =
+    withCase("evolving-pending-mutation") { c =>
+      val command = captured(c, sql = "SELECT id, secret, region, secret AS added FROM b.db.t")
+        .copy(writeOptions = Map("mergeSchema" -> "true"))
+      val association = capture(c, command)
+      val target = targetOf(c, command)
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val owner = target.bindTransaction(c.spark, transaction)
+        try {
+          owner.authorizeSchemaEvolution()
+          transaction.updateMetadata(
+            association.schemaIntent.expectedMetadata.copy(description = "foreign metadata")
+          )
+          rejected("Native Delta registration binding is unavailable") {
+            new DeltaRangerAppendCommit(
+              owner,
+              transaction,
+              Nil,
+              DeltaOperations.Write(SaveMode.Append, Some(Nil), None, None),
+              Map.empty,
+              Some(association.schemaIntent)
+            ).run()
+          }
+        } finally owner.close()
+      }
+    }
+
+  @Test
   def changedPendingMetadataRefusesBeforeNativeCommit(): Unit = pendingState("metadata")
 
   @Test

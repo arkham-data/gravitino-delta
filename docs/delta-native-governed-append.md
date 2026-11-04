@@ -7,6 +7,52 @@ continues the [October 14 transaction-source preparation checkpoint](delta-appen
 The [accepted SELECT milestone](delta-ranger-production-results.md) remains a
 separate result. This page records append qualification, not full Delta support.
 
+## Initial installed additive schema evolution (November 4, 2026)
+
+The two existing named DataFrame APPEND writers now support one atomic native
+schema-and-data commit for a finite additive shape. The source must retain every
+existing target column as an exact name/order/type prefix, with the existing
+directional nullability rule; additions are concrete top-level scalar columns.
+Native merge-option precedence applies: explicit `mergeSchema=false` overrides
+session auto-merge, while explicit true or session auto-merge can enable the
+qualified addition. Writer `userMetadata` remains exact.
+
+The original source SELECT obligations, masks, filters, retained input and option
+snapshots remain enforced. Evolving writes require canonical target ALTER as well
+as UPDATE, before either duplicate entry point and before helper work. Delta's
+existing `WriteIntoDelta` performs the metadata update and file generation. Exact
+pending state and publication proof require the expected Metadata followed by the
+unchanged native add/transaction actions, with unchanged Protocol, partitioning,
+configuration, native UUID and registration identity. The existing provider
+refresh contract supplies the new named schema; retained old plans remain strict.
+
+The focused installed selection passed **41 methods in five classes**, with zero
+failures/errors/skips, on **Spark 3.5.6 / Delta 3.3.2**, Java 17.0.16, Scala 2.12.21
+and loaded Ranger 2.8.0 client artifacts. It covers both named writers, literal
+old-null/new-masked rows, ordinary and qualified partitioned CDF targets, a final
+stock AQE join exchange, native checkpoint reconstruction, and continued fresh
+named CDF reads. Authorization failures and duplicates, native invariant failure,
+reserved `_commit_version` refusal after file generation, exact publication
+forgeries, and postcommit observation/outer Spark refresh failures are exercised.
+Native invoked without proof remains unknown; exact publication proof survives
+cleanup as committed with observation unconfirmed. Failed issued commands cannot
+replay, and native orphan files are retained.
+
+Schema-changing target cache histories are excluded before helper work, including
+ordinary AQE-off targets. Matching-schema cache maintenance and non-substituting
+source-only cache presence retain their existing behavior. Source cache
+substitution, new source operators, Delta's special `_change_type` CDC-routing
+helper, protocol transitions, broader schema changes, auto-compaction, creation,
+MERGE evolution and overwrite remain outside this bounded result.
+
+The existing actual-reader provider refresh regression also passed separately,
+confirming persisted additive columns retain the original column ID and creator.
+This is installed local fixture evidence, with the existing registration fixture
+modeling column/version observation. It extends the installed writer-option result
+below; the historical packaged matrices keep their original scope. Qualification
+of the remaining Spark/Delta pairs and a new deployed Gravitino/Ranger-server/MinIO
+result remain separate work.
+
 ## Installed-only writer-option continuation (November 4, 2026)
 
 The companion now admits the finite `userMetadata`, `mergeSchema` and

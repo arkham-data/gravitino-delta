@@ -52,14 +52,21 @@ private[ranger] object DeltaRangerAppendV1Input {
         command.query
       )
     ) {
-      val source = command.query.output
-      val target = command.table.output
-      if (
-        source.size != target.size || !source.zip(target).forall { case (from, to) =>
-          from.name == to.name && from.dataType == to.dataType &&
-          (!from.nullable || to.nullable)
-        }
-      ) denied("native source normalization is not qualified")
+      command.table match {
+        case relation: DataSourceV2Relation =>
+          relation.table match {
+            case table: DeltaTableV2 =>
+              DeltaRangerAppendSchema.derive(
+                spark,
+                table.initialSnapshot.metadata,
+                table.initialSnapshot.protocol,
+                command.query.schema,
+                command.writeOptions
+              )
+            case _ => denied("unqualified native target")
+          }
+        case _ => denied("unqualified target relation")
+      }
     }
   }
 
@@ -275,6 +282,8 @@ private[ranger] object DeltaRangerAppendV1Input {
         verify(guard, spark)
         leafRunning = true
         issued.run()
+      } catch {
+        case failure: Throwable => throw association.failure(failure)
       } finally {
         leafRunning = false
         running = false

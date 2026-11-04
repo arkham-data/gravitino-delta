@@ -40,11 +40,16 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
   def prepare(
       input: DeltaRangerAppendV1Input.RetainedV1Input,
       binding: DeltaRangerAppendCommandBinding,
-      target: DeltaRangerRegistrationBindings.BoundAppendTarget
+      target: DeltaRangerRegistrationBindings.BoundAppendTarget,
+      evolving: Boolean = false
   ): Option[Scope] = {
     if (input.association ne binding) reject("foreign append input")
     val head = target.log().unsafeVolatileSnapshot
-    if (!cdfProtocol(head.protocol) && !input.session.sessionState.conf.adaptiveExecutionEnabled)
+    if (
+      !evolving && !cdfProtocol(
+        head.protocol
+      ) && !input.session.sessionState.conf.adaptiveExecutionEnabled
+    )
       return None
     if (
       active.get() != null || DeltaRangerNativeOperation.current() != null ||
@@ -57,7 +62,7 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
       head.protocol != target.table().initialSnapshot.protocol
     )
       reject("append target metadata changed")
-    val scope = new Scope(input, binding, target, head)
+    val scope = new Scope(input, binding, target, head, evolving)
     if (scope.hasKeys) Some(scope) else None
   }
 
@@ -85,7 +90,8 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
       input: DeltaRangerAppendV1Input.RetainedV1Input,
       binding: DeltaRangerAppendCommandBinding,
       target: DeltaRangerRegistrationBindings.BoundAppendTarget,
-      head: Snapshot
+      head: Snapshot,
+      evolving: Boolean
   ) {
     val spark = input.session
     private val thread = Thread.currentThread()
@@ -125,6 +131,7 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
           reject("foreign target cache history")
       }
     }
+    if (evolving && !keys.isEmpty) reject("schema evolution has target cache history")
     if (!keys.isEmpty) {
       val registrations = DeltaRangerRawMaintenanceDeployment.observeRegistrations(spark).asScala
       registrations.foreach(_.requireCurrent(spark))

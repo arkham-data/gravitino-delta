@@ -42,7 +42,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.mockito.Mockito.{mock, verifyNoInteractions, when}
 import java.util.concurrent.{LinkedBlockingQueue, TimeUnit}
-import org.apache.spark.sql.{Dataset, Row, SparkSession, SparkSessionExtensions}
+import org.apache.spark.sql.{Dataset, Row, SaveMode, SparkSession, SparkSessionExtensions}
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -50,7 +50,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.sql.catalyst.plans.logical.AppendData
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, OptimisticTransaction}
+import org.apache.spark.sql.delta.actions.SetTransaction
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 
@@ -1238,6 +1239,131 @@ class TestDeltaRangerAppendV1Input {
           )
         }
       finally c.spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
+  }
+
+  @Test
+  def explicitFalseOverridesSessionEvolutionBeforeInput(): Unit =
+    withCase("evolution-explicit-false") { c =>
+      c.spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
+      try {
+        val data = c.spark.sql("SELECT id, secret, region, secret AS added FROM b.db.t")
+        assertReason(
+          appendFailure(c, data, writerOptions = Map("mergeSchema" -> "false")),
+          "schema evolution is disabled"
+        )
+      } finally c.spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
+    }
+
+  @Test
+  def updateOnlyEvolutionCannotReachHelper(): Unit = withCase("evolution-update-only") { c =>
+    val data = c.spark.sql("SELECT id, secret, region, secret AS added FROM b.db.t")
+    var alterRequested = false
+    c.target.onRequest = request =>
+      if (request.getAccessType == "alter") {
+        alterRequested = true
+        c.target.denied.add("a:*")
+      }
+    try {
+      assertReason(
+        appendFailure(c, data, writerOptions = Map("mergeSchema" -> "true")),
+        "Delta Ranger access denied"
+      )
+      assertTrue(alterRequested)
+      assertTrue(c.target.requests.asScala.exists(_.getAccessType == "update"))
+    } finally { c.target.onRequest = _ => (); c.target.denied.clear() }
+  }
+
+  @Test
+  def evolvingTargetUpdateDenialPrecedesHelper(): Unit =
+    withCase("evolution-target-update-denial") { c =>
+      val data = c.spark.sql("SELECT id, secret, region, secret AS added FROM b.db.t")
+      c.target.denied.add("a:*")
+      try
+        assertReason(
+          appendFailure(c, data, writerOptions = Map("mergeSchema" -> "true")),
+          "Delta Ranger access denied"
+        )
+      finally c.target.denied.clear()
+      assertFalse(c.target.requests.asScala.exists(_.getAccessType == "alter"))
+    }
+
+  @Test
+  def addedSourceColumnDenialPrecedesHelper(): Unit = withCase(
+    "evolution-added-source-denial",
+    nativeSetup = native =>
+      native
+        .sql("SELECT 1L id, 'b-one' secret, 'keep' region, 'private' extra")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+        .save(NativeSelectFixture.locations("b"))
+  ) { c =>
+    val data = c.spark.sql("SELECT id, secret, region, extra FROM b.db.t")
+    c.source.denied.add("b:extra")
+    try assertReason(appendFailure(c, data, writerOptions = Map("mergeSchema" -> "true")), "denied")
+    finally c.source.denied.clear()
+    assertTrue(
+      c.source.requests.asScala.exists(r =>
+        r.getAccessType == "select" && r.getResource.getValue("column") == "extra"
+      )
+    )
+  }
+
+  @Test
+  def evolvingCoordinatorDuplicateStillRequiresAlter(): Unit = withCase(
+    "evolution-coordinator-duplicate",
+    nativeSetup = native => {
+      val log = DeltaLog.forTable(native, NativeSelectFixture.locations("a"))
+      log.withNewTransaction(None) { transaction =>
+        transaction.commit(
+          Seq(SetTransaction("evolution-duplicate", 1L, None)),
+          DeltaOperations.Write(SaveMode.Append, Some(Nil), None, None)
+        )
+      }
+    }
+  ) { c =>
+    c.spark.conf.set("spark.databricks.delta.write.txnAppId", "evolution-duplicate")
+    c.spark.conf.set("spark.databricks.delta.write.txnVersion", "1")
+    try {
+      val data = c.spark.sql("SELECT id, secret, region, secret AS added FROM b.db.t")
+      var requested = false
+      c.target.onRequest = request =>
+        if (request.getAccessType == "alter") {
+          requested = true; c.target.denied.add("a:*")
+        }
+      assertReason(
+        appendFailure(c, data, writerOptions = Map("mergeSchema" -> "true")),
+        "Delta Ranger access denied"
+      )
+      assertTrue(requested)
+      c.target.onRequest = _ => ()
+      c.target.denied.clear()
+      var helperReached = false
+      c.source.onRequest = _ => {
+        helperReached ||= Thread
+          .currentThread()
+          .getStackTrace
+          .exists(_.getClassName == classOf[DeltaRangerAppendHelper].getName)
+      }
+      c.spark
+        .sql("SELECT id, secret, region, secret AS added FROM b.db.t")
+        .write
+        .mode("append")
+        .option("mergeSchema", "true")
+        .insertInto("a.db.t")
+      assertFalse(helperReached)
+      c.trace.record(
+        "authorized-evolving-duplicate",
+        "returned=true helperReached=false schemaAndFilesUnchanged=true"
+      )
+    } finally {
+      c.target.onRequest = _ => ()
+      c.source.onRequest = _ => ()
+      c.target.denied.clear()
+      c.spark.conf.unset("spark.databricks.delta.write.txnAppId")
+      c.spark.conf.unset("spark.databricks.delta.write.txnVersion")
+    }
   }
 
   @Test

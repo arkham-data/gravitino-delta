@@ -40,10 +40,13 @@ private[ranger] object DeltaRangerAppendCoordinator {
       owner: DeltaRangerRegistrationBindings.BoundAppendTransaction,
       transaction: OptimisticTransaction,
       maintenance: Option[DeltaRangerCdfCacheMaintenance.Scope] = None
-  ): Unit = {
+  ): DeltaRangerAppendCommit.Outcome = {
     def validate(): Unit = input.association.validateRetainedOwned(input, owner, transaction)
     validate()
     val options = DeltaRangerAppendOptions.validate(input.session, input.association.writerOptions)
+    val schemaIntent = input.association.schemaIntent
+    input.association.requireSchemaBase(transaction)
+    if (schemaIntent.evolves) owner.authorizeSchemaEvolution()
     val duplicate = DeltaRangerNativeIdempotency.readInTransaction(
       owner,
       transaction,
@@ -53,8 +56,9 @@ private[ranger] object DeltaRangerAppendCoordinator {
     if (duplicate) {
       validate()
       maintenance.foreach(_.complete(transaction, None))
-      return
+      return DeltaRangerAppendCommit.Skipped
     }
+    var outcome = DeltaRangerAppendCommit.NotCommitted
     val source = new Source(input, owner, transaction)
     try {
       source.prepare()
@@ -75,7 +79,7 @@ private[ranger] object DeltaRangerAppendCoordinator {
         input.retainedData,
         transaction.catalogTable
       )
-      val helper = new DeltaRangerAppendHelper(input, source, transaction, native)
+      val helper = new DeltaRangerAppendHelper(input, source, transaction, native, schemaIntent)
       source.helper = helper
       try {
         val operation = DeltaOperations.Write(
@@ -87,15 +91,19 @@ private[ranger] object DeltaRangerAppendCoordinator {
         val tagged = helper.write()
         validate()
         helper.close()
-        val committed = new DeltaRangerAppendCommit(
+        outcome = new DeltaRangerAppendCommit(
           owner,
           transaction,
           tagged.actions,
           operation,
-          tagged.stringTags
+          tagged.stringTags,
+          Some(schemaIntent)
         ).run()
-        maintenance.foreach(_.complete(transaction, committed))
+        maintenance.foreach(_.complete(transaction, outcome.version))
+        outcome
       } finally helper.close()
+    } catch {
+      case failure: Throwable => throw outcome.failure(failure)
     } finally source.close()
   }
 

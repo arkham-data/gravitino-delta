@@ -462,6 +462,15 @@ class TestDeltaRangerLiveAppendRequest {
 
   @Test def pinsValidationAfterHelperReturnBeforeCommitCreation(): Unit = {
     assertEquals(76, DeltaRangerLivePhasePin.postReturnLine(disassembly))
+    assertEquals(
+      76,
+      DeltaRangerLivePhasePin.postReturnLine(
+        disassembly.replace(
+          "public void inTransaction(",
+          "public org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerAppendCommit$Outcome inTransaction("
+        )
+      )
+    )
   }
 
   @Test def rejectsMissingDebugLinesAndChangedCallOrder(): Unit = {

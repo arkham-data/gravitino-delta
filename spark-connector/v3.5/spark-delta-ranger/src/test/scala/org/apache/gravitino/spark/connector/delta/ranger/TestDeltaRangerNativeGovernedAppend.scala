@@ -21,12 +21,14 @@ package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
+import java.lang.reflect.InvocationTargetException
 import java.util.concurrent.{FutureTask, LinkedBlockingQueue, TimeUnit}
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql.util.QueryExecutionListener
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
+import com.fasterxml.jackson.databind.node.ObjectNode
 import scala.collection.JavaConverters._
 import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, ObjectOutputStream}
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
@@ -54,7 +56,7 @@ import org.apache.spark.sql.execution.{LogicalRDD, QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, AQEShuffleReadExec}
 import org.apache.spark.sql.execution.joins.BroadcastHashJoinExec
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.{MetadataBuilder, StringType, StructField, StructType}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
 import org.apache.spark.unsafe.types.UTF8String
@@ -62,12 +64,291 @@ import org.apache.spark.sql.{DataFrame, Encoders, Row, SparkSession, SparkSessio
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import io.delta.sql.DeltaSparkSessionExtension
-import org.apache.spark.sql.delta.{DeltaLog, DeltaLogFileIndex, OptimisticTransaction}
-import org.apache.spark.sql.delta.actions.SingleAction
+import org.apache.spark.sql.delta.{
+  DeltaLog,
+  DeltaLogFileIndex,
+  DeltaOperations,
+  OptimisticTransaction
+}
+import org.apache.spark.sql.delta.constraints.Invariants
+import org.apache.spark.sql.delta.actions.{Action, Metadata, SingleAction}
+import org.apache.gravitino.rel.Column
+import org.apache.gravitino.spark.connector.SparkTypeConverter
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 
 class TestDeltaRangerNativeGovernedAppend {
+  @Test
+  def namedInsertIntoAtomicallyEvolvesMaskedSource(): Unit = successfulAppend(
+    evolution = true,
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "evolving-insert"),
+    sourceSql = "SELECT id, secret, region, secret AS added, extra FROM b.db.t",
+    expectedAppendedRows = Vector(
+      Row(1L, "b-one-masked", "keep", "b-one-masked", "extra-one"),
+      Row(3L, null, "keep", null, "extra-three")
+    ),
+    testMethod = "namedInsertIntoAtomicallyEvolvesMaskedSource"
+  )
+
+  @Test
+  def namedSaveAsTableAtomicallyEvolvesPartitionedCdfWithExchange(): Unit = successfulAppend(
+    evolution = true,
+    frontend = "saveAsTable",
+    adaptive = true,
+    partitionedTarget = true,
+    cdfTarget = Some(true),
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "evolving-cdf"),
+    sourceSql =
+      "SELECT l.id, l.secret, l.region, l.secret AS added, l.extra FROM b.db.t l JOIN b.db.t r ON l.id = r.id",
+    expectedAppendedRows = Vector(
+      Row(1L, "b-one-masked", "keep", "b-one-masked", "extra-one"),
+      Row(3L, null, "keep", null, "extra-three")
+    ),
+    testMethod = "namedSaveAsTableAtomicallyEvolvesPartitionedCdfWithExchange"
+  )
+
+  private val evolvingSql = "SELECT id, secret, region, secret AS added, extra FROM b.db.t"
+  private val evolvingRows = Vector(
+    Row(1L, "b-one-masked", "keep", "b-one-masked", "extra-one"),
+    Row(3L, null, "keep", null, "extra-three")
+  )
+
+  @Test
+  def sessionEnabledEvolutionPreservesNativeWriterMetadata(): Unit = successfulAppend(
+    evolution = true,
+    sessionAutoMerge = true,
+    writerOptions = Map("userMetadata" -> "session-evolution"),
+    sourceSql = evolvingSql,
+    expectedAppendedRows = evolvingRows,
+    testMethod = "sessionEnabledEvolutionPreservesNativeWriterMetadata"
+  )
+
+  @Test
+  def evolvingSourceRevocationAfterHelperRetainsOrphans(): Unit = successfulAppend(
+    evolution = true,
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "source-revoked"),
+    sourceSql = evolvingSql,
+    expectedAppendedRows = evolvingRows,
+    revokeAfterHelper = true,
+    failureCheck = Some(error => {
+      assertReason(error, "denied"); assertOutcome(error, "not committed")
+    }),
+    testMethod = "evolvingSourceRevocationAfterHelperRetainsOrphans"
+  )
+
+  @Test
+  def evolvingAlterRevocationAfterHelperRetainsOrphans(): Unit = successfulAppend(
+    evolution = true,
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "alter-revoked"),
+    sourceSql = evolvingSql,
+    expectedAppendedRows = evolvingRows,
+    revokeAlterAfterHelper = true,
+    failureCheck = Some(error => {
+      assertReason(error, "denied"); assertOutcome(error, "not committed")
+    }),
+    testMethod = "evolvingAlterRevocationAfterHelperRetainsOrphans"
+  )
+
+  @Test
+  def evolvingNativeInvariantFailurePreservesOriginalCause(): Unit =
+    violatedAppend(evolution = true)
+
+  @Test
+  def cdfReservedAdditionIsInvokedUnconfirmedAndRetainsOrphans(): Unit = successfulAppend(
+    evolution = true,
+    reservedAddition = true,
+    cdfTarget = Some(true),
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "reserved-cdf"),
+    sourceSql = evolvingSql.replace(" AS added", " AS _commit_version"),
+    expectedAppendedRows = evolvingRows,
+    failureCheck = Some(error => {
+      assertOutcome(error, "unknown"); assertReason(error, "_commit_version")
+    }),
+    testMethod = "cdfReservedAdditionIsInvokedUnconfirmedAndRetainsOrphans"
+  )
+
+  @Test
+  def provedEvolutionSurvivesFailedNamedObservation(): Unit = {
+    val failure = new IllegalStateException("named evolution observation unavailable")
+    successfulAppend(
+      evolution = true,
+      writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "observation-failed"),
+      sourceSql = evolvingSql,
+      expectedAppendedRows = evolvingRows,
+      failObservation = Some(failure),
+      failureCheck = Some(error => {
+        val result = assertOutcome(error, "committed")
+        assertReason(error, "Published registration metadata is unavailable")
+        assertTrue(result.evidence.nonEmpty)
+        assertEquals(32, result.evidence.get.digest.size)
+        assertEquals(result.evidence.get.readVersion + 1, result.evidence.get.version)
+      }),
+      testMethod = "provedEvolutionSurvivesFailedNamedObservation"
+    )
+  }
+
+  @Test
+  def ordinaryAqeOffEvolutionRejectsTargetCacheHistory(): Unit =
+    evolutionCache(adaptive = false, cdf = false)
+
+  @Test
+  def ordinaryAqeOnEvolutionRejectsTargetCacheHistory(): Unit =
+    evolutionCache(adaptive = true, cdf = false)
+
+  @Test
+  def cdfEvolutionRejectsTargetCacheHistory(): Unit = evolutionCache(adaptive = false, cdf = true)
+
+  private def evolutionCache(adaptive: Boolean, cdf: Boolean): Unit = successfulAppend(
+    evolution = true,
+    adaptive = adaptive,
+    cdfTarget = if (cdf) Some(true) else None,
+    warmCache = true,
+    cacheRejected = true,
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "cache-excluded"),
+    sourceSql = evolvingSql,
+    expectedAppendedRows = evolvingRows,
+    failureCheck = Some(error => assertReason(error, "target cache")),
+    testMethod =
+      if (cdf) "cdfEvolutionRejectsTargetCacheHistory"
+      else if (adaptive) "ordinaryAqeOnEvolutionRejectsTargetCacheHistory"
+      else "ordinaryAqeOffEvolutionRejectsTargetCacheHistory"
+  )
+
+  @Test
+  def provedEvolutionPreservesObservationErrorCause(): Unit = {
+    val primary = new AssertionError("named observation error")
+    successfulAppend(
+      evolution = true,
+      writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "observation-error"),
+      sourceSql = evolvingSql,
+      expectedAppendedRows = evolvingRows,
+      failObservation = Some(primary),
+      failureCheck = Some(error => {
+        assertOutcome(error, "committed")
+        assertTrue(
+          Iterator.iterate[Throwable](error)(_.getCause).takeWhile(_ != null).exists(_ eq primary)
+        )
+      }),
+      testMethod = "provedEvolutionPreservesObservationErrorCause"
+    )
+  }
+
+  @Test
+  def provedEvolutionSurvivesOuterSparkRefreshFailure(): Unit = {
+    val primary = new IllegalStateException("outer Spark refresh unavailable")
+    var invoked = 0
+    successfulAppend(
+      evolution = true,
+      writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "outer-refresh"),
+      sourceSql = evolvingSql,
+      expectedAppendedRows = evolvingRows,
+      inspect = (_, spark) => {
+        val id = spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY).toLong
+        val qe = SQLExecution.getQueryExecution(id)
+        val guard = qe.executedPlan.collectFirst { case value: DeltaRangerAppendInputExec =>
+          value
+        }.get
+        val refresh = guard.delegate.getClass.getDeclaredField("refreshCache")
+        refresh.setAccessible(true)
+        refresh.set(guard.delegate, () => { invoked += 1; throw primary })
+      },
+      failureCheck = Some(error => {
+        val outcome = assertOutcome(error, "committed")
+        assertEquals(1, invoked)
+        assertTrue(outcome.evidence.nonEmpty)
+        assertTrue(
+          Iterator.iterate[Throwable](error)(_.getCause).takeWhile(_ != null).exists(_ eq primary)
+        )
+        assertTrue(DeltaRangerAppendCommit.current.isEmpty)
+        assertTrue(OptimisticTransaction.getActive.isEmpty)
+        assertNull(DeltaRangerNativeOperation.current())
+      }),
+      testMethod = "provedEvolutionSurvivesOuterSparkRefreshFailure"
+    )
+    assertEquals(1, invoked)
+  }
+
+  @Test
+  def evolvingSourceOnlyCacheRetainsAdmission(): Unit = successfulAppend(
+    evolution = true,
+    sourceOnlyCache = true,
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "source-cache"),
+    sourceSql = evolvingSql,
+    expectedAppendedRows = evolvingRows,
+    testMethod = "evolvingSourceOnlyCacheRetainsAdmission"
+  )
+
+  @Test
+  def evolvingCheckpointUsesExactCandidateMetadata(): Unit = successfulAppend(
+    evolution = true,
+    seedCommits = 9,
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "evolving-checkpoint"),
+    sourceSql = evolvingSql,
+    expectedAppendedRows = evolvingRows,
+    testMethod = "evolvingCheckpointUsesExactCandidateMetadata"
+  )
+
+  @Test
+  def evolvingPublicationRejectsForeignMetadataActionsAndIdentity(): Unit = successfulAppend(
+    evolution = true,
+    writerOptions = Map("mergeSchema" -> "true", "userMetadata" -> "exact-proof"),
+    sourceSql = evolvingSql,
+    expectedAppendedRows = evolvingRows,
+    inspect = (commit, _) => {
+      val transaction = field[OptimisticTransaction](commit, "transaction")
+      val path = Paths
+        .get(transaction.deltaLog.logPath.toUri)
+        .resolve(f"${transaction.readVersion + 1}%020d.json")
+      val mapper = new ObjectMapper
+      val actions = Files.readAllLines(path).asScala.map(mapper.readTree).toVector
+      val intent = field[AnyRef](commit, "intent")
+      val verify = intent.getClass.getDeclaredMethod("verify", classOf[Array[Byte]])
+      verify.setAccessible(true)
+      def bytes(values: Vector[JsonNode]): Array[Byte] =
+        (values.mkString("\n") + "\n").getBytes(StandardCharsets.UTF_8)
+      verify.invoke(intent, bytes(actions))
+      val changedMetadata = actions(1).deepCopy[ObjectNode]()
+      changedMetadata
+        .get("metaData")
+        .asInstanceOf[ObjectNode]
+        .put("description", "foreign metadata")
+      val changedIdentity = actions.head.deepCopy[ObjectNode]()
+      changedIdentity.get("commitInfo").asInstanceOf[ObjectNode].put("txnId", "foreign transaction")
+      val changedTags = actions.head.deepCopy[ObjectNode]()
+      changedTags.get("commitInfo").asInstanceOf[ObjectNode].putObject("tags").put("foreign", "tag")
+      val changedAdd = actions.last.deepCopy[ObjectNode]()
+      changedAdd.get("add").asInstanceOf[ObjectNode].put("path", "foreign.parquet")
+      Vector(
+        actions.patch(1, Nil, 1),
+        actions :+ actions(1),
+        actions.updated(1, changedMetadata),
+        actions.updated(0, changedIdentity),
+        actions.updated(0, changedTags),
+        actions.updated(actions.size - 1, changedAdd),
+        actions.patch(1, Seq(mapper.readTree(transaction.protocol.json)), 0),
+        Vector(actions.head) ++ actions.drop(2) ++ Vector(actions(1))
+      ).foreach { forged =>
+        val failure = assertThrows(
+          classOf[InvocationTargetException],
+          () => verify.invoke(intent, bytes(forged))
+        )
+        assertTrue(failure.getCause.isInstanceOf[SecurityException])
+      }
+      verify.invoke(intent, bytes(actions))
+    },
+    testMethod = "evolvingPublicationRejectsForeignMetadataActionsAndIdentity"
+  )
+
+  private def assertOutcome(error: Throwable, status: String): DeltaRangerAppendCommit.Outcome = {
+    val failure = Iterator
+      .iterate[Throwable](error)(_.getCause)
+      .takeWhile(_ != null)
+      .collectFirst { case value: DeltaRangerAppendCommit.Failure => value }
+      .get
+    assertEquals(status, failure.outcome.status)
+    failure.outcome
+  }
+
   @Test
   def nativeCheckViolationRetainsItsExceptionBeforeCommit(): Unit = violatedAppend()
 
@@ -205,6 +486,7 @@ class TestDeltaRangerNativeGovernedAppend {
       frontend: String = "insertInto",
       nullDefault: Boolean = true,
       adaptive: Boolean = false,
+      evolution: Boolean = false,
       afterFailure: SparkSession => Unit = _ => (),
       executingOnly: Boolean = false,
       executingPhase: String = "analysis",
@@ -262,7 +544,14 @@ class TestDeltaRangerNativeGovernedAppend {
           val failure = assertThrows(
             classOf[Exception],
             () => {
-              val writer = spark.sql("SELECT id, secret, region FROM b.db.t").write.mode("append")
+              val writer = spark
+                .sql(
+                  if (evolution) "SELECT id, secret, region, secret AS added FROM b.db.t"
+                  else "SELECT id, secret, region FROM b.db.t"
+                )
+                .write
+                .mode("append")
+                .option("mergeSchema", evolution.toString)
               frontend match {
                 case "insertInto"  => writer.insertInto("a.db.t")
                 case "saveAsTable" => writer.saveAsTable("a.db.t")
@@ -338,14 +627,37 @@ class TestDeltaRangerNativeGovernedAppend {
           "spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false",
           SQLConf.USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES.key -> nullDefault.toString
         ),
-        native =>
-          native
-            .sql(
-              "ALTER TABLE delta.`" + NativeSelectFixture.locations(
-                "a"
-              ) + "` ADD CONSTRAINT native_secret CHECK (secret IS NULL OR secret NOT LIKE '%-masked')"
-            )
-            .collect()
+        native => {
+          if (evolution) {
+            val log = DeltaLog.forTable(native, NativeSelectFixture.locations("a"))
+            log.withNewTransaction(None) { txn =>
+              val schema = StructType(txn.metadata.schema.fields.map { field =>
+                if (field.name == "secret")
+                  field.copy(metadata =
+                    new MetadataBuilder()
+                      .withMetadata(field.metadata)
+                      .putString(
+                        Invariants.INVARIANTS_FIELD,
+                        Invariants
+                          .PersistedExpression("secret IS NULL OR secret NOT LIKE '%-masked'")
+                          .json
+                      )
+                      .build()
+                  )
+                else field
+              })
+              txn.updateMetadata(txn.metadata.copy(schemaString = schema.json))
+              txn.commit(Nil, DeltaOperations.SetTableProperties(Map.empty))
+            }
+          } else
+            native
+              .sql(
+                "ALTER TABLE delta.`" + NativeSelectFixture.locations(
+                  "a"
+                ) + "` ADD CONSTRAINT native_secret CHECK (secret IS NULL OR secret NOT LIKE '%-masked')"
+              )
+              .collect()
+        }
       )
     finally {
       target.engine.close()
@@ -759,10 +1071,17 @@ class TestDeltaRangerNativeGovernedAppend {
       checkpointStruct: Boolean = true,
       partitionedTarget: Boolean = false,
       cdfTarget: Option[Boolean] = None,
+      evolution: Boolean = false,
+      sessionAutoMerge: Boolean = false,
+      cacheRejected: Boolean = false,
+      reservedAddition: Boolean = false,
+      revokeAlterAfterHelper: Boolean = false,
+      failObservation: Option[Throwable] = None,
       rewriteTarget: Boolean = false,
       checkpointTail: Boolean = false,
       priorCommitVersion: Option[Long] = None,
       warmCache: Boolean = false,
+      sourceOnlyCache: Boolean = false,
       warmProjectFirst: Boolean = false,
       rawMaintenance: Boolean = false,
       repeatCompletedResult: Boolean = false,
@@ -791,7 +1110,8 @@ class TestDeltaRangerNativeGovernedAppend {
       Some(path)
     } else None
     val failBeforeCommit =
-      revokeAfterHelper || revokeTargetAfterHelper || invalidateSourceRegistrationAfterHelper
+      revokeAfterHelper || revokeTargetAfterHelper || invalidateSourceRegistrationAfterHelper || revokeAlterAfterHelper
+    val unpublished = failBeforeCommit || cacheRejected || reservedAddition
     val target = new TestDeltaRangerNativeSelect.Fixture
     if (restrictiveTargetReads) {
       target.filter = "id < 0"
@@ -809,6 +1129,7 @@ class TestDeltaRangerNativeGovernedAppend {
     var beforeVersion = -1L
     var beforeMetadata = ""
     var beforeProtocol = ""
+    var expectedMetadata = ""
     val trace = InstalledAppendBoundaryProbe.fresh(
       if (warmCache || failureCheck.nonEmpty) "native-governed-failure"
       else "native-governed-success"
@@ -902,6 +1223,37 @@ class TestDeltaRangerNativeGovernedAppend {
           } else Vector.empty[DataFrame]
           val warmEntries =
             warmFrames.map(frame => spark.sharedState.cacheManager.lookupCachedData(frame).get)
+          if (sourceOnlyCache) {
+            val extensions = new SparkSessionExtensions
+            new DeltaSparkSessionExtension().apply(extensions)
+            val constructor =
+              classOf[SparkSession].getDeclaredConstructors.find(_.getParameterCount == 5).get
+            constructor.setAccessible(true)
+            val raw = constructor
+              .newInstance(
+                spark.sparkContext,
+                Some(spark.sharedState),
+                None,
+                extensions,
+                Map.empty[String, String]
+              )
+              .asInstanceOf[SparkSession]
+            SparkSession.setActiveSession(raw)
+            try {
+              val cached = raw.read
+                .format("delta")
+                .load(NativeSelectFixture.locations("b"))
+                .select("id")
+                .cache()
+              assertEquals(3, cached.collect().length)
+              assertTrue(spark.sharedState.cacheManager.lookupCachedData(cached).nonEmpty)
+            } finally SparkSession.setActiveSession(spark)
+          }
+          val oldTargetRead =
+            if (evolution && !cacheRejected)
+              Some(spark.sql("SELECT id, secret, region FROM a.db.t"))
+            else None
+          oldTargetRead.foreach(_.queryExecution.normalized)
           val input = spark.sql(
             sourceSql + (if (emptySource) " WHERE false" else "")
           )
@@ -935,7 +1287,34 @@ class TestDeltaRangerNativeGovernedAppend {
           val commits = new java.util.IdentityHashMap[DeltaRangerAppendCommit, java.lang.Boolean]()
           val nativeQueries = new java.util.IdentityHashMap[QueryExecution, java.lang.Boolean]()
           val payloadQueries = new java.util.IdentityHashMap[QueryExecution, java.lang.Boolean]()
+          val nextCommit = Paths.get(
+            NativeSelectFixture.locations("a"),
+            "_delta_log",
+            f"${beforeVersion + 1}%020d.json"
+          )
           registration.onRead = _ => {
+            if (evolution && Files.exists(nextCommit)) {
+              failObservation.foreach(throw _)
+              val published = Files
+                .readAllLines(nextCommit)
+                .asScala
+                .map(Action.fromJson)
+                .collectFirst { case metadata: Metadata => metadata }
+                .get
+              registration.properties
+                .put("delta.registration.receipt.nativeVersion", (beforeVersion + 1).toString)
+              val converter = new SparkTypeConverter
+              registration.columns = published.schema.fields.map(f =>
+                Column.of(
+                  f.name,
+                  converter.toGravitinoType(f.dataType),
+                  null,
+                  f.nullable,
+                  false,
+                  Column.DEFAULT_VALUE_NOT_SET
+                )
+              )
+            }
             val helper =
               field[ThreadLocal[DeltaRangerAppendHelper]](DeltaRangerAppendHelper, "active").get()
             helperObserved ||= helper != null
@@ -956,6 +1335,10 @@ class TestDeltaRangerNativeGovernedAppend {
             ) {
               revoked = true
               if (invalidateSourceRegistrationAfterHelper) sourceRegistration.properties.clear()
+              else if (revokeAlterAfterHelper) target.onRequest = request => {
+                if (request.getAccessType == "alter") target.denied.add("a:*")
+                else target.denied.remove("a:*")
+              }
               else if (revokeTargetAfterHelper) target.denied.add("a:*")
               else source.denied.add("b:secret")
               trace.record(
@@ -1085,7 +1468,8 @@ class TestDeltaRangerNativeGovernedAppend {
               if (
                 !inspected && field[
                   scala.collection.mutable.ArrayBuffer[(LogicalRDD, Vector[Any], QueryExecution)]
-                ](commit.metadata, "caches").nonEmpty
+                ](commit.metadata, "caches").nonEmpty || (evolution && !inspected && Files
+                  .exists(nextCommit))
               ) {
                 inspected = true
                 inspect(commit, spark)
@@ -1105,8 +1489,10 @@ class TestDeltaRangerNativeGovernedAppend {
           val listener = new QueryExecutionListener {
             override def onSuccess(name: String, qe: QueryExecution, duration: Long): Unit =
               if (qe.analyzed.isInstanceOf[AppendData]) completed.add(qe)
-            override def onFailure(name: String, qe: QueryExecution, error: Exception): Unit = ()
+            override def onFailure(name: String, qe: QueryExecution, error: Exception): Unit =
+              if (qe.analyzed.isInstanceOf[AppendData]) completed.add(qe)
           }
+          val verifyFailedReplay = evolution && failureCheck.nonEmpty
           val jobs = new AtomicInteger()
           val jobListener = new SparkListener {
             override def onJobStart(event: SparkListenerJobStart): Unit = {
@@ -1120,7 +1506,7 @@ class TestDeltaRangerNativeGovernedAppend {
               .getMethod("waitUntilEmpty", java.lang.Long.TYPE)
               .invoke(bus, Long.box(10000L))
           }
-          if (repeatCompletedResult) {
+          if (repeatCompletedResult || verifyFailedReplay) {
             spark.listenerManager.register(listener)
             spark.sparkContext.addSparkListener(jobListener)
           }
@@ -1157,7 +1543,7 @@ class TestDeltaRangerNativeGovernedAppend {
                 )
               )
               failureCheck.foreach(_(failure))
-              if (warmCache) {
+              if (warmCache && !cacheRejected) {
                 assertTrue(causes.exists(_.isInstanceOf[SecurityException]))
                 assertTrue(
                   causes.exists(_.getStackTrace.exists(_.getClassName.contains("CacheManager")))
@@ -1206,6 +1592,34 @@ class TestDeltaRangerNativeGovernedAppend {
                   )
                 ),
                 "actual native payload must finish an adaptive shuffle"
+              )
+            }
+            if (verifyFailedReplay) {
+              val qe = completed.poll(10, TimeUnit.SECONDS)
+              assertNotNull(qe)
+              val issued = qe.executedPlan.collectFirst { case guard: DeltaRangerAppendInputExec =>
+                guard
+              }.get
+              drainSparkEvents()
+              val jobsBefore = jobs.get()
+              val callbacksBefore = helperValidationCallbacks
+              val replayBefore = InstalledAppendBoundaryProbe
+                .manifest(root, trace.directory.resolve("before-failed-replay"))
+              assertReason(
+                assertThrows(classOf[SecurityException], () => issued.run()),
+                "expired execution owner"
+              )
+              drainSparkEvents()
+              assertEquals(jobsBefore, jobs.get())
+              assertEquals(callbacksBefore, helperValidationCallbacks)
+              assertEquals(
+                replayBefore,
+                InstalledAppendBoundaryProbe
+                  .manifest(root, trace.directory.resolve("after-failed-replay"))
+              )
+              trace.record(
+                "failed-command-no-replay",
+                s"jobs=$jobsBefore helperCallbacks=$callbacksBefore filesUnchanged=true"
               )
             }
             if (repeatCompletedResult) {
@@ -1262,7 +1676,7 @@ class TestDeltaRangerNativeGovernedAppend {
               )
             }
           } finally {
-            if (repeatCompletedResult) {
+            if (repeatCompletedResult || verifyFailedReplay) {
               spark.listenerManager.unregister(listener)
               spark.sparkContext.removeSparkListener(jobListener)
             }
@@ -1276,15 +1690,18 @@ class TestDeltaRangerNativeGovernedAppend {
           sourceRegistration.properties.clear()
           sourceRegistration.properties.putAll(sourceRegistrationBefore)
           source.denied.clear()
-          assertTrue(helperObserved)
-          assertEquals(!failBeforeCommit, commitObserved)
-          assertEquals(!failBeforeCommit && !emptySource, inspected)
-          assertEquals(1, helpers.size())
-          assertEquals(if (failBeforeCommit) 0 else 1, commits.size())
+          target.onRequest = _ => ()
+          target.denied.clear()
+          assertEquals(!cacheRejected, helperObserved)
+          assertEquals(!failBeforeCommit && !cacheRejected, commitObserved)
+          assertEquals(!unpublished && !emptySource && failObservation.isEmpty, inspected)
+          assertEquals(if (cacheRejected) 0 else 1, helpers.size())
+          assertEquals(if (failBeforeCommit || cacheRejected) 0 else 1, commits.size())
           val generatedUncommitted =
-            if (failBeforeCommit || emptySource) dataFiles().diff(originalDataFiles)
+            if (failBeforeCommit || reservedAddition || emptySource)
+              dataFiles().diff(originalDataFiles)
             else Set.empty[String]
-          if (failBeforeCommit || emptySource) {
+          if (failBeforeCommit || reservedAddition || emptySource) {
             if (failBeforeCommit) assertTrue(revoked)
             val generated = generatedUncommitted
             assertTrue(generated.nonEmpty)
@@ -1336,7 +1753,7 @@ class TestDeltaRangerNativeGovernedAppend {
           }
           val confAfter = spark.sessionState.conf.getAllConfs
           val expectedConf =
-            if (failBeforeCommit || emptySource) confBefore
+            if (unpublished || emptySource) confBefore
             else
               confBefore + ("spark.databricks.delta.lastCommitVersionInSession" -> (beforeVersion + 1).toString)
           assertEquals(expectedConf, confAfter)
@@ -1382,7 +1799,15 @@ class TestDeltaRangerNativeGovernedAppend {
             json.writeValueAsString(outcome.asJava).getBytes(StandardCharsets.UTF_8)
           )
           trace.record("registration-after", json.writeValueAsString(registration.properties))
-          assertEquals(registrationBefore, json.writeValueAsString(registration.properties))
+          val expectedRegistration = json.readTree(registrationBefore)
+          if (evolution && !unpublished && failObservation.isEmpty)
+            expectedRegistration
+              .asInstanceOf[ObjectNode]
+              .put("delta.registration.receipt.nativeVersion", (beforeVersion + 1).toString)
+          assertEquals(
+            expectedRegistration,
+            json.readTree(json.writeValueAsString(registration.properties))
+          )
           assertTrue(OptimisticTransaction.getActive.isEmpty)
           assertNull(DeltaRangerNativeOperation.current())
           if (rawMaintenance) {
@@ -1424,6 +1849,36 @@ class TestDeltaRangerNativeGovernedAppend {
               )
             } finally SparkSession.setActiveSession(spark)
           }
+          if (evolution && !unpublished && failure == null) {
+            oldTargetRead.foreach(old => assertThrows(classOf[Exception], () => old.collect()))
+            val fresh = spark.sql("SELECT id, added, extra FROM a.db.t")
+            assertEquals(Vector("id", "added", "extra"), fresh.schema.fieldNames.toVector)
+            assertEquals(
+              (Vector.fill(bootstrapRows)(Row(-1L, null, null)) ++ Vector(
+                Row(1L, null, null),
+                Row(3L, null, null),
+                Row(1L, "b-one-masked", "extra-one"),
+                Row(3L, null, "extra-three")
+              )).groupBy(identity).map { case (row, rows) => row -> rows.size },
+              fresh.collect().toVector.groupBy(identity).map { case (row, rows) =>
+                row -> rows.size
+              }
+            )
+            trace.record("fresh-named-schema", fresh.schema.json)
+            if (cdfTarget.contains(true)) {
+              val changes = spark.sql(
+                s"SELECT id, added, extra, _change_type FROM table_changes('a.db.t', ${beforeVersion + 1}, ${beforeVersion + 1})"
+              )
+              assertEquals(
+                Set(
+                  Row(1L, "b-one-masked", "extra-one", "insert"),
+                  Row(3L, null, "extra-three", "insert")
+                ),
+                changes.collect().toSet
+              )
+              trace.record("fresh-named-cdf-schema", changes.schema.json)
+            }
+          }
           val conf = spark.sparkContext.getConf
           spark.stop()
           SparkSession.clearActiveSession()
@@ -1442,7 +1897,7 @@ class TestDeltaRangerNativeGovernedAppend {
               s"beforeVersion=$beforeVersion afterVersion=${snapshot.version} metadata=${snapshot.metadata.json} protocol=${snapshot.protocol.json}"
             )
             snapshot.allFiles.collect().foreach(f => trace.record("native-add-file", f.json))
-            if (failBeforeCommit || emptySource) {
+            if (failBeforeCommit || reservedAddition || emptySource) {
               val orphanRows = generatedUncommitted.toVector.sorted.flatMap { path =>
                 val rows =
                   native.read.parquet(Paths.get(location, path).toString).collect().toVector
@@ -1464,10 +1919,10 @@ class TestDeltaRangerNativeGovernedAppend {
               )
             }
             assertEquals(
-              beforeVersion + (if (failBeforeCommit || emptySource) 0 else 1),
+              beforeVersion + (if (unpublished || emptySource) 0 else 1),
               snapshot.version
             )
-            if (writerOptions.nonEmpty && !failBeforeCommit && !emptySource) {
+            if (writerOptions.nonEmpty && !unpublished && !emptySource) {
               val commitPath = Paths.get(location, "_delta_log", f"${snapshot.version}%020d.json")
               val lines = Files.readAllLines(commitPath).asScala.map(json.readTree)
               val info = lines.find(_.has("commitInfo")).get.get("commitInfo")
@@ -1477,7 +1932,22 @@ class TestDeltaRangerNativeGovernedAppend {
               trace.record("writer-options-json", json.writeValueAsString(writerOptions.asJava))
               trace.record("native-commit-info-json", info.toString)
             }
-            assertEquals(beforeMetadata, snapshot.metadata.json)
+            assertEquals(
+              if (evolution && !unpublished) expectedMetadata else beforeMetadata,
+              snapshot.metadata.json
+            )
+            if (evolution && !unpublished) {
+              val actions = Files
+                .readAllLines(Paths.get(location, "_delta_log", f"${snapshot.version}%020d.json"))
+                .asScala
+                .map(json.readTree)
+                .toVector
+              assertEquals("commitInfo", actions.head.fieldNames().next())
+              assertEquals("metaData", actions(1).fieldNames().next())
+              assertEquals(1, actions.count(_.has("metaData")))
+              assertTrue(actions.drop(2).forall(n => n.has("add") || n.has("txn")))
+              trace.record("evolution-actions-json", actions.mkString("\n"))
+            }
             assertEquals(beforeProtocol, snapshot.protocol.json)
             trace.record(
               "native-checkpoint-provider-version",
@@ -1652,11 +2122,14 @@ class TestDeltaRangerNativeGovernedAppend {
               json.writeValueAsString(actualRows.map(_.toSeq.asJava).asJava)
             )
             assertEquals(
-              (Vector.fill(bootstrapRows)(Row(-1L, "bootstrap", "keep")) ++ Vector(
+              ((Vector.fill(bootstrapRows)(Row(-1L, "bootstrap", "keep")) ++ Vector(
                 Row(1L, "a-one", "keep"),
                 Row(2L, "a-two", "drop"),
                 Row(3L, null, "keep")
-              ) ++ (if (failBeforeCommit || emptySource) Vector.empty
+              )).map(row =>
+                if (evolution && !unpublished) Row.fromSeq(row.toSeq ++ Seq(null, null))
+                else row
+              ) ++ (if (unpublished || emptySource) Vector.empty
                     else expectedAppendedRows))
                 .groupBy(identity)
                 .map { case (k, v) => k -> v.size },
@@ -1681,6 +2154,7 @@ class TestDeltaRangerNativeGovernedAppend {
         Some(NativeSelectFixture.extension(target)),
         Map(
           "spark.sql.adaptive.enabled" -> adaptive.toString,
+          "spark.databricks.delta.schema.autoMerge.enabled" -> sessionAutoMerge.toString,
           "spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false",
           SQLConf.USE_NULLS_FOR_MISSING_DEFAULT_COLUMN_VALUES.key -> nullDefault.toString
         ) ++ (if (adaptiveBroadcast)
@@ -1694,6 +2168,17 @@ class TestDeltaRangerNativeGovernedAppend {
           "spark.databricks.delta.checkpoint.partSize" -> size.toString
         ),
         native => {
+          if (evolution) {
+            native
+              .sql(
+                "SELECT 1L id, 'b-one' secret, 'keep' region, 'extra-one' extra UNION ALL SELECT 2L, 'b-two', 'drop', 'extra-two' UNION ALL SELECT 3L, CAST(NULL AS STRING), 'keep', 'extra-three'"
+              )
+              .write
+              .format("delta")
+              .mode("overwrite")
+              .option("overwriteSchema", "true")
+              .save(NativeSelectFixture.locations("b"))
+          }
           if (checkConstraint)
             native
               .sql(
@@ -1754,6 +2239,22 @@ class TestDeltaRangerNativeGovernedAppend {
           val snapshot = DeltaLog.forTable(native, NativeSelectFixture.locations("a")).update()
           beforeVersion = snapshot.version
           beforeMetadata = snapshot.metadata.json
+          if (evolution) {
+            expectedMetadata = snapshot.metadata
+              .copy(schemaString =
+                StructType(
+                  snapshot.metadata.schema.fields ++ Array(
+                    StructField(
+                      if (reservedAddition) "_commit_version" else "added",
+                      StringType,
+                      true
+                    ),
+                    StructField("extra", StringType, true)
+                  )
+                ).json
+              )
+              .json
+          }
           beforeProtocol = snapshot.protocol.json
           trace.record(
             "native-state-before",

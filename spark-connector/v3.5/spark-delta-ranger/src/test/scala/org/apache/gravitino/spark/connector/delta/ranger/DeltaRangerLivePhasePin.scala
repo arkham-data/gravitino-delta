@@ -103,14 +103,21 @@ private[ranger] object DeltaRangerLivePhasePin {
   def postReturnLine(disassembly: String): Int = {
     val methods = disassembly
       .split("\n  (?=public |private |protected )")
-      .filter(_.startsWith("public void inTransaction("))
+      .filter(line =>
+        line.startsWith("public void inTransaction(") || line.startsWith(
+          "public " + prefix + "DeltaRangerAppendCommit$Outcome inTransaction("
+        )
+      )
     // javap may place the first method at the beginning of a supplied unit fixture.
     val candidates =
       if (methods.nonEmpty) methods
       else
         disassembly.trim
           .split("\n  (?=public |private |protected )")
-          .filter(_.startsWith("public void inTransaction("))
+          .filter(line =>
+            line.startsWith("public void inTransaction(") || line
+              .startsWith("public " + prefix + "DeltaRangerAppendCommit$Outcome inTransaction(")
+          )
     require(candidates.length == 1, "Missing unique coordinator method")
     val body = candidates.head
     val code = "(?m)^[ \t]*(\\d+):[ \t]+(\\w+)[ \t]*(.*)$".r
