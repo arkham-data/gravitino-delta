@@ -84,6 +84,8 @@ private[ranger] final class DeltaRangerMergeJournal private (
   def prepare(proof: String, version: Long): Unit = {
     if (retained.nonEmpty || Files.exists(file, LinkOption.NOFOLLOW_LINKS))
       rejected("attempt already recorded")
+    if (evolution.isEmpty && mapper.readTree(proof).has("expectedMetadata"))
+      rejected("fixed-schema proof cannot publish metadata")
     evolution.foreach(_.requireProofBinding(proof, version))
     save(
       Entry(Intent(command, proof, version), Prepared, None, evolution = evolution),
@@ -92,17 +94,25 @@ private[ranger] final class DeltaRangerMergeJournal private (
   }
 
   def committed(bytes: Array[Byte]): Unit = {
+    val digest = verifiedDigest(bytes)
+    val entry = retained.get
+    if (entry.state == Prepared) save(entry.copy(state = Committed, digest = Some(digest)))
+  }
+
+  /** Detached exact-publication evidence; validation does not acknowledge or authorize execution.
+    */
+  def verifiedDigest(bytes: Array[Byte]): String = {
     val entry = retained.getOrElse(rejected("missing prepared intent"))
     if (entry.state == Unknown) rejected("unknown publication")
+    if (entry.evolution.isEmpty && mapper.readTree(entry.proof).has("expectedMetadata"))
+      rejected("fixed-schema proof cannot publish metadata")
     entry.evolution.foreach { value =>
       value.requireProofBinding(entry.proof, entry.version)
-      // Task 3 must extend the existing native verifier before evolving evidence can advance.
-      rejected("evolving native publication verification is not installed")
     }
     DeltaRangerMergeCommit.verifyPublication(bytes, entry.proof)
     val digest = hash(bytes)
     if (entry.digest.exists(_ != digest)) rejected("publication digest changed")
-    if (entry.state == Prepared) save(entry.copy(state = Committed, digest = Some(digest)))
+    digest
   }
 
   def reconciled(): Unit = {

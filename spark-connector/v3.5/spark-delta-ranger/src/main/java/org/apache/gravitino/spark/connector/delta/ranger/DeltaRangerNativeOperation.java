@@ -414,6 +414,15 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     }
   }
 
+  // Detached exact-cache comparison only; the receiving commit owner still owns all authority.
+  Predicate<LogicalRDD> retainTransactionState() {
+    requireActive();
+    if (transactionOwner == null || transactionCache == null || capturing != null) throw denied();
+    transactionOwner.requireLive();
+    TransactionCache retained = transactionCache;
+    return retained::matches;
+  }
+
   static DeltaRangerNativeOperation scan(
       ScanOwner owner,
       TahoeFileIndex index,

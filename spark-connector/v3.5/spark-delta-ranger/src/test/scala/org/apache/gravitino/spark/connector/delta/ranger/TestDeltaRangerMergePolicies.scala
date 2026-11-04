@@ -590,7 +590,9 @@ class TestDeltaRangerMergePolicies {
       targetCatalog: String = "b",
       filterSchedule: Option[RangerValiditySchedule] = None,
       sourceDeniedSelect: Seq[String] = Nil,
-      sourceFilter: Option[String] = None
+      sourceFilter: Option[String] = None,
+      alter: Boolean = false,
+      alterSchedule: Option[RangerValiditySchedule] = None
   ): Unit = {
     if (useRole) {
       val role = new RangerRole; role.setName("merge-role")
@@ -632,6 +634,13 @@ class TestDeltaRangerMergePolicies {
         if (deny) p.setDenyPolicyItems(Collections.singletonList(item))
         else p.setPolicyItems(Collections.singletonList(item))
       }
+    if (alter) {
+      val p = resource(targetCatalog, 0, Seq("*"))
+      val item = new RangerPolicyItem
+      access(item, "alter")
+      p.setPolicyItems(Collections.singletonList(item))
+      alterSchedule.foreach(s => p.setValiditySchedules(Collections.singletonList(s)))
+    }
     grant("a", "select", Seq("*")); grant("a", "select", sourceDeniedSelect, true)
     grant(targetCatalog, "select", selected);
     grant(targetCatalog, "update", updated)

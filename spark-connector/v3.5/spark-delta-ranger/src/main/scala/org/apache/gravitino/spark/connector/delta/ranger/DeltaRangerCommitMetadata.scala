@@ -66,7 +66,8 @@ private[ranger] final class DeltaRangerCommitMetadata(
     validate: () => Unit,
     publication: () => Option[Vector[Any]],
     expectedMetadata: () => Metadata,
-    expectedProtocol: () => Protocol
+    expectedProtocol: () => Protocol,
+    retainedState: LogicalRDD => Boolean = _ => false
 ) {
   private val structure = new DeltaRangerMetadataStructure("Delta commit metadata rejected: ")
   import structure._
@@ -288,6 +289,7 @@ private[ranger] final class DeltaRangerCommitMetadata(
 
   def contains(candidate: LogicalRDD): Boolean = {
     requireLive()
+    if (retainedState(candidate)) return true
     caches.find(_._1.rdd eq candidate.rdd) match {
       case Some((original, binding, qe)) =>
         verifyCopy(original, qe)

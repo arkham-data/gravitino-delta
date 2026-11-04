@@ -65,7 +65,7 @@ private[ranger] final case class DeltaRangerMergeCommand private (
   override val notMatchedClauses = native.notMatchedClauses
   override val notMatchedBySourceClauses = native.notMatchedBySourceClauses
   override val migratedSchema = native.migratedSchema
-  override val schemaEvolutionEnabled = false
+  override val schemaEvolutionEnabled = native.schemaEvolutionEnabled
   override val output = native.output
   override protected def otherCopyArgs: Seq[AnyRef] = Seq(authority)
   override def clone(): LogicalPlan = this
@@ -79,6 +79,7 @@ private[ranger] final case class DeltaRangerMergeCommand private (
     val owner = receipt
     owner.begin(this)
     try super.run(spark)
+    catch { case failure: Throwable => throw owner.preserveFailure(failure) }
     finally owner.end()
   }
   override protected def getTargetOnlyPredicates(spark: SparkSession): Seq[Expression] = {
@@ -177,31 +178,46 @@ private[ranger] final case class DeltaRangerMergeCommand private (
   override protected def runMerge(spark: SparkSession): Seq[Row] = {
     val owned = receipt
     owned.validate()
-    if (attempt < 1 || isInsertOnly || canMergeSchema || canOverwriteSchema)
+    if (attempt < 1 || isInsertOnly || canOverwriteSchema)
       DeltaRangerMergeCommand.denied("unsupported native branch")
     targetDeltaLog.withNewTransaction(native.catalogTable) { transaction =>
-      owned.requireTransaction(transaction)
+      owned.beginTransaction(this, transaction)
       if (org.apache.spark.sql.delta.RowTracking.isSupported(transaction.protocol))
         DeltaRangerMergeCommand.denied("row tracking is not qualified")
-      if (owned.transactionIdentity.nonEmpty) {
-        val binding = owned.target.mergeTransaction(spark, transaction)
-        val executed =
+      val binding = owned.target.mergeTransaction(spark, transaction)
+      val executed =
+        try {
+          val operation = DeltaRangerNativeOperation.transactionState(binding)
           try {
-            val operation = DeltaRangerNativeOperation.transactionState(binding)
-            try {
-              operation.captureTransactionState()
-              val duplicate = hasBeenExecuted(transaction, spark)
-              owned.requireRetainedTransaction(transaction)
-              operation.succeed()
-              duplicate
-            } finally operation.close()
-          } finally binding.close()
-        if (executed) {
-          owned.recoverPublication()
-          return Nil
+            operation.captureTransactionState()
+            owned.retainBaseState(this, transaction, operation)
+            val duplicate =
+              owned.transactionIdentity.nonEmpty && hasBeenExecuted(transaction, spark)
+            owned.requireRetainedTransaction(transaction)
+            operation.succeed()
+            duplicate
+          } finally operation.close()
+        } finally binding.close()
+      if (executed) {
+        owned.recoverPublication()
+        return Nil
+      }
+      if (owned.transactionIdentity.nonEmpty && owned.journal.existing.nonEmpty)
+        DeltaRangerMergeCommand.denied("unpublished or unknown recorded attempt cannot replay")
+      if (owned.recoveryCandidate.nonEmpty)
+        DeltaRangerMergeCommand.denied("retained evolution requires native duplicate marker")
+      owned.stageMetadata(this, transaction) {
+        if (canMergeSchema) {
+          updateMetadata(
+            spark,
+            transaction,
+            migratedSchema.getOrElse(target.schema),
+            transaction.metadata.partitionColumns,
+            transaction.metadata.configuration,
+            isOverwriteMode = false,
+            rearrangeOnly = false
+          )
         }
-        if (owned.journal.existing.nonEmpty)
-          DeltaRangerMergeCommand.denied("unpublished or unknown recorded attempt cannot replay")
       }
       val sourceAttempt =
         DeltaRangerMergeSource.begin(new DeltaRangerMergeCommand.SourcePermit(this, attempt))
@@ -364,22 +380,41 @@ private[ranger] object DeltaRangerMergeCommand {
           }
         }
       }
+      val source = DeltaRangerCdfRead.pending(merge.sourceTable, spark).get
+      val target = merge.targetTable.collect {
+        case leaf if leaf.children.isEmpty => leaf
+      }
+      // Capture before native star expansion. A legacy operation does not depend on this codec.
+      val authored = scala.util.Try {
+        if (target.size != 1) denied("full named target required")
+        DeltaRangerMergeEvolutionIntent.authored(merge, source.logical, target.head)
+      }.toOption
       resolver(merge) match {
-        case resolved: DeltaMergeInto if resolved.resolved => resolve(resolved, spark, catalogs)
+        case resolved: DeltaMergeInto if resolved.resolved =>
+          Some(preprocess(resolved, spark, catalogs, authored))
         case _ => denied("native SQL resolution did not produce a resolved merge")
       }
     case merge: DeltaMergeInto if merge.resolved =>
-      val receipt = DeltaRangerMergeReceipt.issue(spark, merge, catalogs)
-      val rewritten = receipt.rewrite()
-      val native = PreprocessTableMerge(spark.sessionState.conf)(rewritten) match {
-        case command: MergeIntoCommand => command
-        case _                         => denied("unexpected native preprocessing successor")
-      }
-      Some(receipt.bind(native))
+      Some(preprocess(merge, spark, catalogs, None))
     case _: MergeIntoTable | _: DeltaMergeInto => Some(plan)
     case _: MergeIntoCommand                   => denied("unissued native command")
     case _                                     => None
   }
+  private def preprocess(
+      merge: DeltaMergeInto,
+      spark: SparkSession,
+      catalogs: DeltaRangerReadRule.Scan => DeltaRangerCatalogSpark35,
+      authored: Option[DeltaRangerMergeEvolutionIntent.Authored]
+  ): LogicalPlan = {
+    val receipt = DeltaRangerMergeReceipt.issue(spark, merge, catalogs, authored)
+    val rewritten = receipt.rewrite()
+    val native = PreprocessTableMerge(spark.sessionState.conf)(rewritten) match {
+      case command: MergeIntoCommand => command
+      case _                         => denied("unexpected native preprocessing successor")
+    }
+    receipt.bind(native)
+  }
+
   final case class Exec()(@transient private val authority: DeltaRangerMergeReceipt)
       extends org.apache.spark.sql.execution.datasources.v2.V2CommandExec
       with org.apache.spark.sql.execution.datasources.v2.LeafV2CommandExec {

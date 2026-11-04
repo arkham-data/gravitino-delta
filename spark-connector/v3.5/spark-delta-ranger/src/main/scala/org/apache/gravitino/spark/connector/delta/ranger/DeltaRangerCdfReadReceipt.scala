@@ -33,7 +33,8 @@ import org.apache.kyuubi.plugin.spark.authz.rule.datamasking.RuleApplyDataMaskin
 private[ranger] final class DeltaRangerCdfReadReceipt private (
     source: DeltaRangerCdfRead.Source,
     original: LogicalPlan,
-    spark: SparkSession
+    spark: SparkSession,
+    recoveryOwner: Option[DeltaRangerMergeReceipt]
 ) extends DeltaRangerCollectValidationContext {
   import DeltaRangerCdfRead.denied
   private val analyzed = source.observation(original)
@@ -67,17 +68,20 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
   keys.foreach(engine.authorize(subject, _, instant))
   private val decisions = DeltaRangerMaskRules.capture(scan, columns, engine, subject, instant)
   analyzed.requireDecisions(decisions, keys)
-  private val interval = DeltaRangerCdfHistory.capture(source.binding, source.request, spark)
-  private val scans = new DeltaRangerCdfReadScans(interval, spark)
+  private lazy val interval = {
+    if (recoveryOwner.nonEmpty) denied("recovery source cannot read history")
+    DeltaRangerCdfHistory.capture(source.binding, source.request, spark)
+  }
+  private lazy val scans = new DeltaRangerCdfReadScans(interval, spark)
   private val masked = DeltaRangerMaskRules.rewrite(scan, columns, decisions, spark)
   private val rewritten = RuleEliminateMarker(
     RuleApplyDataMaskingStage1(spark)(original.transformUp {
       case relation: LogicalRelation if relation eq source.logical => masked
     })
   )
-  private val native =
+  private lazy val native =
     DeltaRangerCdfNativeReader.read(interval, scans, spark).queryExecution.analyzed
-  private val payload = Project(
+  private lazy val payload = Project(
     source.logical.output.map { expected =>
       val actual =
         native.output.find(_.name == expected.name).getOrElse(denied("missing native CDF field"))
@@ -86,19 +90,31 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     },
     native
   )
-  private val governed = rewritten.transformUp {
-    case relation: LogicalRelation if relation eq source.logical => payload
+  private val governed =
+    if (recoveryOwner.nonEmpty) rewritten
+    else
+      rewritten.transformUp {
+        case relation: LogicalRelation if relation eq source.logical => payload
+      }
+  def mergeColumns: Set[String] = columns
+  def mergePolicy: LogicalPlan = RuleEliminateMarker(masked) match {
+    case Project(output, child) => Project(output.filter(a => columns(a.name)), child)
+    case other                  => Project(other.output.filter(a => columns(a.name)), other)
   }
   def mergeIntent: String = DeltaRangerMergeJournal.plan(rewritten)
   val carrier: DeltaRangerCdfRead.Carrier = DeltaRangerCdfRead.Carrier(governed.output)(this)
   private var mergeOwner: DeltaRangerMergeReceipt = null
   def bindMerge(owner: DeltaRangerMergeReceipt): Unit = {
-    if (mergeOwner != null || (owner.cdf ne this)) denied("foreign MERGE source binding")
+    if (mergeOwner != null || recoveryOwner.exists(_ ne owner) || (owner.cdf ne this))
+      denied("foreign MERGE source binding")
     owner.requireSource(this)
     mergeOwner = owner
   }
   private val adaptive = spark.sessionState.conf.adaptiveExecutionEnabled
-  private lazy val ownedRecipe = scans.prepare(governed)
+  private lazy val ownedRecipe = {
+    if (recoveryOwner.nonEmpty) denied("recovery source cannot materialize")
+    scans.prepare(governed)
+  }
   private var accepted: DeltaRangerExecutionContext.Context = null
   def requireRecipe(recipe: LogicalPlan): Unit =
     if (recipe ne ownedRecipe) denied("foreign CDF execution recipe")
@@ -122,7 +138,9 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
   private var actionStarted = false
 
   def openMergeExecution(owner: DeltaRangerMergeReceipt): Unit = {
-    if (mergeOwner == null || (mergeOwner ne owner) || mergeExecutionOpen || physical != null)
+    if (
+      recoveryOwner.nonEmpty || mergeOwner == null || (mergeOwner ne owner) || mergeExecutionOpen || physical != null
+    )
       denied("foreign MERGE execution renewal")
     owner.requireSource(this)
     mergeExecutionOpen = true
@@ -156,7 +174,7 @@ private[ranger] final class DeltaRangerCdfReadReceipt private (
     val current = DeltaRangerMaskRules.capture(scan, columns, engine, subject, now)
     if (current.filter != decisions.filter || current.masks != decisions.masks)
       denied("CDF policy changed")
-    scans.validateFiles()
+    if (recoveryOwner.isEmpty) scans.validateFiles()
     before.requireSame(source.binding.validateCurrent(spark))
     requireContext()
   }
@@ -319,7 +337,18 @@ private[ranger] object DeltaRangerCdfReadReceipt {
       original: LogicalPlan,
       spark: SparkSession
   ): DeltaRangerCdfReadReceipt =
-    new DeltaRangerCdfReadReceipt(source, original, spark)
+    new DeltaRangerCdfReadReceipt(source, original, spark, None)
+
+  def recovering(
+      source: DeltaRangerCdfRead.Source,
+      original: LogicalPlan,
+      spark: SparkSession,
+      owner: DeltaRangerMergeReceipt
+  ): DeltaRangerCdfReadReceipt = {
+    if (owner.recoveryCandidate.isEmpty || (owner.source ne source) || (owner.spark ne spark))
+      DeltaRangerCdfRead.denied("missing retained evolution owner")
+    new DeltaRangerCdfReadReceipt(source, original, spark, Some(owner))
+  }
 }
 
 /** Visible physical child remains subject to driver validation on collection and execution. */

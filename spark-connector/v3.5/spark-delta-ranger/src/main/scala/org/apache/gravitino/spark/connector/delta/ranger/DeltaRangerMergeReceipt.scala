@@ -20,6 +20,13 @@
 package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.time.Instant
+import java.util.function.Predicate
+import org.apache.spark.sql.execution.LogicalRDD
+import java.nio.charset.StandardCharsets
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.databind.{DeserializationFeature, ObjectMapper}
+import org.apache.hadoop.fs.Path
+import org.apache.kyuubi.plugin.spark.authz.rule.RuleEliminateMarker
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{
@@ -39,13 +46,11 @@ import org.apache.spark.sql.execution.datasources.LogicalRelation
 private[ranger] final class DeltaRangerMergeReceipt private (
     val spark: SparkSession,
     original: DeltaMergeInto,
-    catalogs: DeltaRangerReadRule.Scan => DeltaRangerCatalogSpark35
+    catalogs: DeltaRangerReadRule.Scan => DeltaRangerCatalogSpark35,
+    authoredCapture: Option[DeltaRangerMergeEvolutionIntent.Authored]
 ) {
   import DeltaRangerMergeCommand.denied
-  if (
-    original.withSchemaEvolution || original.notMatchedBySourceClauses.nonEmpty ||
-    spark.conf.get("spark.databricks.delta.schema.autoMerge.enabled", "false").toBoolean
-  )
+  if (original.notMatchedBySourceClauses.nonEmpty)
     denied("unsupported merge profile")
   val source = DeltaRangerCdfRead
     .pending(original.source, spark)
@@ -84,6 +89,18 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       denied("transaction version auto reset must be false")
     app.map(a => a -> version.get.toLong)
   }
+  val schemaIntent = DeltaRangerMergeSchema.derive(
+    spark,
+    target.index().snapshotAtAnalysis.metadata,
+    target.index().snapshotAtAnalysis.protocol,
+    original.finalSchema,
+    original.withSchemaEvolution
+  )
+  val recoveryCandidate = DeltaRangerMergeJournal
+    .peek(targetCatalog.mergeJournalDirectory(), transactionIdentity)
+    .filter(_.evolution.nonEmpty)
+  private val requiresAlter = schemaIntent.evolves || recoveryCandidate.nonEmpty
+  if (requiresAlter && authoredCapture.isEmpty) denied("missing authored evolution capture")
   private val sourceAnchor = source.binding.anchor()
   if (
     (target.observation().nativeId() == sourceAnchor.observation().nativeId() ||
@@ -109,12 +126,16 @@ private[ranger] final class DeltaRangerMergeReceipt private (
         if (a.targetColNameParts.size != 1) denied("nested assignment")
         a.targetColNameParts.head
       }
-    case _: DeltaMergeIntoMatchedDeleteClause => targetRelation.output.map(_.name)
-    case _                                    => denied("unknown matched clause")
-  }.toSet ++ (if (original.notMatchedClauses.nonEmpty) targetRelation.output.map(_.name).toSet
+    case _: DeltaMergeIntoMatchedDeleteClause =>
+      schemaIntent.expectedMetadata.schema.fieldNames.toSeq
+    case _ => denied("unknown matched clause")
+  }.toSet ++ (if (original.notMatchedClauses.nonEmpty)
+                schemaIntent.expectedMetadata.schema.fieldNames.toSet
               else Set.empty[String])
   if (writes.isEmpty || original.matchedClauses.isEmpty)
     denied("unsupported empty/insert-only merge")
+  private val requiredWrites =
+    writes ++ recoveryCandidate.toSeq.flatMap(_.evolution.get.requiredUpdates)
   private val keys = selected.toVector.map(name =>
     new DeltaRangerResourceKey(
       scan.catalog,
@@ -124,7 +145,7 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       "select",
       scan.owner.orNull
     )
-  ) ++ writes.toVector.map(name =>
+  ) ++ requiredWrites.toVector.map(name =>
     new DeltaRangerResourceKey(
       scan.catalog,
       scan.database,
@@ -133,6 +154,14 @@ private[ranger] final class DeltaRangerMergeReceipt private (
       "update",
       scan.owner.orNull
     )
+  )
+  private val alterKey = new DeltaRangerResourceKey(
+    scan.catalog,
+    scan.database,
+    scan.table,
+    null,
+    "alter",
+    scan.owner.orNull
   )
   private val decisions =
     DeltaRangerMaskRules.capture(scan, selected, engine, subject, Instant.now())
@@ -152,6 +181,13 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   private val filter = governed.collectFirst { case Filter(condition, _) => condition }
   if (AttributeSet(original.source.output).intersect(AttributeSet(original.target.output)).nonEmpty)
     denied("ambiguous source/target attribute occurrence")
+  private var retainedTransaction: OptimisticTransaction = null
+  private var metadataStaged = false
+  private var baseState: Predicate[LogicalRDD] = null
+  // Diagnostic evidence is immutable and never used to authorize execution or publication.
+  private final case class Outcome(status: String, version: Option[Long], digest: Option[String])
+  private var outcome = Outcome("not-committed", None, None)
+  private var commitFailure: Throwable = null
   private var sourceAttempt: DeltaRangerMergeSource.Attempt = null
   private var sourceAttemptNumber = 0
   private var sourceClosed = false
@@ -184,6 +220,7 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     engine.requireSnapshot(stamp); sourceEngine.requireSnapshot(sourceStamp)
     val now = Instant.now()
     keys.foreach(engine.authorize(subject, _, now))
+    if (requiresAlter) engine.authorize(subject, alterKey, now)
     val currentDecisions = DeltaRangerMaskRules.capture(scan, selected, engine, subject, now)
     if (currentDecisions.filter != decisions.filter || currentDecisions.masks != decisions.masks)
       denied("target policies changed")
@@ -193,6 +230,28 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   def validate(): Unit = {
     requireContext()
     if (sourceClosed) denied("source phase expired")
+    if (schemaIntent.evolves) {
+      // Reuse Spark's actual cache inventory, including dependent plans and older raw snapshots.
+      val manager = spark.sharedState.cacheManager
+      val field = manager.getClass.getDeclaredField("cachedData")
+      field.setAccessible(true)
+      val entries = field.get(manager).asInstanceOf[Seq[org.apache.spark.sql.execution.CachedData]]
+      if (
+        entries.exists(_.plan.exists {
+          case relation: LogicalRelation =>
+            relation.relation match {
+              case files: org.apache.spark.sql.execution.datasources.HadoopFsRelation =>
+                files.location match {
+                  case index: org.apache.spark.sql.delta.files.TahoeLogFileIndex =>
+                    index.path == target.index().path
+                  case _ => false
+                }
+              case _ => false
+            }
+          case node => node.sameResult(targetRelation)
+        })
+      ) denied("schema evolution has target cache history")
+    }
     target.validateCurrent(spark); source.binding.validateCurrent(spark)
     if (target.log().unsafeVolatileSnapshot.version != target.nativeVersion())
       denied("target head changed")
@@ -200,13 +259,14 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   }
   def openSourceAttempt(candidate: DeltaRangerMergeSource.Attempt, number: Int): Unit = {
     if (
-      !running || sourceClosed || number != sourceAttemptNumber + 1 ||
+      !running || sourceClosed || !metadataStaged || recoveryCandidate.nonEmpty || number != sourceAttemptNumber + 1 ||
       (sourceAttempt != null && !sourceAttempt.isClosed)
     ) denied("foreign source attempt")
     sourceAttempt = candidate
     sourceAttemptNumber = number
     try {
       validate()
+      checkTransaction(retainedTransaction)
       sourceReceipt.openMergeExecution(this)
     } catch {
       case failure: Throwable => candidate.close(); throw failure
@@ -215,6 +275,7 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   def requireSourceAttempt(candidate: DeltaRangerMergeSource.Attempt): Unit = {
     if (!running || closed || sourceClosed || (candidate ne sourceAttempt))
       denied("foreign source attempt")
+    checkTransaction(retainedTransaction)
   }
   def requireSourceExecution(candidate: DeltaRangerCdfReadReceipt): Unit = {
     requireSource(candidate)
@@ -227,6 +288,7 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   }
   def closeSource(): Unit = {
     validate()
+    checkTransaction(retainedTransaction)
     if (sourceClosed) denied("source already closed")
     sourceClosed = true
   }
@@ -242,12 +304,20 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   ): Boolean = {
     if (!sourceClosed || (candidate ne commitOwner) || !running) denied("foreign commit owner")
     requireContext(published)
-    checkTransaction(transaction)
-    val advanced = target.requireMergePublication(published, target.nativeVersion() + 1)
+    checkTransaction(transaction, published)
+    val advanced = target.requireMergePublication(
+      published,
+      target.nativeVersion() + 1,
+      schemaIntent.expectedMetadata
+    )
     if (publicationAdvanced && !advanced) denied("registration publication regressed")
     publicationAdvanced ||= advanced
     if (sourceAnchor.descriptor().identifier == target.descriptor().identifier) {
-      sourceAnchor.requireMergePublication(published, target.nativeVersion() + 1)
+      sourceAnchor.requireMergePublication(
+        published,
+        target.nativeVersion() + 1,
+        schemaIntent.expectedMetadata
+      )
     } else {
       sourceAnchor.requireRetained()
       source.binding.recheckPublication()
@@ -279,6 +349,58 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     recached = true
   }
 
+  def invokedCommit(candidate: DeltaRangerMergeCommit): Unit = {
+    if ((candidate ne commitOwner) || !sourceClosed || !running) denied("foreign commit evidence")
+    outcome = Outcome("unknown", Some(target.nativeVersion() + 1), None)
+  }
+  def observedCommit(candidate: DeltaRangerMergeCommit, version: Long, digest: String): Unit = {
+    if (
+      (candidate ne commitOwner) || !sourceClosed || !running || version != target
+        .nativeVersion() + 1
+    )
+      denied("foreign commit evidence")
+    val observed = Outcome("committed", Some(version), Some(digest))
+    if (outcome.status == "committed" && outcome != observed) denied("commit evidence changed")
+    outcome = observed
+  }
+  def skippedCommit(candidate: DeltaRangerMergeCommit): Unit = {
+    if ((candidate ne commitOwner) || outcome.status != "unknown")
+      denied("foreign skipped evidence")
+    outcome = Outcome("not-committed", None, None)
+  }
+  def failedCommit(candidate: DeltaRangerMergeCommit, failure: Throwable): Unit = {
+    if (candidate ne commitOwner) denied("foreign commit failure")
+    if (commitFailure == null) commitFailure = failure
+  }
+  def preserveFailure(failure: Throwable): Throwable = {
+    if (commitFailure == null) failure
+    else {
+      if (commitFailure ne failure) commitFailure.addSuppressed(failure)
+      commitFailure
+    }
+  }
+  def retainBaseState(
+      candidate: DeltaRangerMergeCommand,
+      transaction: OptimisticTransaction,
+      operation: DeltaRangerNativeOperation
+  ): Unit = {
+    requireCommand(candidate)
+    requireRetainedTransaction(transaction)
+    if (metadataStaged || baseState != null) denied("invalid base-state capture")
+    baseState = operation.retainTransactionState()
+  }
+  def containsBaseState(
+      candidate: DeltaRangerMergeCommit,
+      transaction: OptimisticTransaction,
+      cache: LogicalRDD
+  ): Boolean = {
+    if (
+      (candidate ne commitOwner) || (transaction ne retainedTransaction) ||
+      !sourceClosed || !running || closed || baseState == null
+    ) denied("foreign base-state consumer")
+    baseState.test(cache)
+  }
+
   def endCommit(candidate: DeltaRangerMergeCommit): Unit = {
     if (candidate ne commitOwner) denied("foreign commit cleanup")
     commitOwner = null
@@ -299,7 +421,10 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   def rewrite(): DeltaMergeInto = {
     if (rewritten != null) denied("repeated rewrite")
     source.observe(original.source)
-    sourceReceipt = DeltaRangerCdfReadReceipt.issue(source, original.source, spark)
+    sourceReceipt =
+      if (recoveryCandidate.nonEmpty)
+        DeltaRangerCdfReadReceipt.recovering(source, original.source, spark, this)
+      else DeltaRangerCdfReadReceipt.issue(source, original.source, spark)
     sourceReceipt.bindMerge(this)
     if (original.source.output.size != sourceReceipt.carrier.output.size)
       denied("governed source arity changed")
@@ -324,7 +449,61 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     )
     rewritten
   }
-  lazy val journal: DeltaRangerMergeJournal = {
+  private def evolutionIntent: DeltaRangerMergeEvolutionIntent = {
+    import DeltaRangerMergeEvolutionIntent._
+    def observation(value: DeltaRangerRegistrationBindings.BoundRegistrationScan): Observation = {
+      val o = value.observation()
+      Observation(
+        Vector(o.metalake(), o.catalog(), o.database(), o.table()),
+        o.receipt().toProperties.asScala.toMap,
+        o.location(),
+        o.nativeId(),
+        Option(value.descriptor().owner).filter(_.nonEmpty),
+        value.index().snapshotAtAnalysis.metadata,
+        value.index().snapshotAtAnalysis.protocol,
+        value.nativeVersion()
+      )
+    }
+    val policy = RuleEliminateMarker(governed) match {
+      case Project(output, child) => Project(output.filter(a => selected(a.name)), child)
+      case other                  => Project(other.output.filter(a => selected(a.name)), other)
+    }
+    capture(
+      Capture(
+        authoredCapture.getOrElse(denied("missing authored evolution capture")),
+        original,
+        rewritten,
+        source.logical,
+        targetRelation,
+        sourceReceipt.mergePolicy,
+        policy,
+        observation(target),
+        observation(sourceAnchor),
+        schemaIntent.expectedMetadata,
+        source.request.start,
+        source.request.end,
+        sourceReceipt.mergeColumns,
+        selected,
+        requiredWrites,
+        Context(transactionIdentity, subject.user(), subject.groups().asScala.toSet, settings)
+      )
+    )
+  }
+
+  lazy val journal: DeltaRangerMergeJournal = createJournal()
+  private def createJournal(): DeltaRangerMergeJournal = {
+    if (recoveryCandidate.nonEmpty)
+      return DeltaRangerMergeJournal.recovering(
+        targetCatalog.mergeJournalDirectory(),
+        recoveryCandidate.get,
+        evolutionIntent
+      )
+    if (schemaIntent.evolves)
+      return DeltaRangerMergeJournal.evolving(
+        targetCatalog.mergeJournalDirectory(),
+        evolutionIntent
+      )
+
     if (sourceReceipt == null || rewritten == null) denied("unresolved journal intent")
     import DeltaRangerMergeJournal.{vector, hash}
     def binding(value: DeltaRangerRegistrationBindings.BoundRegistrationScan): String = {
@@ -408,18 +587,27 @@ private[ranger] final class DeltaRangerMergeReceipt private (
         .nativeVersion()
     )
       denied("unknown publication or unreconciled current registration")
-    val path = new org.apache.hadoop.fs.Path(target.log().logPath, f"${entry.version}%020d.json")
-    val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
-    val before = fs.getFileStatus(path)
-    val input = fs.open(path)
-    val bytes =
-      try input.readAllBytes()
-      finally input.close()
-    val after = fs.getFileStatus(path)
-    if (
-      !before.isFile || before.getLen != after.getLen || before.getModificationTime != after.getModificationTime || bytes.length.toLong != after.getLen
-    )
-      denied("recovery publication changed")
+    val bytes = recoveryBytes(entry.version)
+    if (entry.evolution.nonEmpty) {
+      val mapper = new ObjectMapper()
+        .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+      ((entry.version + 1) to target.nativeVersion()).foreach { version =>
+        val suffix =
+          new String(recoveryBytes(version), StandardCharsets.UTF_8).split("\n", -1).toVector
+        if (suffix.last.nonEmpty || suffix.init.exists(_.trim.isEmpty))
+          denied("incomplete recovery suffix")
+        suffix.init.foreach { line =>
+          val action = mapper.readTree(line)
+          if (
+            action == null || !action.isObject || action.size() != 1 ||
+            action.has("metaData") || action.has("protocol")
+          ) denied("recovery suffix changes metadata or protocol")
+        }
+      }
+    }
+    val digest = journal.verifiedDigest(bytes)
+    outcome = Outcome("committed", Some(entry.version), Some(digest))
     journal.committed(bytes)
     validate()
     closeSource()
@@ -429,6 +617,23 @@ private[ranger] final class DeltaRangerMergeReceipt private (
     requireContext()
     journal.reconciled()
     recached = true
+  }
+
+  private def recoveryBytes(version: Long): Array[Byte] = {
+    val path = new Path(target.log().logPath, f"$version%020d.json")
+    val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
+    val before = fs.getFileStatus(path)
+    val input = fs.open(path)
+    val bytes =
+      try input.readAllBytes()
+      finally input.close()
+    val after = fs.getFileStatus(path)
+    if (
+      !before.isFile || before.getLen != after.getLen ||
+      before.getModificationTime != after.getModificationTime || bytes.length.toLong != after.getLen
+    )
+      denied("recovery publication changed")
+    bytes
   }
 
   def cdf: DeltaRangerCdfReadReceipt = sourceReceipt
@@ -493,7 +698,8 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   def bind(native: MergeIntoCommand): DeltaRangerMergeCommand = {
     if (
       command != null || rewritten == null || (native.source ne rewritten.source) ||
-      (native.target ne rewritten.target) || native.schemaEvolutionEnabled ||
+      (native.target ne rewritten.target) || native.schemaEvolutionEnabled != original.withSchemaEvolution ||
+      native.migratedSchema != original.finalSchema ||
       native.trackHighWaterMarks.nonEmpty || !native.catalogTable.exists(_ eq descriptor)
     )
       denied("foreign preprocessing successor")
@@ -504,16 +710,47 @@ private[ranger] final class DeltaRangerMergeReceipt private (
   def requireCommand(candidate: DeltaRangerMergeCommand): Unit = {
     if (command == null || (candidate ne command)) denied("copied command")
   }
+  def beginTransaction(
+      candidate: DeltaRangerMergeCommand,
+      transaction: OptimisticTransaction
+  ): Unit = {
+    requireCommand(candidate)
+    if (sourceAttempt != null && !sourceAttempt.isClosed) denied("previous attempt remains open")
+    retainedTransaction = transaction
+    metadataStaged = false
+    baseState = null
+    validate()
+    checkTransaction(transaction)
+  }
+  def stageMetadata(candidate: DeltaRangerMergeCommand, transaction: OptimisticTransaction)(
+      body: => Unit
+  ): Unit = {
+    requireCommand(candidate)
+    requireRetainedTransaction(transaction)
+    if (metadataStaged || recoveryCandidate.nonEmpty) denied("invalid metadata staging phase")
+    body
+    schemaIntent.requirePending(transaction.metadata, transaction.protocol)
+    metadataStaged = true
+    requireRetainedTransaction(transaction)
+  }
   def requireTransaction(transaction: OptimisticTransaction): Unit = {
     validate()
     checkTransaction(transaction)
   }
-  private def checkTransaction(transaction: OptimisticTransaction): Unit = {
+  private def checkTransaction(
+      transaction: OptimisticTransaction,
+      published: Boolean = false
+  ): Unit = {
     if (
-      !running || !OptimisticTransaction.getActive.exists(_ eq transaction) ||
+      !running || (transaction ne retainedTransaction) || !(OptimisticTransaction.getActive.exists(
+        _ eq transaction
+      ) ||
+        (published && OptimisticTransaction.getActive.isEmpty)) ||
       (transaction.deltaLog ne target.log()) || !transaction.catalogTable.exists(_ eq descriptor) ||
       transaction.readVersion != target.nativeVersion() ||
-      transaction.metadata != transaction.snapshot.metadata || transaction.protocol != transaction.snapshot.protocol ||
+      transaction.metadata != (if (metadataStaged) schemaIntent.expectedMetadata
+                               else
+                                 schemaIntent.baseMetadata) || transaction.protocol != schemaIntent.protocol ||
       transaction.snapshot.metadata != target.index().snapshotAtAnalysis.metadata ||
       transaction.snapshot.metadata.schemaString != target.nativeSchemaJson() ||
       transaction.snapshot.protocol.json != target.nativeProtocolJson()
@@ -524,7 +761,8 @@ private[ranger] object DeltaRangerMergeReceipt {
   def issue(
       spark: SparkSession,
       capture: DeltaMergeInto,
-      catalogs: DeltaRangerReadRule.Scan => DeltaRangerCatalogSpark35
+      catalogs: DeltaRangerReadRule.Scan => DeltaRangerCatalogSpark35,
+      authored: Option[DeltaRangerMergeEvolutionIntent.Authored] = None
   ): DeltaRangerMergeReceipt =
-    new DeltaRangerMergeReceipt(spark, capture, catalogs)
+    new DeltaRangerMergeReceipt(spark, capture, catalogs, authored)
 }

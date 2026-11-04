@@ -177,11 +177,19 @@ private[ranger] object DeltaRangerMergeSource {
         return root
       }
       val cdf = receipt.cdf.plan(receipt.cdf.carrier)
+      // This nested planner call bypasses Spark's strategy-to-logical-link assignment.
+      // Native redundant-project removal requires the exact child's original logical link.
+      if (cdf.logicalLink.exists(_ ne receipt.cdf.carrier)) denied("foreign CDF logical link")
+      cdf.setLogicalLink(receipt.cdf.carrier)
       // Issue the final recipe without an exact identity projection. Spark removes that
       // projection during physical preparation; freezing it would reject the native successor.
+      // Explicit payload aliases can differ only in qualifiers, so delegate that exact native
+      // redundancy decision before sealing the retained producer and demanded attributes.
       val child =
         if (receipt.materializedColumns == cdf.output) cdf
-        else ProjectExec(receipt.materializedColumns, cdf)
+        else
+          org.apache.spark.sql.execution
+            .RemoveRedundantProjects(ProjectExec(receipt.materializedColumns, cdf))
       physical = DeltaRangerPhysicalProvenance.binding(child)
       root = SourceExec(child)(this)
       root

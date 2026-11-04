@@ -1389,6 +1389,34 @@ final class DeltaRangerRegistrationBindings {
       return true;
     }
 
+    // Only an exact owning MERGE proof can accept this schema transition. Ordinary readers
+    // continue to use the unchanged strict comparator.
+    boolean requireMergePublication(boolean published, long version, Metadata expectedMetadata) {
+      requireRetained();
+      PublishedObservation original = observation();
+      PublishedObservation current = readCurrent();
+      if (original.samePublication(current)) {
+        requireCompatiblePublication(current);
+        return false;
+      }
+      Map<String, String> expected = new TreeMap<>(original.receipt().toProperties());
+      expected.put("delta.registration.receipt.nativeVersion", Long.toString(version));
+      if (!published
+          || version != nativeVersion() + 1
+          || current.nativeVersion() != version
+          || !original.identity().equals(current.identity())
+          || !original.metalake().equals(current.metalake())
+          || !original.catalog().equals(current.catalog())
+          || !original.database().equals(current.database())
+          || !original.table().equals(current.table())
+          || !original.location().equals(current.location())
+          || !original.nativeId().equals(current.nativeId())
+          || !logicalSchema(expectedMetadata.schema()).equals(current.schemaJson())
+          || !expected.equals(current.receipt().toProperties())) throw denied();
+      owner.reader.requireLive(current);
+      return true;
+    }
+
     void recheckPublication() {
       requireLive();
       PublishedObservation current =

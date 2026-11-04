@@ -30,7 +30,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.delta.{DeltaOperations, DeltaLogFileIndex, OptimisticTransaction}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.actions.{Action, Metadata}
 import org.apache.spark.sql.execution.{LogicalRDD, SparkPlan}
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 
@@ -49,7 +49,10 @@ private[ranger] final class DeltaRangerMergeCommit(
 
   private val spark = receipt.spark
   receipt.beginCommit(this, transaction)
-  private val intent = new Intent(transaction, actions, nativeOperation, tags, spark)
+  private val expectedMetadata = receipt.schemaIntent.expectedMetadata
+  private val metadataPrefix = if (receipt.schemaIntent.evolves) Some(expectedMetadata) else None
+  private val intent =
+    new Intent(transaction, actions, nativeOperation, tags, spark, metadataPrefix)
   private val version = transaction.readVersion + 1
   private val journal = receipt.journal
   journal.prepare(intent.encoded, version)
@@ -105,8 +108,9 @@ private[ranger] final class DeltaRangerMergeCommit(
     val digest = MessageDigest.getInstance("SHA-256").digest(bytes).toVector
     val observed = fileStamp(after) -> digest
     if (publication.exists(_ != observed)) denied("published commit content or status changed")
-    journal.committed(bytes)
     publication = Some(observed)
+    receipt.observedCommit(this, version, DeltaRangerMergeJournal.hash(bytes))
+    journal.committed(bytes)
     Some(fileStamp(after))
   }
 
@@ -118,7 +122,7 @@ private[ranger] final class DeltaRangerMergeCommit(
       ((head eq snapshot) && (head.logSegment.deltas.map(fileStamp).toVector != oldDeltas ||
         head.logSegment.checkpointProvider.topLevelFiles.map(fileStamp).toVector != checkpoints)) ||
       ((head ne snapshot) && !(publication.nonEmpty && head.version == version &&
-        head.metadata == snapshot.metadata && head.protocol == snapshot.protocol &&
+        head.metadata == expectedMetadata && head.protocol == snapshot.protocol &&
         head.logSegment.deltas
           .map(fileStamp)
           .toVector == oldDeltas ++ publication.map(_._1).toVector &&
@@ -137,17 +141,19 @@ private[ranger] final class DeltaRangerMergeCommit(
       intent.requireArguments(actions, nativeOperation, tags)
       requireLive()
       invoked = true
+      receipt.invokedCommit(this)
       val result = transaction.commitIfNeeded(actions, nativeOperation, tags = tags)
       nativeResult = Some(result)
       requireLive()
       operation.succeed()
       val skipped =
-        result.isEmpty && actions.isEmpty && publication.isEmpty && receipt.transactionIdentity.isEmpty
+        result.isEmpty && actions.isEmpty && metadataPrefix.isEmpty && publication.isEmpty && receipt.transactionIdentity.isEmpty
       if (!skipped && (!result.contains(version) || !reconciled))
         denied("publication is not reconciled")
       operation.close()
       operation = null
       if (skipped) {
+        receipt.skippedCommit(this)
         receipt.completeNoop(this, transaction)
         requireLive()
         journal.skipped()
@@ -160,6 +166,7 @@ private[ranger] final class DeltaRangerMergeCommit(
     } catch {
       case failure: Throwable =>
         primary = failure
+        receipt.failedCommit(this, failure)
         try {
           if (invoked) observePublication()
           if (publication.isEmpty) journal.unknown()
@@ -187,8 +194,9 @@ private[ranger] final class DeltaRangerMergeCommit(
     spark,
     () => requireLive(),
     () => next,
-    () => transaction.snapshot.metadata,
-    () => transaction.snapshot.protocol
+    () => expectedMetadata,
+    () => transaction.snapshot.protocol,
+    cache => receipt.containsBaseState(this, transaction, cache)
   )
   def ownsLog(relation: HadoopFsRelation, index: DeltaLogFileIndex): Boolean =
     metadata.ownsLog(relation, index)
@@ -211,7 +219,8 @@ private[ranger] object DeltaRangerMergeCommit {
       actions: Seq[Action],
       operation: DeltaOperations.Merge,
       tags: Map[String, String],
-      spark: SparkSession
+      spark: SparkSession,
+      metadataPrefix: Option[Metadata]
   ) {
     private val mapper = new ObjectMapper()
       .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -256,6 +265,9 @@ private[ranger] object DeltaRangerMergeCommit {
     val encoded: String = {
       val node = mapper.createObjectNode()
       val array = node.putArray("actions"); frozenActions.foreach(array.add)
+      metadataPrefix.foreach(value =>
+        node.set[JsonNode]("expectedMetadata", parse(value.json).get("metaData"))
+      )
       val parameters = node.putObject("parameters")
       frozenParameters.toVector.sortBy(_._1).foreach { case (key, value) =>
         parameters.set[JsonNode](key, value)
@@ -284,7 +296,46 @@ private[ranger] object DeltaRangerMergeCommit {
       .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
       .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
     private val node = parse(encoded)
+    private val requiredFields = Set(
+      "actions",
+      "parameters",
+      "tags",
+      "operation",
+      "userMetadata",
+      "metrics",
+      "nativeId",
+      "readVersion",
+      "engine",
+      "allowedMetrics"
+    )
+    if (
+      !node.isObject || !requiredFields.subsetOf(node.fieldNames().asScala.toSet) ||
+      !node.fieldNames().asScala.toSet.subsetOf(requiredFields + "expectedMetadata") ||
+      !node.get("actions").isArray || !node.get("parameters").isObject ||
+      !node.get("metrics").isBoolean || !node.get("readVersion").isIntegralNumber ||
+      !node.get("readVersion").canConvertToLong || node.get("readVersion").longValue() < 0 ||
+      !Seq("operation", "nativeId", "engine")
+        .forall(k => node.get(k).isTextual && node.get(k).textValue().nonEmpty) ||
+      !(node.get("userMetadata").isNull || node.get("userMetadata").isTextual) ||
+      !node
+        .get("allowedMetrics")
+        .isArray || node.get("allowedMetrics").elements().asScala.exists(!_.isTextual)
+    )
+      denied("incomplete or malformed native proof")
     private val frozenActions = node.get("actions").elements().asScala.toVector
+    private val metadataPrefix = Option(node.get("expectedMetadata")).map { metadata =>
+      if (!metadata.isObject) denied("invalid expected metadata")
+      val envelope = mapper.createObjectNode()
+      envelope.set[JsonNode]("metaData", metadata)
+      envelope: JsonNode
+    }.toVector
+    if (
+      frozenActions.exists(a =>
+        !a.isObject || a.size() != 1 ||
+          !Set("add", "remove", "cdc", "txn")(a.fieldNames().next())
+      )
+    )
+      denied("unqualified proof actions")
     private val frozenTags = stringMap(node.get("tags"))
     private val frozenParameters =
       node.get("parameters").fields().asScala.map(e => e.getKey -> e.getValue).toMap
@@ -308,7 +359,8 @@ private[ranger] object DeltaRangerMergeCommit {
         !all.head.has("commitInfo") || all.tail.exists(_.has("commitInfo"))
       )
         denied("publication envelopes changed")
-      if (all.tail != frozenActions) denied("published actions differ from submitted intent")
+      if (all.tail != metadataPrefix ++ frozenActions)
+        denied("published actions differ from submitted intent")
       val info = all.head.get("commitInfo")
       val required = Set(
         "timestamp",
@@ -365,7 +417,9 @@ private[ranger] object DeltaRangerMergeCommit {
     }
 
     private def stringMap(node: JsonNode): Map[String, String] = {
-      if (!node.isObject || node.elements().asScala.exists(value => !value.isTextual))
+      if (
+        node == null || !node.isObject || node.elements().asScala.exists(value => !value.isTextual)
+      )
         denied("native string map changed")
       node.fields().asScala.map(e => e.getKey -> e.getValue.textValue()).toMap
     }
