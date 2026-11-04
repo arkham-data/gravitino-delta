@@ -109,8 +109,8 @@ Use Java 17 at `/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home`;
 
 - [x] Retain fresh logs/XML/runtime/source hash manifests and primary native row/schema/log/receipt/outcome evidence per pair; independently verify exact method cohort, failures/errors/skips and requested pins. No external services or fixtures need be rebuilt merely for this installed matrix. Resolve actual failures before claiming that cell.
 - [x] Record named SQL and companion support, disabled-extra semantics, permission/recovery guarantees and limitations in public docs. Explicitly state source remains bounded CDF, proper settings scope, no engine/core fork, API version 1, no new deployed Ranger/MinIO result, nested/type/full schema and broader sources remain unqualified. Do not claim Spark Hub integration from a connector-only test.
-- [ ] Self-review against the design and selected four-workstream roadmap. Controller obtains fresh task review and commits documentation/evidence references; then obtains one whole-slice review from baseline, using retained evidence without redundant test reruns.
-- [ ] On clean final review, verify branch/worktree and push existing branch under standing user authorization; verify exact remote SHA. Preserve evidence/worktree. Continue selected schema requirements or the next workstream as appropriate; this checkpoint does not declare all four complete.
+- [x] Self-review against the design and selected four-workstream roadmap. Controller obtains fresh task review and commits documentation/evidence references; then obtains one whole-slice review from baseline, using retained evidence without redundant test reruns.
+- [x] On clean final review, verify branch/worktree and push existing branch under standing user authorization; verify exact remote SHA. Preserve evidence/worktree. Continue selected schema requirements or the next workstream as appropriate; this checkpoint does not declare all four complete.
 
 
 ### Task 4 installed qualification outcome
@@ -128,9 +128,12 @@ sources and actual Java 17.0.16/Scala 2.12.21/Ranger-client 2.8.0 origins.
 `.superpowers/sdd/2026-11-04-delta-merge-schema-evolution/task-4-report.md`
 record exact commands, original evidence, runtime/source/native audits and reuse
 limits. No Task 4 product/test or Spark Hub change was needed. Self-review is
-complete and the independent task review is clean. This documentation commit
-records qualification; whole-slice review and exact-SHA checkpoint push remain
-separate gates. The final two checkboxes remain open until that work finishes.
+complete and the independent task and whole-slice reviews are clean. The final
+review covers `5bb3af7dd4d5cd54d4c1b45e705fc83abff72998` through
+`9ba1da00234fbec0eba8515a866af467b3b98a73`, with no actionable finding.
+This closure records the bounded installed checkpoint for the authorized branch
+push; the retained ledger records the exact published SHA and remote verification.
+The worktree and original evidence are preserved.
 
 Ordinary governed CDF across admitted additive schema boundaries remains the next
 required schema-track task. Consolidated live Ranger-server 2.8.0/MinIO acceptance
