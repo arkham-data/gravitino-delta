@@ -7,7 +7,7 @@ continues the [October 14 transaction-source preparation checkpoint](delta-appen
 The [accepted SELECT milestone](delta-ranger-production-results.md) remains a
 separate result. This page records append qualification, not full Delta support.
 
-## Initial installed additive schema evolution (November 4, 2026)
+## Installed additive schema evolution (November 4, 2026)
 
 The two existing named DataFrame APPEND writers now support one atomic native
 schema-and-data commit for a finite additive shape. The source must retain every
@@ -26,9 +26,14 @@ unchanged native add/transaction actions, with unchanged Protocol, partitioning,
 configuration, native UUID and registration identity. The existing provider
 refresh contract supplies the new named schema; retained old plans remain strict.
 
-The focused installed selection passed **41 methods in five classes**, with zero
-failures/errors/skips, on **Spark 3.5.6 / Delta 3.3.2**, Java 17.0.16, Scala 2.12.21
-and loaded Ranger 2.8.0 client artifacts. It covers both named writers, literal
+The bounded installed cohort passed on all four combinations of **Spark 3.5.4
+and 3.5.6 / Delta 3.3.0 and 3.3.2**, with **60 required method identities per
+pair** and zero failures/errors/skips. Loaded origins and worker records establish
+Java 17.0.16, Scala 2.12.21 and Ranger 2.8.0 client artifacts. The cohort combines
+41 integrated methods, 11 independent intent methods and eight independent Java ownership
+methods; source-identical component evidence is reused with its original
+provenance. The [qualification results](superpowers/specs/2026-11-04-delta-schema-evolution-results.md)
+record each cell's executed/reused split. It covers both named writers, literal
 old-null/new-masked rows, ordinary and qualified partitioned CDF targets, a final
 stock AQE join exchange, native checkpoint reconstruction, and continued fresh
 named CDF reads. Authorization failures and duplicates, native invariant failure,
@@ -49,9 +54,11 @@ The existing actual-reader provider refresh regression also passed separately,
 confirming persisted additive columns retain the original column ID and creator.
 This is installed local fixture evidence, with the existing registration fixture
 modeling column/version observation. It extends the installed writer-option result
-below; the historical packaged matrices keep their original scope. Qualification
-of the remaining Spark/Delta pairs and a new deployed Gravitino/Ranger-server/MinIO
-result remain separate work.
+below; the historical packaged matrices keep their original scope. A new deployed
+Gravitino/Ranger-server 2.8.0/MinIO result remains a consolidated required gate.
+Actual additive MERGE evolution remains next before closing the schema track and
+proceeding to governed creation; input overwrite and other priorities remain
+subsequent work.
 
 ## Installed-only writer-option continuation (November 4, 2026)
 

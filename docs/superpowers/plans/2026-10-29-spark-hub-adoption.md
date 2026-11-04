@@ -70,6 +70,20 @@ Independent catalog-service code, test harness preparation and pure Python check
 | **M6 — Deployed batch adoption and Glue retirement** | Pin artifacts and runtime settings; qualify distributed workers, application identity, session reuse/background threads, journals and restarts. Establish one owner per dataset and reconcile existing native identities/schema before migration. Move shared production routes only after dependencies pass. | Actual representative Spark Hub jobs on the deployed execution profile; reads/writes/restarts/policies/state all pass. Concrete dataset manifest and cutover/recovery procedure reviewed before external migration. No dual writes for comparison; use separate fixture targets or read-only comparison. |
 | **M7 — Structured Streaming** | Separate design/plan for native writeStream, trigger-once behavior, checkpoint/offset identity, policy refresh, schema changes and the Bronze-to-target batch tail. | Restart/replay/offset and authorization cases through the real streaming entry points. Batch append success does not qualify streaming. |
 
+## Updated priority — schema evolution is critical
+
+User direction on November 4: schema evolution is a required integration capability and takes priority over the proposed bounded Spark Hub append adaptation. The installed writer-option checkpoint (`02bce0f6c`) does not close it: `mergeSchema`/`overwriteSchema` strings are accepted only when the existing matching-schema contract holds. Native append evolution and schema-replacing overwrite were characterized separately, but governed schema changes with registration consistency remain open.
+
+The next implementation plan must use native Delta schema changes and existing Gravitino catalog/authorization interfaces, minimizing custom connector code. Gravitino remains the registration owner. Cover schema-change authorization, refreshed registered metadata, existing Ranger policy evaluation for changed/new columns, and recovery when a native commit succeeds but registration refresh fails, without automatically replaying the write. Define and test the supported evolution operations explicitly; do not equate accepting schema flags or fixed-schema success with schema-evolution support. Qualify the changed paths on all four pinned pairs and with actual Ranger 2.8.0/MinIO before claiming governed integration.
+
+Glue is completely replaced; no Glue compatibility layer is required. Adapt Spark Hub to the existing Gravitino contracts. New app routing and live option profiles may support this work, but must not displace the schema-evolution priority or be presented as completing M2.
+
+## Active scope — four write capabilities
+
+The user selected this execution order: **schema evolution -> governed creation -> input/transformation support -> overwrite/full refresh**. Execute one concrete task at a time, starting with the smallest production schema-evolution path that uses existing native Delta and Gravitino contracts. This supersedes the previously proposed app-only named-append follow-up as the next priority. The broader roadmap above remains an inventory, not concurrent work authorization.
+
+CDF consumer/state improvements, optional maintenance, broad deployment/cutover and streaming can wait. Keep only recovery and policy checks necessary for correctness of the four selected capabilities in their own tasks. Use the existing Spark Hub callers to define required inputs/transformations and adapt them to Gravitino; add no Glue compatibility path. Tests needed to prove the selected behavior retain the pinned four Spark/Delta pairs and Ranger 2.8.0 requirement; do not open a separate deployment project or replay unchanged historical matrices.
+
 ## Immediate steps
 
 - [x] Finish the existing append-AQE matrix and reviews, then push that reviewed milestone under standing authorization.
