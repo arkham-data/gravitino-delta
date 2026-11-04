@@ -72,6 +72,7 @@ import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.spark.scheduler.SparkListener;
 import org.apache.spark.scheduler.SparkListenerEvent;
+import org.apache.spark.sql.DataFrameWriter;
 import org.apache.spark.sql.DataFrameWriterV2;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -80,11 +81,14 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.hooks.UpdateCatalog;
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
+import org.apache.spark.sql.delta.schema.SchemaUtils;
 import org.apache.spark.sql.execution.ui.SQLExecutionUIData;
 import org.apache.spark.sql.execution.ui.SQLPlanMetric;
 import org.apache.spark.sql.execution.ui.SparkListenerDriverAccumUpdates;
@@ -903,6 +907,107 @@ class TestDeltaNativeAdapter {
       }
       assertEquals(rootClasses.get(0), rootClasses.get(1), violation);
       assertEquals(artifacts.get(0), artifacts.get(1), violation);
+    }
+  }
+
+  @Test
+  void appendNamedAdditiveSchemaMatchesNativeMetadataAndRows() throws Exception {
+    String autoMerge = "spark.databricks.delta.schema.autoMerge.enabled";
+    StructType inputSchema =
+        new StructType()
+            .add("id", DataTypes.IntegerType, false)
+            .add("value", DataTypes.StringType, false)
+            .add("extra", DataTypes.StringType, true);
+    Dataset<Row> input =
+        spark.createDataFrame(List.of(RowFactory.create(2, "new", "added")), inputSchema);
+    input.createOrReplaceTempView("named_additive_source");
+    Dataset<Row> source = spark.table("named_additive_source");
+    for (String frontend : Arrays.asList("save_as", "insert_into")) {
+      for (String setting : Arrays.asList("option", "session", "explicit_false")) {
+        String name = "probe_named_additive_" + frontend + "_" + setting;
+        spark
+            .sql("CREATE TABLE registry.db." + name + " (id INT, value STRING) USING delta")
+            .collect();
+        spark.sql("INSERT INTO registry.db." + name + " VALUES (1, 'old')").collect();
+        Snapshot before = nativeTable(name).update();
+        ObjectNode expected = (ObjectNode) JSON.readTree(before.metadata().json()).get("metaData");
+        StructType nullable = (StructType) SchemaUtils.typeAsNullable(source.schema());
+        StructType merged =
+            SchemaMergingUtils.mergeSchemas(
+                before.schema(),
+                DeltaColumnMapping.dropColumnMappingMetadata(nullable),
+                false,
+                false,
+                false,
+                false);
+        StructType expectedSchema =
+            SchemaUtils.removeUnenforceableNotNullConstraints(merged, spark.sessionState().conf());
+        expected.put("schemaString", expectedSchema.json());
+        assertTrue(expectedSchema.apply("extra").nullable());
+        spark.conf().set(autoMerge, !setting.equals("option"));
+        try (AppendProbeCapture capture = beginProbe(name, "NATIVE")) {
+          DataFrameWriter<Row> writer = source.write().mode("append");
+          if (!setting.equals("session")) {
+            writer = writer.option("mergeSchema", setting.equals("option") ? "true" : "false");
+          }
+          DataFrameWriter<Row> selected = writer;
+          Runnable append =
+              () -> {
+                if (frontend.equals("save_as")) {
+                  selected.saveAsTable("registry.db." + name);
+                } else {
+                  selected.insertInto("registry.db." + name);
+                }
+              };
+          if (setting.equals("explicit_false")) {
+            capture.failure(assertThrows(Exception.class, append::run));
+            assertEquals(before.version(), nativeTable(name).update().version());
+            assertEquals(before.metadata(), nativeTable(name).update().metadata());
+            assertEquals(before.protocol(), nativeTable(name).update().protocol());
+            assertEquals(
+                List.of(RowFactory.create(1, "old")),
+                spark.table("registry.db." + name).collectAsList());
+            capture.verified(
+                "explicit false overrides session autoMerge true; no version or metadata change");
+            continue;
+          }
+          append.run();
+          assertEquals(1, capture.report().entryCalls(), capture.report().plans().toString());
+          assertTrue(capture.report().inputBound(), capture.report().plans().toString());
+          assertEquals(
+              setting.equals("option") ? Map.of("mergeSchema", "true") : Map.of(),
+              capture.report().options());
+          assertTrue(
+              capture.report().plans().stream().anyMatch(plan -> plan.contains("AppendDataExecV1")),
+              capture.report().plans().toString());
+          Snapshot after = nativeTable(name).update();
+          assertEquals(before.version() + 1, after.version());
+          assertEquals(expected, JSON.readTree(after.metadata().json()).get("metaData"));
+          assertEquals(before.protocol(), after.protocol());
+          assertEquals(before.metadata().configuration(), after.metadata().configuration());
+          assertEquals(before.metadata().id(), after.metadata().id());
+          assertEquals(before.metadata().createdTime(), after.metadata().createdTime());
+          assertEquals(Arrays.asList("add", "commitInfo", "metaData"), committedActionTypes(name));
+          Row history = spark.sql("DESCRIBE HISTORY registry.db." + name).first();
+          assertEquals("WRITE", history.getAs("operation"));
+          assertEquals(before.version() + 1, ((Number) history.getAs("version")).longValue());
+          List<Row> rows =
+              Arrays.asList(
+                  RowFactory.create(1, "old", null), RowFactory.create(2, "new", "added"));
+          assertEquals(
+              rows,
+              spark.sql("SELECT * FROM registry.db." + name + " ORDER BY id").collectAsList());
+          SparkSession fresh = spark.newSession();
+          assertEquals(expectedSchema, fresh.table("registry.db." + name).schema());
+          assertEquals(
+              rows,
+              fresh.sql("SELECT * FROM registry.db." + name + " ORDER BY id").collectAsList());
+          capture.verified(
+              "one native WRITE with metadata+data; exact schema-only Metadata change and unchanged Protocol/configuration/native UUID/createdTime; old/new literal rows and fresh named readback");
+        } finally {
+          spark.conf().unset(autoMerge);
+        }
+      }
     }
   }
 
