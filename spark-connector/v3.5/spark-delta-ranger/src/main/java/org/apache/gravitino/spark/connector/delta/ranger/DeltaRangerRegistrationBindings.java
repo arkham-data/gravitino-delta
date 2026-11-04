@@ -24,6 +24,7 @@ import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.net.URI;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -42,15 +43,19 @@ import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.OptimisticTransaction;
 import org.apache.spark.sql.delta.Snapshot;
 import org.apache.spark.sql.delta.SnapshotDescriptor;
+import org.apache.spark.sql.delta.actions.Action;
 import org.apache.spark.sql.delta.actions.Metadata;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex;
+import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
+import org.apache.spark.sql.delta.schema.SchemaUtils;
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation;
 import org.apache.spark.sql.execution.datasources.LogicalRelation;
 import org.apache.spark.sql.sources.BaseRelation;
 import org.apache.spark.sql.types.ArrayType;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.DecimalType;
 import org.apache.spark.sql.types.MapType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -888,6 +893,7 @@ final class DeltaRangerRegistrationBindings {
     private final DeltaRangerPolicyEngine.SnapshotStamp stamp;
     private final Map<String, String> settings;
     private final PublishedObservation publication;
+    private boolean schemaEvolutionAuthorized;
     private volatile boolean closed;
 
     private BoundAppendTransaction(
@@ -970,9 +976,26 @@ final class DeltaRangerRegistrationBindings {
       requireContext();
     }
 
-    BoundAppendCommit beginCommit(AppendPublication publicationOwner) {
+    void authorizeSchemaEvolution() {
       requireLive();
-      return new BoundAppendCommit(this, publicationOwner);
+      // Permission must precede native mutation and belongs only to this exact live owner.
+      if (!snapshot.metadata().equals(transaction.metadata())
+          || !snapshot.protocol().equals(transaction.protocol())) throw denied();
+      authorizeAlter();
+      requireLive();
+      schemaEvolutionAuthorized = true;
+      requireLive();
+    }
+
+    BoundAppendCommit beginCommit(AppendPublication publicationOwner) {
+      return beginCommit(publicationOwner, snapshot.metadata());
+    }
+
+    BoundAppendCommit beginCommit(AppendPublication publicationOwner, Metadata expectedMetadata) {
+      requireLive();
+      Metadata expected = requireExpectedMetadata(expectedMetadata);
+      requireLive();
+      return new BoundAppendCommit(this, publicationOwner, expected);
     }
 
     /** Irreversibly expires the transaction association, including on exceptional exits. */
@@ -988,11 +1011,92 @@ final class DeltaRangerRegistrationBindings {
     }
 
     private void requireContext() {
+      requireCapturedContext();
+      if (schemaEvolutionAuthorized) {
+        authorizeAlter();
+        requireCapturedContext();
+      }
+    }
+
+    private void requireCapturedContext() {
       DeltaRangerQuerySubject current = DeltaRangerQuerySubject.current(session);
       if (!subject.user().equals(current.user())
           || !subject.groups().equals(current.groups())
           || !settings.equals(settings(session))) throw denied();
       target.engine().requireSnapshot(stamp);
+    }
+
+    private void authorizeAlter() {
+      PublishedObservation registered = target.observation();
+      String owner = target.descriptor().owner();
+      target
+          .engine()
+          .authorize(
+              subject,
+              new DeltaRangerResourceKey(
+                  registered.catalog(),
+                  registered.database(),
+                  registered.table(),
+                  null,
+                  "alter",
+                  owner.isEmpty() ? null : owner),
+              Instant.now());
+    }
+
+    private Metadata requireExpectedMetadata(Metadata candidate) {
+      try {
+        // Native JSON roundtrip detaches schema/partition/configuration collections from the
+        // caller.
+        Metadata expected = (Metadata) Action.fromJson(Objects.requireNonNull(candidate).json());
+        Metadata base = snapshot.metadata();
+        if (!expected.equals(transaction.metadata())
+            || !snapshot.protocol().equals(transaction.protocol())) throw denied();
+        if (base.equals(expected)) return expected;
+        if (!schemaEvolutionAuthorized
+            || !new Metadata(
+                    base.id(),
+                    base.name(),
+                    base.description(),
+                    base.format(),
+                    expected.schemaString(),
+                    base.partitionColumns(),
+                    base.configuration(),
+                    base.createdTime())
+                .equals(expected)) throw denied();
+        if (!"none".equals(base.columnMappingMode().name())) throw denied();
+        StructField[] original = base.schema().fields();
+        StructField[] fields = expected.schema().fields();
+        if (fields.length <= original.length
+            || !SchemaUtils.findInvalidColumnNamesInSchema(expected.schema()).isEmpty())
+          throw denied();
+        SchemaMergingUtils.checkColumnNameDuplication(
+            expected.schema(), "in append candidate", false);
+        for (int i = 0; i < fields.length; i++) {
+          if (i < original.length) {
+            if (!original[i].equals(fields[i])) throw denied();
+          } else if (!fields[i].nullable() || !scalar(fields[i].dataType())) throw denied();
+        }
+        return expected;
+      } catch (Exception | LinkageError failure) {
+        throw denied();
+      }
+    }
+
+    private static boolean scalar(DataType type) {
+      return type instanceof DecimalType
+          || Arrays.asList(
+                  DataTypes.BooleanType,
+                  DataTypes.ByteType,
+                  DataTypes.ShortType,
+                  DataTypes.IntegerType,
+                  DataTypes.LongType,
+                  DataTypes.FloatType,
+                  DataTypes.DoubleType,
+                  DataTypes.StringType,
+                  DataTypes.BinaryType,
+                  DataTypes.DateType,
+                  DataTypes.TimestampType)
+              .contains(type);
     }
 
     private static Map<String, String> settings(SparkSession session) {
@@ -1019,12 +1123,21 @@ final class DeltaRangerRegistrationBindings {
     private final BoundAppendTransaction before;
     private final Map<String, String> publishedSettings;
     private final AppendPublication publicationOwner;
+    private final Metadata expectedMetadata;
+    private final String expectedLogicalSchema;
+    private final boolean evolves;
     private boolean closed;
     private boolean advancedPublication;
 
-    private BoundAppendCommit(BoundAppendTransaction before, AppendPublication publicationOwner) {
+    private BoundAppendCommit(
+        BoundAppendTransaction before,
+        AppendPublication publicationOwner,
+        Metadata expectedMetadata) {
       this.before = before;
       this.publicationOwner = Objects.requireNonNull(publicationOwner);
+      this.expectedMetadata = expectedMetadata;
+      this.expectedLogicalSchema = logicalSchema(expectedMetadata.schema());
+      this.evolves = !before.snapshot.metadata().equals(expectedMetadata);
       Map<String, String> expected = new TreeMap<>(before.settings);
       expected.put(
           "spark.databricks.delta.lastCommitVersionInSession",
@@ -1032,28 +1145,18 @@ final class DeltaRangerRegistrationBindings {
       publishedSettings = Collections.unmodifiableMap(expected);
     }
 
+    /** Expires postcommit authority without masking an exception from native commit. */
+    @Override
+    public void close() {
+      closed = true;
+    }
+
     void requireContext() {
-      BoundAppendTarget target = before.target;
-      if (closed
-          || before.closed
-          || Thread.currentThread() != before.thread
-          || SparkSession.getActiveSession().isEmpty()
-          || SparkSession.getActiveSession().get() != before.session
-          || before.transaction.snapshot() != before.snapshot
-          || before.transaction.deltaLog() != target.log()
-          || before.transaction.catalogTable().isEmpty()
-          || before.transaction.catalogTable().get() != target.descriptor()
-          || (OptimisticTransaction.getActive().isDefined()
-              && OptimisticTransaction.getActive().get() != before.transaction)) throw denied();
-      DeltaRangerQuerySubject current = DeltaRangerQuerySubject.current(before.session);
-      if (!before.subject.user().equals(current.user())
-          || !before.subject.groups().equals(current.groups())
-          || (!before.settings.equals(BoundAppendTransaction.settings(before.session))
-              && !publishedSettings.equals(BoundAppendTransaction.settings(before.session))))
-        throw denied();
-      target.engine().requireSnapshot(before.stamp);
-      target.requireRetained();
-      target.anchor.owner.reader.requireLive(before.publication);
+      requireCapturedContext();
+      if (evolves) {
+        before.authorizeAlter();
+        requireCapturedContext();
+      }
     }
 
     void requireLive() {
@@ -1073,13 +1176,40 @@ final class DeltaRangerRegistrationBindings {
       } else {
         if (!published || !sameOwnPublication(current)) throw denied();
       }
-      target.anchor.requireCompatiblePublication(current);
+      // The shared comparator remains strict for readers and all unproved publications.
+      if (original) target.anchor.requireCompatiblePublication(current);
       requireContext();
       if (publicationOwner.requirePublication(this, before.transaction) != published)
         throw denied();
       requireNativeState(published);
       target.anchor.owner.reader.requireLive(current);
       if (!original) advancedPublication = true;
+    }
+
+    private void requireCapturedContext() {
+      BoundAppendTarget target = before.target;
+      if (closed
+          || before.closed
+          || Thread.currentThread() != before.thread
+          || SparkSession.getActiveSession().isEmpty()
+          || SparkSession.getActiveSession().get() != before.session
+          || before.transaction.snapshot() != before.snapshot
+          || !expectedMetadata.equals(before.transaction.metadata())
+          || !before.snapshot.protocol().equals(before.transaction.protocol())
+          || before.transaction.deltaLog() != target.log()
+          || before.transaction.catalogTable().isEmpty()
+          || before.transaction.catalogTable().get() != target.descriptor()
+          || (OptimisticTransaction.getActive().isDefined()
+              && OptimisticTransaction.getActive().get() != before.transaction)) throw denied();
+      DeltaRangerQuerySubject current = DeltaRangerQuerySubject.current(before.session);
+      if (!before.subject.user().equals(current.user())
+          || !before.subject.groups().equals(current.groups())
+          || (!before.settings.equals(BoundAppendTransaction.settings(before.session))
+              && !publishedSettings.equals(BoundAppendTransaction.settings(before.session))))
+        throw denied();
+      target.engine().requireSnapshot(before.stamp);
+      target.requireRetained();
+      target.anchor.owner.reader.requireLive(before.publication);
     }
 
     private void requireNativeState(boolean published) {
@@ -1096,17 +1226,14 @@ final class DeltaRangerRegistrationBindings {
           || !original.catalog().equals(current.catalog())
           || !original.database().equals(current.database())
           || !original.table().equals(current.table())
-          || !original.schemaJson().equals(current.schemaJson())) return false;
+          || !original.identity().equals(current.identity())
+          || !original.location().equals(current.location())
+          || !original.nativeId().equals(current.nativeId())
+          || !expectedLogicalSchema.equals(current.schemaJson())) return false;
       Map<String, String> expected = new TreeMap<>(original.receipt().toProperties());
       expected.put(
           "delta.registration.receipt.nativeVersion", Long.toString(current.nativeVersion()));
       return expected.equals(current.receipt().toProperties());
-    }
-
-    /** Expires postcommit authority without masking an exception from native commit. */
-    @Override
-    public void close() {
-      closed = true;
     }
   }
 

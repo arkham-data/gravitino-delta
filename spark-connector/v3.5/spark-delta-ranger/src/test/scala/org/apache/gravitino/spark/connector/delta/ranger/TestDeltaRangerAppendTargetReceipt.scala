@@ -26,17 +26,449 @@ import java.nio.file.{Files, Path, Paths}
 import java.security.PrivilegedExceptionAction
 import java.util.concurrent.TimeUnit
 import org.apache.hadoop.security.UserGroupInformation
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations, OptimisticTransaction}
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.mockito.Mockito._
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.types.{StringType, StructType, StructField, LongType, MetadataBuilder}
+import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.gravitino.rel.Column
+import org.apache.gravitino.spark.connector.SparkTypeConverter
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 
 class TestDeltaRangerAppendTargetReceipt {
+  @Test
+  def evolvingOwnPublicationRequiresProofAndKeepsReadGuardsStrict(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, _) =>
+      val target = bound(spark)
+      val origins = Seq(classOf[SparkSession], classOf[Metadata], classOf[StructType]).map(c =>
+        c.getName + "=" + c.getProtectionDomain.getCodeSource.getLocation
+      )
+      LoggerFactory
+        .getLogger(getClass)
+        .warn(
+          s"Schema authority runtime Spark=${spark.version} Delta=${io.delta.VERSION} Scala=${scala.util.Properties.versionNumberString} Java=${System.getProperty("java.version")}; ${origins.mkString("; ")}"
+        )
+      val fixture = NativeSelectFixture.bindingFixture(spark, "a")
+      val originalColumns = fixture.columns
+      val versionKey = "delta.registration.receipt.nativeVersion"
+      val originalVersion = fixture.properties.get(versionKey)
+      val sessionKey = "spark.databricks.delta.lastCommitVersionInSession"
+      val originalSetting = spark.conf.getOption(sessionKey)
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val owner = target.bindTransaction(spark, transaction)
+        val candidate = transaction.metadata.copy(
+          schemaString = transaction.metadata.schema.add("extra", StringType, nullable = true).json
+        )
+        owner.authorizeSchemaEvolution()
+        transaction.updateMetadata(candidate)
+        var proved = false
+        val publication = new DeltaRangerRegistrationBindings.AppendPublication {
+          override def requirePublication(
+              context: DeltaRangerRegistrationBindings.BoundAppendCommit,
+              actual: OptimisticTransaction
+          ): Boolean = {
+            assertSame(transaction, actual)
+            proved
+          }
+        }
+        val commit = owner.beginCommit(publication, transaction.metadata)
+        def advance(): Unit = {
+          fixture.properties.put(versionKey, (transaction.readVersion + 1).toString)
+          fixture.columns = originalColumns :+ Column.of(
+            "extra",
+            new SparkTypeConverter().toGravitinoType(StringType),
+            null,
+            true,
+            false,
+            Column.DEFAULT_VALUE_NOT_SET
+          )
+        }
+        def original(): Unit = {
+          fixture.properties.put(versionKey, originalVersion)
+          fixture.columns = originalColumns
+        }
+        try {
+          commit.requireLive()
+          advance()
+          assertThrows(classOf[SecurityException], () => commit.requireLive())
+          original()
+          proved = true
+          spark.conf.set(sessionKey, transaction.readVersion + 1)
+          commit.requireLive()
+          advance()
+          commit.requireLive()
+          assertThrows(classOf[SecurityException], () => target.validateCurrent(spark))
+          original()
+          assertThrows(classOf[SecurityException], () => commit.requireLive())
+          advance()
+          commit.requireLive()
+          transaction.updateProtocol(transaction.protocol.copy(minWriterVersion = 6))
+          assertThrows(classOf[SecurityException], () => commit.requireContext())
+        } finally {
+          commit.close()
+          owner.close()
+          original()
+          restore(spark, sessionKey, originalSetting)
+        }
+      }
+    }
+
+  @Test
+  def matchingSchemaCommitKeepsUpdateOnlyAuthority(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, policy) =>
+      val target = bound(spark)
+      policy.requests.clear()
+      policy.onRequest = request => {
+        if (request.getAccessType == "update") policy.denied.remove("a:*")
+        else policy.denied.add("a:*")
+      }
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val owner = target.bindTransaction(spark, transaction)
+        val commit = owner.beginCommit(publication(transaction))
+        try {
+          commit.requireLive()
+          owner.requireLive()
+          assertFalse(policy.requests.isEmpty)
+          assertTrue(policy.requests.asScala.forall(_.getAccessType == "update"))
+          assertEquals(transaction.snapshot.metadata, transaction.metadata)
+        } finally {
+          commit.close()
+          owner.close()
+        }
+      }
+    }
+
+  @Test
+  def schemaCandidateNeedsPriorAlterOnItsExactOwner(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, policy) =>
+      val target = bound(spark)
+      policy.onRequest = request => {
+        if (request.getAccessType == "update") policy.denied.remove("a:*")
+        else policy.denied.add("a:*")
+      }
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val updateOnly = target.bindTransaction(spark, transaction)
+        try {
+          assertThrows(classOf[SecurityException], () => updateOnly.authorizeSchemaEvolution())
+          transaction.updateMetadata(additive(transaction.metadata))
+          assertThrows(
+            classOf[SecurityException],
+            () =>
+              updateOnly
+                .beginCommit(publication(transaction, published = true), transaction.metadata)
+          )
+        } finally updateOnly.close()
+      }
+      policy.onRequest = request => {
+        if (request.getAccessType == "alter") policy.denied.remove("a:*")
+        else policy.denied.add("a:*")
+      }
+      assertThrows(
+        classOf[SecurityException],
+        () =>
+          target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+            target.bindTransaction(spark, transaction)
+          }
+      )
+      policy.onRequest = _ => ()
+      policy.denied.clear()
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val authorized = target.bindTransaction(spark, transaction)
+        val unauthorized = target.bindTransaction(spark, transaction)
+        try {
+          authorized.authorizeSchemaEvolution()
+          val foreign =
+            new OptimisticTransaction(target.log(), Some(target.descriptor()), transaction.snapshot)
+          OptimisticTransaction.withActive(foreign, overrideExistingTransaction = true) {
+            assertThrows(classOf[SecurityException], () => authorized.authorizeSchemaEvolution())
+          }
+          val supplied = additive(transaction.metadata)
+          assertThrows(
+            classOf[SecurityException],
+            () => authorized.beginCommit(publication(transaction), supplied)
+          )
+          transaction.updateMetadata(supplied)
+          assertThrows(classOf[SecurityException], () => unauthorized.authorizeSchemaEvolution())
+          assertThrows(
+            classOf[SecurityException],
+            () =>
+              unauthorized
+                .beginCommit(publication(transaction, published = true), transaction.metadata)
+          )
+          assertThrows(
+            classOf[SecurityException],
+            () =>
+              authorized.beginCommit(
+                publication(transaction),
+                transaction.metadata.copy(description = "foreign")
+              )
+          )
+          val commit = authorized.beginCommit(publication(transaction), transaction.metadata)
+          try commit.requireLive()
+          finally commit.close()
+        } finally {
+          authorized.close()
+          unauthorized.close()
+        }
+      }
+    }
+
+  @Test
+  def schemaAlterIsFreshAtTransactionAndCommitBoundaries(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, policy) =>
+      val target = bound(spark)
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val owner = target.bindTransaction(spark, transaction)
+        try {
+          policy.requests.clear()
+          owner.authorizeSchemaEvolution()
+          assertFalse(policy.requests.isEmpty)
+          val subject = DeltaRangerQuerySubject.current(spark)
+          assertTrue(
+            policy.requests.asScala.forall(request =>
+              request.getAccessType == "alter" && request.getUser == subject.user() &&
+                request.getUserGroups == subject.groups() &&
+                request.getResource.getValue("catalog") == "a" &&
+                request.getResource.getValue("database") == "db" &&
+                request.getResource.getValue("table") == "t" &&
+                request.getResource.getValue("column") == "*"
+            )
+          )
+          val stamp = policy.engine.snapshotStamp()
+          policy.denied.add("a:*")
+          assertThrows(classOf[SecurityException], () => owner.requireLive())
+          policy.engine.requireSnapshot(stamp)
+          policy.denied.clear()
+          transaction.updateMetadata(additive(transaction.metadata))
+          val commit = owner.beginCommit(publication(transaction), transaction.metadata)
+          try {
+            val before = Instant.now().minusMillis(1)
+            policy.requests.clear()
+            commit.requireLive()
+            assertFalse(policy.requests.isEmpty)
+            assertTrue(policy.requests.asScala.forall(_.getAccessTime.toInstant.isAfter(before)))
+            policy.denied.add("a:*")
+            assertThrows(classOf[SecurityException], () => commit.requireContext())
+            assertThrows(classOf[SecurityException], () => commit.requireLive())
+            policy.engine.requireSnapshot(stamp)
+            policy.denied.clear()
+            policy.onRequest = _ => spark.conf.set("task2.schema.context", "changed")
+            assertThrows(classOf[SecurityException], () => commit.requireContext())
+            policy.onRequest = _ => ()
+            spark.conf.unset("task2.schema.context")
+            commit.requireLive()
+          } finally commit.close()
+        } finally owner.close()
+      }
+    }
+
+  @Test
+  def schemaHandoffRejectsNativeNonAdditiveMetadataAndProtocolChanges(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, _) =>
+      val target = bound(spark)
+      val changes: Seq[Metadata => Metadata] = Seq(
+        base => additive(base).copy(id = "foreign-native-id"),
+        base => additive(base).copy(name = "foreign-name"),
+        base => additive(base).copy(description = "foreign-description"),
+        base => additive(base).copy(createdTime = Some(7L)),
+        base =>
+          base.copy(schemaString =
+            StructType(
+              base.schema.fields.updated(
+                0,
+                base.schema
+                  .fields(0)
+                  .copy(metadata = new MetadataBuilder().putString("comment", "changed").build())
+              )
+            ).add("extra", StringType).json
+          ),
+        base =>
+          additive(base)
+            .copy(configuration = base.configuration + ("application.key" -> "changed")),
+        base =>
+          base.copy(schemaString =
+            StructType(base.schema.fields.reverse).add("extra", StringType).json
+          ),
+        base =>
+          base.copy(schemaString =
+            StructType(base.schema.fields.dropRight(1)).add("extra", StringType).json
+          ),
+        base =>
+          base.copy(schemaString =
+            base.schema.add("extra", new StructType().add("nested", LongType)).json
+          )
+      )
+      changes.foreach { change =>
+        target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+          val owner = target.bindTransaction(spark, transaction)
+          try {
+            owner.authorizeSchemaEvolution()
+            transaction.updateMetadata(change(transaction.metadata))
+            assertThrows(
+              classOf[SecurityException],
+              () => owner.beginCommit(publication(transaction), transaction.metadata)
+            )
+          } finally owner.close()
+        }
+      }
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val owner = target.bindTransaction(spark, transaction)
+        try {
+          owner.authorizeSchemaEvolution()
+          transaction.updateMetadata(additive(transaction.metadata))
+          transaction.updateProtocol(transaction.protocol.copy(minWriterVersion = 6))
+          assertThrows(
+            classOf[SecurityException],
+            () => owner.beginCommit(publication(transaction), transaction.metadata)
+          )
+        } finally owner.close()
+      }
+    }
+
+  @Test
+  def schemaCommitRejectsReplacedPublicationAndChangedContext(): Unit =
+    NativeSelectFixture.withBoundSpark { (spark, policy) =>
+      val target = bound(spark)
+      val fixture = NativeSelectFixture.bindingFixture(spark, "a")
+      val properties = fixture.properties.asScala.toMap
+      val columns = fixture.columns
+      val sessionKey = "spark.databricks.delta.lastCommitVersionInSession"
+      val setting = spark.conf.getOption(sessionKey)
+      target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+        val owner = target.bindTransaction(spark, transaction)
+        owner.authorizeSchemaEvolution()
+        transaction.updateMetadata(additive(transaction.metadata))
+        var proved = false
+        val proof = new DeltaRangerRegistrationBindings.AppendPublication {
+          override def requirePublication(
+              context: DeltaRangerRegistrationBindings.BoundAppendCommit,
+              actual: OptimisticTransaction
+          ): Boolean = { assertSame(transaction, actual); proved }
+        }
+        val commit = owner.beginCommit(proof, transaction.metadata)
+        def reset(): Unit = {
+          fixture.properties.clear()
+          fixture.properties.putAll(properties.asJava)
+          fixture.columns = columns
+        }
+        try {
+          Seq("id", "generation", "token", "location", "nativeId", "nativeVersion").foreach { key =>
+            fixture.properties.put(
+              "delta.registration.receipt." + key,
+              if (key == "id" || key == "generation" || key == "nativeVersion") "2" else "replaced"
+            )
+            assertThrows(classOf[SecurityException], () => commit.requireLive())
+            reset()
+          }
+          proved = true
+          spark.conf.set(sessionKey, transaction.readVersion + 1)
+          val ownColumns = columns :+ Column.of(
+            "extra",
+            new SparkTypeConverter().toGravitinoType(StringType),
+            null,
+            true,
+            false,
+            Column.DEFAULT_VALUE_NOT_SET
+          )
+          Seq("id", "generation", "token", "location", "nativeId", "nativeVersion", "schema")
+            .foreach { key =>
+              fixture.properties.put(
+                "delta.registration.receipt.nativeVersion",
+                (transaction.readVersion + 1).toString
+              )
+              fixture.columns = ownColumns
+              if (key == "schema") fixture.columns = columns
+              else
+                fixture.properties.put(
+                  "delta.registration.receipt." + key,
+                  if (key == "id" || key == "generation" || key == "nativeVersion") "2"
+                  else "replaced"
+                )
+              assertThrows(classOf[SecurityException], () => commit.requireLive())
+              reset()
+            }
+          Seq("subject", "settings").foreach { change =>
+            if (change == "subject")
+              spark.sparkContext.setLocalProperty("kyuubi.session.user", "changed-user")
+            else spark.conf.set("task2.schema.context", "changed")
+            assertThrows(classOf[SecurityException], () => commit.requireLive())
+            spark.sparkContext.setLocalProperty("kyuubi.session.user", null)
+            spark.conf.unset("task2.schema.context")
+          }
+          commit.requireLive()
+          publication(policy, "policy")
+          assertThrows(classOf[SecurityException], () => commit.requireLive())
+        } finally {
+          commit.close()
+          owner.close()
+          reset()
+          restore(spark, sessionKey, setting)
+        }
+      }
+    }
+
+  @Test
+  def schemaContinuationExpiresWithLeaseOrReboundTarget(): Unit =
+    Seq("expiry", "rebound").foreach { change =>
+      NativeSelectFixture.withBoundSpark { (spark, _) =>
+        val target = bound(spark)
+        val fixture = NativeSelectFixture.bindingFixture(spark, "a")
+        target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
+          val owner = target.bindTransaction(spark, transaction)
+          owner.authorizeSchemaEvolution()
+          transaction.updateMetadata(additive(transaction.metadata))
+          val commit = owner.beginCommit(publication(transaction), transaction.metadata)
+          try {
+            commit.requireLive()
+            if (change == "expiry") fixture.clock.set(TimeUnit.SECONDS.toNanos(301))
+            else
+              fixture.wrapper
+                .registrationBindings()
+                .load(Identifier.of(Array("db"), "t"), () => target.table())
+            assertThrows(classOf[SecurityException], () => commit.requireLive())
+            assertThrows(classOf[SecurityException], () => owner.requireLive())
+          } finally {
+            commit.close()
+            owner.close()
+          }
+        }
+      }
+    }
+
+  private def additive(base: Metadata): Metadata =
+    base.copy(schemaString =
+      base.schema
+        .add(
+          StructField(
+            "extra",
+            StringType,
+            nullable = true,
+            new MetadataBuilder()
+              .putString("comment", "ordinary added field")
+              .putString("application", "kept")
+              .build()
+          )
+        )
+        .json
+    )
+
+  private def publication(
+      transaction: OptimisticTransaction,
+      published: Boolean = false
+  ): DeltaRangerRegistrationBindings.AppendPublication =
+    new DeltaRangerRegistrationBindings.AppendPublication {
+      override def requirePublication(
+          context: DeltaRangerRegistrationBindings.BoundAppendCommit,
+          actual: OptimisticTransaction
+      ): Boolean = { assertSame(transaction, actual); published }
+    }
+
   @Test
   def targetReceiptRequestsOnlyCanonicalUpdateAtEveryValidation(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, policy) =>

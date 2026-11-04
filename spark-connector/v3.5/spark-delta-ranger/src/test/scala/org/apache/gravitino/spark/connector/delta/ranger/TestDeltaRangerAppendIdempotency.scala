@@ -65,14 +65,14 @@ class TestDeltaRangerAppendIdempotency {
           "pending-effective-state",
           s"kind=$kind updateSucceeded=true metadata=${transaction.metadata.json} snapshotMetadata=${transaction.snapshot.metadata.json} protocol=${transaction.protocol.json} snapshotProtocol=${transaction.snapshot.protocol.json}"
         )
-        val commit = new DeltaRangerAppendCommit(
-          owner,
-          transaction,
-          Nil,
-          DeltaOperations.Write(SaveMode.Append, Some(Nil), None, None),
-          Map.empty
-        )
-        rejected("Delta append commit rejected: pending metadata or protocol changed") {
+        rejected("Native Delta registration binding is unavailable") {
+          val commit = new DeltaRangerAppendCommit(
+            owner,
+            transaction,
+            Nil,
+            DeltaOperations.Write(SaveMode.Append, Some(Nil), None, None),
+            Map.empty
+          )
           commit.run()
         }
         assertNull(DeltaRangerNativeOperation.current())
