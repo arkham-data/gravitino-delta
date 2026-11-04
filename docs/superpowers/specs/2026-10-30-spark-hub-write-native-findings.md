@@ -17,6 +17,8 @@
 
 # Spark Hub native write findings — first-task characterization
 
+The subsequent bounded [initial-create findings](2026-11-04-delta-create-boundary-findings.md) qualify the native CREATE0/publication-evidence/WRITE1 sequence on local filesystem with both Delta pins.
+
 Measured on 2026-10-30. The original Spark/Delta process completed all 15 fixed
 cases with exit 0. Independent offline verification concludes
 `characterizationComplete=true`, `nativeCandidateViable=false`,
