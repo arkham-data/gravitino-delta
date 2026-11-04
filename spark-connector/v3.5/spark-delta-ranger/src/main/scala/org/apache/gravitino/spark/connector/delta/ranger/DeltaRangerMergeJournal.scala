@@ -36,15 +36,21 @@ import java.util.UUID
 import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.databind.{DeserializationFeature, JsonNode, ObjectMapper}
 import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 
 /** Private durable evidence. No journal state grants query or publication authority. */
-private[ranger] final class DeltaRangerMergeJournal(
+private[ranger] final class DeltaRangerMergeJournal private (
     directory: Path,
     identity: Option[(String, Long)],
-    command: String
+    command: String,
+    evolution: Option[DeltaRangerMergeEvolutionIntent]
 ) {
   import DeltaRangerMergeJournal._
+
+  /** Existing fixed-schema constructor retains its format-1 contract. */
+  def this(directory: Path, identity: Option[(String, Long)], command: String) =
+    this(directory, identity, command, None)
   private val root = directory.resolve("merge")
   private val permissions = PosixFilePermissions.fromString("rwx------")
   if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS))
@@ -61,9 +67,16 @@ private[ranger] final class DeltaRangerMergeJournal(
     .map { case (app, version) => hash(vector(Vector(app, version.toString))) }
     .getOrElse(UUID.randomUUID().toString)
   private val file = root.resolve(key + ".json")
-  private var retained: Option[Entry] = read()
+  evolution.foreach { value =>
+    if (
+      value.fingerprint != command || value.transactionIdentity != identity ||
+      value.baseMetadata == value.expectedMetadata
+    ) rejected("invalid evolving command binding")
+  }
+  private var retained: Option[Entry] = readFile(root, file, identity)
   retained.foreach(entry =>
-    if (entry.command != command) rejected("transaction identity intent changed")
+    if (entry.command != command || entry.evolution.map(_.encoded) != evolution.map(_.encoded))
+      rejected("transaction identity intent changed")
   )
 
   def existing: Option[Entry] = retained
@@ -71,12 +84,21 @@ private[ranger] final class DeltaRangerMergeJournal(
   def prepare(proof: String, version: Long): Unit = {
     if (retained.nonEmpty || Files.exists(file, LinkOption.NOFOLLOW_LINKS))
       rejected("attempt already recorded")
-    save(Entry(Intent(command, proof, version), Prepared, None), initial = true)
+    evolution.foreach(_.requireProofBinding(proof, version))
+    save(
+      Entry(Intent(command, proof, version), Prepared, None, evolution = evolution),
+      initial = true
+    )
   }
 
   def committed(bytes: Array[Byte]): Unit = {
     val entry = retained.getOrElse(rejected("missing prepared intent"))
     if (entry.state == Unknown) rejected("unknown publication")
+    entry.evolution.foreach { value =>
+      value.requireProofBinding(entry.proof, entry.version)
+      // Task 3 must extend the existing native verifier before evolving evidence can advance.
+      rejected("evolving native publication verification is not installed")
+    }
     DeltaRangerMergeCommit.verifyPublication(bytes, entry.proof)
     val digest = hash(bytes)
     if (entry.digest.exists(_ != digest)) rejected("publication digest changed")
@@ -93,7 +115,7 @@ private[ranger] final class DeltaRangerMergeJournal(
   def skipped(): Unit = {
     val entry = retained.getOrElse(rejected("missing prepared no-op"))
     if (
-      identity.nonEmpty || entry.state != Prepared || entry.digest.nonEmpty ||
+      entry.evolution.nonEmpty || identity.nonEmpty || entry.state != Prepared || entry.digest.nonEmpty ||
       mapper.readTree(entry.proof).get("actions").size() != 0
     ) rejected("invalid native no-op")
     save(entry.copy(state = Reconciled, skipped = true))
@@ -103,66 +125,18 @@ private[ranger] final class DeltaRangerMergeJournal(
     if (entry.state == Prepared) save(entry.copy(state = Unknown))
   }
 
-  private def read(): Option[Entry] = {
-    if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return None
-    if (
-      Files.isSymbolicLink(file) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) ||
-      Files.size(file) > MaxBytes || Files.getPosixFilePermissions(file) != PosixFilePermissions
-        .fromString("rw-------") ||
-      Files.getOwner(file) != Files.getOwner(root)
-    ) rejected("invalid evidence file")
-    val input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)
-    val bytes =
-      try input.readNBytes(MaxBytes + 1)
-      finally input.close()
-    if (bytes.length > MaxBytes) rejected("evidence exceeds bounded encoding")
-    val node = mapper.readTree(bytes)
-    if (
-      node == null || !node.isObject || node.fieldNames().asScala.toSet !=
-        Set("format", "command", "proof", "version", "state", "digest", "skipped") ||
-        !node.get("format").isIntegralNumber || node.get("format").asInt(-1) != 1 || !node
-          .get("version")
-          .isIntegralNumber ||
-        !node.get("version").canConvertToLong || node.get("version").longValue() < 0 ||
-        Seq("command", "proof", "state").exists(k => !node.get(k).isTextual) ||
-        !(node.get("digest").isNull || node.get("digest").isTextual)
-    ) rejected("invalid evidence encoding")
-    val state = node.get("state").textValue() match {
-      case "PREPARED"   => Prepared
-      case "COMMITTED"  => Committed
-      case "RECONCILED" => Reconciled
-      case "UNKNOWN"    => Unknown
-      case _            => rejected("invalid evidence state")
-    }
-    if (!node.get("skipped").isBoolean) rejected("invalid no-op encoding")
-    val skipped = node.get("skipped").booleanValue()
-    val digest = Option(node.get("digest")).filterNot(_.isNull).map(_.textValue())
-    if (
-      digest.exists(!_.matches("[0-9a-f]{64}")) ||
-      (Set[Phase](Committed, Reconciled)(state) && digest.isEmpty && !skipped) ||
-      (skipped && (state != Reconciled || digest.nonEmpty || identity.nonEmpty))
-    ) rejected("invalid evidence state")
-    Some(
-      Entry(
-        Intent(
-          node.get("command").textValue(),
-          node.get("proof").textValue(),
-          node.get("version").longValue()
-        ),
-        state,
-        digest,
-        skipped
-      )
-    )
-  }
-
   private def save(entry: Entry, initial: Boolean = false): Unit = {
     if (!initial && retained.isEmpty) rejected("missing owned claim")
     val node = mapper.createObjectNode()
-    node.put("format", 1); node.put("command", entry.command); node.put("proof", entry.proof)
+    node.put("format", if (entry.evolution.isDefined) 2 else 1); node.put("command", entry.command);
+    node.put("proof", entry.proof)
     node.put("version", entry.version); node.put("state", entry.state.name);
     node.put("digest", entry.digest.orNull)
     node.put("skipped", entry.skipped)
+    entry.evolution.foreach { value =>
+      node.put("kind", "additive-merge-v1")
+      node.set[JsonNode]("evolution", mapper.readTree(value.encoded))
+    }
     val bytes = mapper.writeValueAsBytes(node)
     if (bytes.length > MaxBytes) rejected("evidence exceeds bounded encoding")
     val temporary = Files.createTempFile(
@@ -210,12 +184,139 @@ private[ranger] object DeltaRangerMergeJournal {
       intent: Intent,
       state: Phase,
       digest: Option[String],
-      skipped: Boolean = false
+      skipped: Boolean = false,
+      evolution: Option[DeltaRangerMergeEvolutionIntent] = None
   ) {
     def command: String = intent.command
     def proof: String = intent.proof
     def version: Long = intent.version
   }
+  private def readFile(root: Path, file: Path, identity: Option[(String, Long)]): Option[Entry] = {
+    if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return None
+    if (
+      Files.isSymbolicLink(file) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) ||
+      Files.size(file) > MaxBytes || Files.getPosixFilePermissions(file) != PosixFilePermissions
+        .fromString("rw-------") ||
+      Files.getOwner(file) != Files.getOwner(root)
+    ) rejected("invalid evidence file")
+    val input = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)
+    val bytes =
+      try input.readNBytes(MaxBytes + 1)
+      finally input.close()
+    if (bytes.length > MaxBytes) rejected("evidence exceeds bounded encoding")
+    val node =
+      try mapper.readTree(bytes)
+      catch {
+        case NonFatal(error) =>
+          throw new SecurityException("Delta MERGE journal rejected: invalid evidence JSON", error)
+      }
+    val format = Option(node).flatMap(n => Option(n.get("format")))
+    if (!format.exists(n => n.isIntegralNumber && n.canConvertToInt && Set(1, 2)(n.intValue())))
+      rejected("invalid evidence format")
+    val evolving = format.get.intValue() == 2
+    if (
+      node == null || !node.isObject || node.fieldNames().asScala.toSet !=
+        (Set("format", "command", "proof", "version", "state", "digest", "skipped") ++
+          (if (evolving) Set("kind", "evolution") else Set.empty[String])) || !node
+          .get("version")
+          .isIntegralNumber ||
+        !node.get("version").canConvertToLong || node.get("version").longValue() < 0 ||
+        Seq("command", "proof", "state").exists(k => !node.get(k).isTextual) ||
+        !(node.get("digest").isNull || node.get("digest").isTextual)
+    ) rejected("invalid evidence encoding")
+    val state = node.get("state").textValue() match {
+      case "PREPARED"   => Prepared
+      case "COMMITTED"  => Committed
+      case "RECONCILED" => Reconciled
+      case "UNKNOWN"    => Unknown
+      case _            => rejected("invalid evidence state")
+    }
+    if (!node.get("skipped").isBoolean) rejected("invalid no-op encoding")
+    val skipped = node.get("skipped").booleanValue()
+    val digest = Option(node.get("digest")).filterNot(_.isNull).map(_.textValue())
+    if (
+      digest.exists(!_.matches("[0-9a-f]{64}")) ||
+      (Set[Phase](Committed, Reconciled)(state) && digest.isEmpty && !skipped) ||
+      (skipped && (state != Reconciled || digest.nonEmpty || identity.nonEmpty))
+    ) rejected("invalid evidence state")
+    val evolution = if (evolving) {
+      if (
+        !node
+          .get("kind")
+          .isTextual || node.get("kind").textValue() != "additive-merge-v1" || skipped ||
+        (Set[Phase](Prepared, Unknown)(state) && digest.nonEmpty)
+      ) rejected("invalid evolution state")
+      val value = DeltaRangerMergeEvolutionIntent.decode(node.get("evolution").toString)
+      if (
+        value.fingerprint != node
+          .get("command")
+          .textValue() || value.transactionIdentity != identity ||
+        value.baseMetadata == value.expectedMetadata
+      ) rejected("invalid evolution command binding")
+      value.requireProofBinding(node.get("proof").textValue(), node.get("version").longValue())
+      Some(value)
+    } else None
+    Some(
+      Entry(
+        Intent(
+          node.get("command").textValue(),
+          node.get("proof").textValue(),
+          node.get("version").longValue()
+        ),
+        state,
+        digest,
+        skipped,
+        evolution
+      )
+    )
+  }
+
+  /** Strict read-only lookup: absent identity or file never creates a claim or a directory. */
+  def peek(directory: Path, identity: Option[(String, Long)]): Option[Entry] = {
+    if (identity.isEmpty) return None
+    val root = directory.resolve("merge")
+    if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return None
+    if (
+      Files.isSymbolicLink(root) || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS) ||
+      Files.getPosixFilePermissions(root, LinkOption.NOFOLLOW_LINKS) != PosixFilePermissions
+        .fromString("rwx------") ||
+      Files.getOwner(root) != Files.getOwner(directory)
+    ) rejected("invalid private directory")
+    val (app, version) = identity.get
+    readFile(root, root.resolve(hash(vector(Vector(app, version.toString))) + ".json"), identity)
+  }
+
+  def evolving(directory: Path, intent: DeltaRangerMergeEvolutionIntent): DeltaRangerMergeJournal =
+    new DeltaRangerMergeJournal(
+      directory,
+      intent.transactionIdentity,
+      intent.fingerprint,
+      Some(intent)
+    )
+
+  /** Reopen only the exact peeked record after comparison with fresh, independently captured data.
+    */
+  def recovering(
+      directory: Path,
+      entry: Entry,
+      candidate: DeltaRangerMergeEvolutionIntent
+  ): DeltaRangerMergeJournal = {
+    val intent = entry.evolution.getOrElse(rejected("missing evolution evidence"))
+    if (entry.state == Unknown || entry.skipped || intent.transactionIdentity.isEmpty)
+      rejected("unknown evolution recovery")
+    intent.requireCurrent(candidate)
+    val current =
+      peek(directory, intent.transactionIdentity).getOrElse(rejected("missing retained evolution"))
+    def exact(value: Entry): Boolean = value.intent == entry.intent && value.state == entry.state &&
+      value.digest == entry.digest && value.skipped == entry.skipped && value.evolution.map(
+        _.encoded
+      ) == entry.evolution.map(_.encoded)
+    if (!exact(current)) rejected("peeked evidence changed")
+    val journal = evolving(directory, intent)
+    if (!journal.existing.exists(exact)) rejected("reopened evidence changed")
+    journal
+  }
+
   private val MaxBytes = 16 * 1024 * 1024
   private val mapper = new ObjectMapper()
     .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)

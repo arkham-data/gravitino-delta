@@ -84,6 +84,12 @@ The user selected this execution order: **schema evolution -> governed creation 
 
 CDF consumer/state improvements, optional maintenance, broad deployment/cutover and streaming can wait. Keep only recovery and policy checks necessary for correctness of the four selected capabilities in their own tasks. Use the existing Spark Hub callers to define required inputs/transformations and adapt them to Gravitino; add no Glue compatibility path. Tests needed to prove the selected behavior retain the pinned four Spark/Delta pairs and Ranger 2.8.0 requirement; do not open a separate deployment project or replay unchanged historical matrices.
 
+## Current schema work and closure dependencies
+
+The additive APPEND checkpoint is reviewed and pushed at `5bb3af7dd4d5cd54d4c1b45e705fc83abff72998`; its [results](../specs/2026-11-04-delta-schema-evolution-results.md) distinguish installed four-pair qualification from the still-required live Ranger 2.8.0/MinIO gate. [Additive MERGE implementation](2026-11-04-delta-merge-schema-evolution.md) is active. Its first pure schema adapter/native-control task is reviewed at `a84f9bfc0490346110ceec77072e9dd20d5250d8`; runtime governed MERGE evolution is not enabled by that task.
+
+A remaining schema-track dependency is ordinary governed CDF across admitted additive changes. Current `DeltaRangerCdfHistory.profile` requires every historical schema in the requested interval to equal the current schema. Incremental ELT can span an added column, so schema-track closure requires native-compatible, policy-governed handling of those intervals. Plan that bounded read change after the current MERGE slice; its recovery-only source deferral supplies no historical read authority. Broad CDF consumer/state changes remain deferred. Nested/type-changing evolution, metadata-only schema commands, and schema replacement need explicit supported/unsupported coverage against actual platform calls; overwriteSchema is owned by the selected overwrite/full-refresh workstream.
+
 ## Immediate steps
 
 - [x] Finish the existing append-AQE matrix and reviews, then push that reviewed milestone under standing authorization.
