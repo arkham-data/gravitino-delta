@@ -691,3 +691,78 @@ from `nativeCandidateViable`; `governedSupport` is always false. An original exi
 zero alone does not select a creation candidate. Rejected candidates, unknown
 phases and missing public hook/recovery boundaries remain explicit gaps. See
 [the measured findings](../../docs/superpowers/specs/2026-10-30-spark-hub-write-native-findings.md).
+
+## Governed initial schema CREATE
+
+`create_live.py` qualifies only the direct-user, initial `(id BIGINT)` schema profile
+against actual Gravitino, Ranger server/client 2.8.0 and MinIO. **Group-only CREATE
+is unsupported with the current SIMPLE application authentication:** Hadoop/Ranger
+groups do not reach Gravitino's SIMPLE principal. The full fixture records that
+RESERVE 403 separately, then proves group-role removal denies a fresh target before
+RESERVE. It does not label that attempted group creation successful. Qualifying
+end-to-end authenticated groups is required before group-only deployment.
+
+```bash
+python3 delta/acceptance/create_live.py \
+  --runtime /private/current-source-package/manifest.json \
+  --inputs /private/owned-create-fixture.json \
+  --output /private/fresh-create-evidence
+python3 -m unittest discover -s delta/acceptance -p 'test_create_live_checks.py'
+```
+
+The finite input object requires exactly `endpoints`, `rangerAdminFile`,
+`minioCredentialsFile`, `rangerRootProof`, `javaHome`, `sourceSecurityDirectory`,
+`sparkHomes`, `python`, `fixtureResource`, `fixtureSha256`, `identities`, `targets`,
+`requiredDownloads` and `profile`. Credential values stay in the referenced private
+files. `endpoints` references JSON containing only loopback `ranger-admin` and
+`minio` URLs. `sparkHomes` has exactly `3.5.4` and `3.5.6`; Java uses the established
+Java 17 fixture installation. The source-security directory supplies the existing
+logging template. Missing/unknown fields, changed fixture bytes and stale
+production sources/artifacts fail before provisioning.
+
+`identities` requires `nonce`, `subject`, `groupSubject`, `group`,
+`metadataPrincipal`, `serviceAdmin`, `metalake`, `catalog`, `database`,
+`otherDatabase`, `resourceService`, `resourceDefinition`, `appRole`, `otherRole`,
+`visibilityRole` and `prefix`. They must be owned identifiers matching
+`[a-z][a-z0-9_]{2,80}`. Actor, group actor, metadata principal and setup administrator
+must be distinct. The metadata principal owns only this isolated fixture catalog;
+the application actor receives no administrative or direct SELECT/UPDATE grant.
+
+`targets` contains unique fresh names for `no_grant`, `other_schema`, `allowed`,
+`revoked`, `direct_removed`, `group_allowed`, `group_removed`, `specific_deny` and
+`wildcard_allowed`. `requiredDownloads` contains nonnegative integer `policy` and
+`role` floors; actual completed response/model joins are also required. `profile`
+is `full` for the initial lifecycle or `repeat` for just no-grant, successful
+CREATE and downloaded revoke on subsequent runtime pairs. The fixture resource is
+exactly `spark-connector/v3.5/spark-delta/src/test/resources/native-create/spark-hub-options.json`;
+its hash must match both current bytes and the current-source assembly capture.
+No arbitrary SQL, callbacks, phase faults or mutation replay are accepted as input.
+
+Use the surviving owned assembly/provisioning primitives documented by this lane.
+The existing downloaded-query thin driver is selected explicitly; no second JVM
+framework or test-runtime-classpath substitution is used. Rebuild changed
+production sources once, then reuse verified unchanged bytes with actual stock
+Spark/native Delta manifests. Historical unchanged-production manifests do not
+qualify after connector or authorization-plugin changes.
+
+Each fresh JVM is bound to completed public grant/revoke state and actual secured
+policy/role response bytes. The runner retains original SQL/exit, wire requests and
+responses, positive object inventories, log0/checksum, reservation/PUBLISH/STATUS
+receipts and independent native/publication/status-needed outcomes. Public RESERVE
+assigns owner-derived permissions; successful creation does not prove the actor
+lacks owner-derived SELECT/UPDATE afterward. Revocation controls use fresh unowned
+names. A failure retains all effects and stops; it never retries native CREATE or
+PUBLISH. Group REST refusal has an explicit `UNSUPPORTED` classification.
+
+`verify_case`, `verify_native` and `verify_hashes` check correlated outcomes, exact
+empty native metadata/checksum and byte inventories. They do not turn a metadata
+404 or numeric policy floor into positive absence/download proof. The runner also
+checks original public mutations, actual UGI groups, provider origins and complete
+source/JAR inputs. Actual recorded fresh-JVM elapsed times are functional evidence;
+this lane does not measure production throughput or Ranger audit capacity. Timed
+mid-operation revocation remains in focused installed tests.
+
+See [the actual-service findings](../../docs/superpowers/specs/2026-11-04-delta-governed-schema-create-findings.md)
+for all four pairs, original retained failures, group limitations and the next M2
+ordinary-schema/partition/comment/property/createIfNotExists and M5 generated-date
+gaps. Schema evolution, inputs and overwrite remain open.
