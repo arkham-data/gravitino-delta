@@ -56,7 +56,12 @@ lacks those privileges.
 - Use the existing exact managed-policy selector. Ranger-authored access, mask and
   row-filter policies remain byte-for-byte unchanged across grant/update/revoke;
   an exact table policy cannot be mistaken for a schema wildcard policy. Duplicate
-  owned candidates still reject rather than selecting an arbitrary policy.
+  owned candidates still reject rather than selecting an arbitrary policy. Shared-role
+  deletion must recognize exact generated schema grants in a sibling Delta catalog
+  as well as table grants, preserve the role until the last catalog contribution
+  is removed, and keep foreign/broader-wildcard references blocked. This requires
+  a narrow sibling-grant classification extension; ordinary exact mutation
+  selection remains unchanged.
 - Startup does not rewrite existing live policies. An operator must explicitly
   grant/regrant through Gravitino after deploying the updated plugin. No automatic
   live Admin mutation, migration, API signature or service-definition change.

@@ -19,6 +19,7 @@
 package org.apache.gravitino.authorization.ranger.delta;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -186,6 +187,124 @@ class TestDeltaRangerPolicySelector {
   }
 
   @Test
+  void sharedSchemaRoleSurvivesFirstCatalogDeletionInEitherOrder() throws Exception {
+    for (boolean reverse : List.of(false, true)) {
+      assertSharedRoleDeletion(true, true, reverse);
+    }
+  }
+
+  @Test
+  void mixedSchemaAndTableRoleDeletesInEitherOrder() throws Exception {
+    for (boolean schemaFirst : List.of(false, true)) {
+      for (boolean reverse : List.of(false, true)) {
+        assertSharedRoleDeletion(schemaFirst, !schemaFirst, reverse);
+      }
+    }
+  }
+
+  @Test
+  void malformedSchemaSiblingReferencesBlockSharedRoleDeletion() throws Exception {
+    List<Consumer<RangerPolicy>> changes =
+        new ArrayList<>(
+            List.of(
+                p -> p.getResources().get("catalog").setValues(List.of("*")),
+                p -> p.getResources().get("catalog").setValues(List.of("delta_?")),
+                p -> p.getResources().get("catalog").setValues(List.of("delta_b", "delta_c")),
+                p -> p.getResources().get("database").setValues(List.of("*")),
+                p -> p.getResources().get("database").setValues(List.of("sa?es")),
+                p -> p.getResources().get("database").setValues(List.of("sal*")),
+                p -> p.getResources().get("database").setValues(List.of("sales", "other")),
+                p -> p.getResources().get("database").setValues(List.of("")),
+                p -> p.getResources().get("table").setValues(List.of("ord*")),
+                p -> p.getResources().get("table").setValues(List.of("o?ders")),
+                p -> p.getResources().get("table").setValues(List.of("*", "orders")),
+                p -> p.getResources().get("table").setValues(List.of("")),
+                p -> p.getResources().get("column").setValues(List.of("secret")),
+                p -> p.getResources().get("column").setValues(List.of("**")),
+                p -> p.getResources().get("column").setValues(List.of("*", "secret")),
+                p -> p.getResources().remove("database"),
+                p -> p.getResources().put("extra", new RangerPolicy.RangerPolicyResource("*")),
+                p -> p.setService("foreign"),
+                p -> p.getPolicyLabels().remove("gravitino-managed"),
+                p -> p.getPolicyLabels().remove("gravitino-metalake-id:10"),
+                p -> p.getPolicyLabels().remove("gravitino-catalog-id:21"),
+                p ->
+                    p.setPolicyLabels(
+                        List.of(
+                            "gravitino-managed",
+                            "gravitino-metalake-id:11",
+                            "gravitino-catalog-id:21")),
+                p ->
+                    p.setPolicyLabels(
+                        List.of(
+                            "gravitino-managed",
+                            "gravitino-metalake-id:10",
+                            "gravitino-catalog-id:20")),
+                p ->
+                    p.setPolicyLabels(
+                        List.of(
+                            "gravitino-managed",
+                            "gravitino-metalake-id:10",
+                            "gravitino-catalog-id:")),
+                p -> p.getPolicyLabels().add("gravitino-catalog-id:22"),
+                p -> {
+                  RangerPolicy.RangerDataMaskPolicyItem mask =
+                      new RangerPolicy.RangerDataMaskPolicyItem();
+                  mask.setRoles(List.of("GRAVITINO_METALAKE_10_ROLE_shared"));
+                  mask.setAccesses(
+                      List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+                  mask.setDataMaskInfo(
+                      new RangerPolicy.RangerPolicyItemDataMaskInfo("CUSTOM", null, "'MASKED'"));
+                  p.setPolicyType(RangerPolicy.POLICY_TYPE_DATAMASK);
+                  p.setPolicyItems(List.of());
+                  p.setDataMaskPolicyItems(List.of(mask));
+                },
+                p -> {
+                  RangerPolicy.RangerRowFilterPolicyItem filter =
+                      new RangerPolicy.RangerRowFilterPolicyItem();
+                  filter.setRoles(List.of("GRAVITINO_METALAKE_10_ROLE_shared"));
+                  filter.setAccesses(
+                      List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+                  filter.setRowFilterInfo(new RangerPolicy.RangerPolicyItemRowFilterInfo("id = 1"));
+                  p.setPolicyType(RangerPolicy.POLICY_TYPE_ROWFILTER);
+                  p.setPolicyItems(List.of());
+                  p.setRowFilterPolicyItems(List.of(filter));
+                }));
+    for (String key : List.of("catalog", "database", "table", "column")) {
+      changes.add(p -> p.getResources().get(key).setIsRecursive(true));
+      changes.add(p -> p.getResources().get(key).setIsExcludes(true));
+    }
+    for (int index = 0; index < changes.size(); index++) {
+      try (TestRangerDeltaAuthorization.Admin admin = new TestRangerDeltaAuthorization.Admin()) {
+        RangerAuthorizationHadoopSQLPlugin first = TestRangerDeltaAuthorization.plugin();
+        RangerAuthorizationHadoopSQLPlugin second = siblingPlugin();
+        SecurableObject a = catalogGrant("delta_a", true);
+        SecurableObject b = catalogGrant("delta_b", true);
+        first.onOwnerSet(a, null, TestRangerDeltaAuthorization.owner("alice", Owner.Type.USER));
+        first.onRoleCreated(TestRangerDeltaAuthorization.role("other", a));
+        RangerPolicy baseline = first.findManagedPolicy(first.translatePrivilege(a).get(0));
+        String otherBefore = admin.mapper.writeValueAsString(baseline);
+        first.onRoleCreated(TestRangerDeltaAuthorization.role("shared", a));
+        second.onRoleCreated(TestRangerDeltaAuthorization.role("shared", b));
+        RangerPolicy sibling = second.findManagedPolicy(second.translatePrivilege(b).get(0));
+        changes.get(index).accept(sibling);
+        admin.policies.put(sibling.getId(), sibling);
+        String siblingBefore = admin.mapper.writeValueAsString(sibling);
+        String rolesBefore = admin.mapper.writeValueAsString(admin.roles);
+        assertThrows(
+            RuntimeException.class,
+            () -> first.onRoleDeleted(TestRangerDeltaAuthorization.role("shared", a)),
+            "malformed sibling case " + index);
+        assertEquals(
+            siblingBefore, admin.mapper.writeValueAsString(admin.policies.get(sibling.getId())));
+        assertEquals(
+            otherBefore, admin.mapper.writeValueAsString(admin.policies.get(baseline.getId())));
+        assertEquals(rolesBefore, admin.mapper.writeValueAsString(admin.roles));
+      }
+    }
+  }
+
+  @Test
   void foreignOrdinaryRoleIsRejectedBeforeMembershipMutation() throws Exception {
     try (TestRangerDeltaAuthorization.Admin admin = new TestRangerDeltaAuthorization.Admin()) {
       RangerAuthorizationHadoopSQLPlugin plugin = TestRangerDeltaAuthorization.plugin();
@@ -327,6 +446,108 @@ class TestDeltaRangerPolicySelector {
                   TestRangerDeltaAuthorization.owner("alice", Owner.Type.USER)));
       assertTrue(admin.policies.isEmpty());
       assertEquals("foreign", admin.roles.get(foreign.getName()).getDescription());
+    }
+  }
+
+  private static void assertSharedRoleDeletion(boolean schemaA, boolean schemaB, boolean reverse)
+      throws Exception {
+    try (TestRangerDeltaAuthorization.Admin admin = new TestRangerDeltaAuthorization.Admin()) {
+      RangerAuthorizationHadoopSQLPlugin first = TestRangerDeltaAuthorization.plugin();
+      RangerAuthorizationHadoopSQLPlugin second = siblingPlugin();
+      SecurableObject a = catalogGrant("delta_a", schemaA);
+      SecurableObject b = catalogGrant("delta_b", schemaB);
+      first.onOwnerSet(a, null, TestRangerDeltaAuthorization.owner("alice", Owner.Type.USER));
+      second.onOwnerSet(b, null, TestRangerDeltaAuthorization.owner("bob", Owner.Type.USER));
+      first.onRoleCreated(TestRangerDeltaAuthorization.role("other_a", a));
+      second.onRoleCreated(TestRangerDeltaAuthorization.role("other_b", b));
+      RangerPolicy baselineA = first.findManagedPolicy(first.translatePrivilege(a).get(0));
+      RangerPolicy baselineB = second.findManagedPolicy(second.translatePrivilege(b).get(0));
+      installUnrelatedPolicies(admin, baselineA);
+      String unrelatedBefore = TestRangerDeltaAuthorization.foreignModels(admin);
+      String policiesBefore = admin.mapper.writeValueAsString(admin.policies);
+      String rolesBefore = admin.mapper.writeValueAsString(admin.roles);
+      first.onRoleCreated(TestRangerDeltaAuthorization.role("shared", a));
+      second.onRoleCreated(TestRangerDeltaAuthorization.role("shared", b));
+      assertEquals(
+          List.of(schemaA ? "create" : "select"),
+          TestRangerDeltaAuthorization.roleAccesses(
+              admin.policies.get(baselineA.getId()), "shared"));
+      assertEquals(
+          List.of(schemaB ? "create" : "select"),
+          TestRangerDeltaAuthorization.roleAccesses(
+              admin.policies.get(baselineB.getId()), "shared"));
+      String sharedRoleBefore =
+          admin.mapper.writeValueAsString(admin.roles.get("GRAVITINO_METALAKE_10_ROLE_shared"));
+      RangerPolicy firstBaseline = reverse ? baselineB : baselineA;
+      RangerPolicy lastBaseline = reverse ? baselineA : baselineB;
+      String siblingBefore =
+          admin.mapper.writeValueAsString(admin.policies.get(lastBaseline.getId()));
+      RangerAuthorizationHadoopSQLPlugin deletingFirst = reverse ? second : first;
+      RangerAuthorizationHadoopSQLPlugin deletingLast = reverse ? first : second;
+      SecurableObject firstGrant = reverse ? b : a;
+      SecurableObject lastGrant = reverse ? a : b;
+      assertTrue(
+          deletingFirst.onRoleDeleted(TestRangerDeltaAuthorization.role("shared", firstGrant)));
+      assertEquals(
+          sharedRoleBefore,
+          admin.mapper.writeValueAsString(admin.roles.get("GRAVITINO_METALAKE_10_ROLE_shared")));
+      assertEquals(
+          admin.mapper.writeValueAsString(firstBaseline),
+          admin.mapper.writeValueAsString(admin.policies.get(firstBaseline.getId())));
+      assertEquals(
+          siblingBefore, admin.mapper.writeValueAsString(admin.policies.get(lastBaseline.getId())));
+      assertEquals(unrelatedBefore, TestRangerDeltaAuthorization.foreignModels(admin));
+      assertTrue(
+          deletingLast.onRoleDeleted(TestRangerDeltaAuthorization.role("shared", lastGrant)));
+      assertFalse(admin.roles.containsKey("GRAVITINO_METALAKE_10_ROLE_shared"));
+      assertEquals(policiesBefore, admin.mapper.writeValueAsString(admin.policies));
+      assertEquals(rolesBefore, admin.mapper.writeValueAsString(admin.roles));
+    }
+  }
+
+  private static RangerAuthorizationHadoopSQLPlugin siblingPlugin() {
+    Map<String, String> config = new HashMap<>(TestRangerDeltaAuthorization.config());
+    config.put("authorization.ranger.delta.catalog", "delta_b");
+    config.put("authorization.catalog.id", "21");
+    return (RangerAuthorizationHadoopSQLPlugin)
+        TestRangerDeltaAuthorization.provider().newPlugin("lake", "lakehouse-delta", config);
+  }
+
+  private static SecurableObject catalogGrant(String catalog, boolean schema) {
+    return SecurableObjects.parse(
+        catalog + (schema ? ".sales" : ".sales.orders"),
+        schema ? MetadataObject.Type.SCHEMA : MetadataObject.Type.TABLE,
+        schema ? List.of(Privileges.CreateTable.allow()) : List.of(Privileges.SelectTable.allow()));
+  }
+
+  private static void installUnrelatedPolicies(
+      TestRangerDeltaAuthorization.Admin admin, RangerPolicy original) throws Exception {
+    for (int type = 0; type < 3; type++) {
+      RangerPolicy foreign = admin.copy(original, RangerPolicy.class);
+      foreign.setId(900L + type);
+      foreign.setName("foreign_" + type);
+      foreign.setPolicyLabels(List.of());
+      foreign.setPolicyType(type);
+      RangerPolicy.RangerPolicyItem access = new RangerPolicy.RangerPolicyItem();
+      access.setUsers(List.of("foreign_user"));
+      access.setAccesses(List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+      foreign.setPolicyItems(type == 0 ? List.of(access) : List.of());
+      if (type == RangerPolicy.POLICY_TYPE_DATAMASK) {
+        RangerPolicy.RangerDataMaskPolicyItem mask = new RangerPolicy.RangerDataMaskPolicyItem();
+        mask.setUsers(access.getUsers());
+        mask.setAccesses(access.getAccesses());
+        mask.setDataMaskInfo(
+            new RangerPolicy.RangerPolicyItemDataMaskInfo("CUSTOM", null, "'MASKED'"));
+        foreign.setDataMaskPolicyItems(List.of(mask));
+      } else if (type == RangerPolicy.POLICY_TYPE_ROWFILTER) {
+        RangerPolicy.RangerRowFilterPolicyItem filter =
+            new RangerPolicy.RangerRowFilterPolicyItem();
+        filter.setUsers(access.getUsers());
+        filter.setAccesses(access.getAccesses());
+        filter.setRowFilterInfo(new RangerPolicy.RangerPolicyItemRowFilterInfo("id = 1"));
+        foreign.setRowFilterPolicyItems(List.of(filter));
+      }
+      admin.policies.put(foreign.getId(), foreign);
     }
   }
 }

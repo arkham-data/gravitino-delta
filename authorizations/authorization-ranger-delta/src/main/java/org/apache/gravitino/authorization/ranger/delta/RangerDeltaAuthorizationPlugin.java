@@ -299,7 +299,7 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
         siblingReference = true;
       }
       // RoleManager dispatches once per catalog. Only another catalog's exact owned
-      // table grant can defer shared-role deletion without hiding foreign divergence.
+      // table or schema grant can defer shared-role deletion without hiding foreign divergence.
       if (siblingReference) {
         return true;
       }

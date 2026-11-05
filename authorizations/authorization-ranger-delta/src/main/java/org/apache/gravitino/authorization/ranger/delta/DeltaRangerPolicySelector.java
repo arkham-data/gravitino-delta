@@ -94,7 +94,9 @@ final class DeltaRangerPolicySelector {
       if (name == null || name.isEmpty()) {
         return false;
       }
-      if (names.size() < 3 && (name.contains("*") || name.contains("?"))) {
+      if (names.size() < 3
+          && (name.contains("*") || name.contains("?"))
+          && !(names.size() == 2 && "*".equals(name))) {
         return false;
       }
       names.add(name);

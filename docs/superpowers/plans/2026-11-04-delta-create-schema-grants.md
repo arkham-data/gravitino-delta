@@ -32,8 +32,37 @@ Gravitino owns registration; native Delta owns files/log/schema/transactions. No
 - [x] Run the focused class and retain the real missing-schema-CREATE failure. Implement the smallest plugin change. Replace the two old schema-ALLOW refusal examples with still-invalid cases; retain all other existing assertions. Do not weaken the selector or broaden parent scope handling to make tests pass.
 - [x] Run the full `:authorizations:authorization-ranger-delta:test` unit task once with `-PskipITs`, actual pinned Ranger 2.8.0 artifacts and no Docker/live endpoints. Require exact selected XML identities, no failure/error, and report deliberately excluded/tagged tests separately. Use Java 17, `JAVA_TOOL_OPTIONS='-XX:ActiveProcessorCount=2 -XX:MaxMetaspaceSize=768m'`, `--max-workers=1 -Dorg.gradle.jvmargs=-Xmx2g --console=plain`. Retain command/exit/log/XML and source/runtime manifests in this plan's workspace. Run scoped Spotless and relevant static checks; no unrelated Spark matrix.
 - [x] Document supported scope, explicit regrant requirement, unchanged visibility/data permissions and still-open native/live creation boundaries. Self-review and report; controller obtains task review before commit `feat(delta): propagate schema create grants to Ranger`.
-- [ ] Controller obtains whole-slice review from the recorded baseline, with proportionate fixes only. This dependency checkpoint is not whole governed-creation closure. Continue reservation-bound CREATE work; publish the bounded checkpoint only under the standing milestone policy, with exact remote verification if pushed.
+- [x] Controller obtains whole-slice review from the recorded baseline, with proportionate fixes only. This dependency checkpoint is not whole governed-creation closure. Continue reservation-bound CREATE work; publish the bounded checkpoint only under the standing milestone policy, with exact remote verification if pushed.
 
 ## Controller preflight
 
 Single task, no producer/consumer signature dependency. Every review-focus item has a corresponding lifecycle/refusal assertion above. No new public API, schema inheritance reconciliation, creation adapter or source-ingestion authority is implicit in the grant mapping.
+
+## Final review correction F1
+
+The integrated review found that a role with supported schema CREATE grants in
+two Delta catalogs cannot be deleted: existing sibling recognition rejects the
+generated table wildcard after removing the first catalog's contribution.
+
+- [x] Extend only `DeltaRangerPolicySelector.isOtherCatalogGrant` for canonical
+  generated schema siblings, retaining all exact ownership and resource checks;
+  update the plugin's table-only deletion comment. Add focused RED/GREEN lifecycle
+  and adversarial sibling cases in `TestDeltaRangerPolicySelector.java` (or the new
+  CREATE suite if its fixture is the smaller fit). Cover schema/schema and mixed
+  table/schema deletion orders, shared-role retention, final deletion and foreign
+  refusal. Re-run the affected complete authorization unit module because this
+  shared-selector dependency changed, with scoped static checks. Preserve the
+  original 58-test evidence and record new exact identities/counts separately.
+- [x] One scoped rereview of F1 and the fix diff; no second broad review or
+  unrelated Spark matrix. Controller records any residual ruling at the final cap.
+
+## Reviewed local dependency checkpoint
+
+Task review passed. Final integrated review found F1 in shared-role deletion;
+the single fix wave addressed it and its scoped rereview is READY with no new
+actionable findings. The original 58-test result is preserved; the changed
+selector's complete follow-up passed 61 tests, with four tagged live/fixture
+methods still excluded. Scoped check/Javadoc passed. No native Spark CREATE or
+live propagation success is implied. This dependency remains local while the
+next installed schema-only CREATE boundary is characterized; the last verified
+remote checkpoint is the preceding additive CDF closure at `54b5f2359`.

@@ -49,11 +49,14 @@ USE_CATALOG and USE_SCHEMA still grant metadata visibility only. Existing table
 SELECT and MODIFY (`update` plus `alter`) mappings remain unchanged. Schema grant
 lifecycle tests preserve owners, other roles, exact table policies and
 Ranger-authored access, mask and row-filter policies through grant/update/revoke.
-The complete offline module run passed 58 tests with actual Ranger 2.8.0
-client/model JARs; four Docker-tagged live/fixture methods were excluded. The new
-four-test CREATE class first reproduced the missing support, then passed. These
-callback tests use a mocked Admin state fixture; they do not evaluate access on
-a real Ranger server.
+Shared schema/table roles survive the first catalog's deletion callback and are
+removed after the last catalog's contribution; broader or foreign sibling
+references remain blocked. The initial offline module run passed 58 tests with
+actual Ranger 2.8.0 client/model JARs. A subsequent shared-role deletion correction
+passed 61 tests; four Docker-tagged live/fixture methods remained excluded. The
+four-test CREATE class and later cross-catalog regressions each reproduced their
+missing support before passing. These callback tests use a mocked Admin state
+fixture; they do not evaluate access on a real Ranger server.
 
 This is a grant-propagation dependency of governed creation. Real public
 CREATE grant/revoke propagation, reservation-bound native creation, publication
