@@ -11,10 +11,12 @@ consolidated live gate and the wider selected schema track remain open.
 
 The producing implementation is the reviewed Task 2 revision
 `28dd2d85a7890523299a8bacf973641314c86d36`. Task 3 changes documentation only.
-At this qualification handoff, independent Task 3/whole-slice review and branch
-publication remain pending. Closure is tracked in the
+Independent task and whole-slice reviews are READY through
+`d8ae2a68ee350cef9755417311cd91591feb3b02`, with no actionable findings. The bounded
+installed checkpoint is closed for authorized branch publication. The
 [implementation plan](../plans/2026-11-04-delta-cdf-additive-history.md) and preserved
-review ledger. Runtime qualification alone does not close those gates.
+review ledger track the closure commit and exact remote SHA verification.
+This closes neither the live acceptance gate nor full schema evolution.
 
 ## Exact cohort and reuse
 

@@ -61,7 +61,7 @@ Focused command: `./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests
 
 - [x] Execute missing exact method/pair cells with fresh evidence roots; inspect actual XML, runtime pins, rows/schema/native actions and original exit. Require no failures/errors/skips and exact identities. Do not rebuild services or repeat unchanged unrelated APPEND/MERGE matrices.
 - [x] Document current-schema/null semantics, bounded additive profile, current policies and context lifecycle, unqualified nested/type/consumer/streaming cases and installed-only evidence. Actual server 2.8.0/MinIO/PySpark/Spark Hub consolidated acceptance remains required. Update selected-workstream status without claiming full Delta support.
-- [ ] Controller obtains fresh task review and commits qualification docs, then one whole-slice review from this plan's baseline. Resolve actionable findings with proportional tests.
+- [x] Controller obtains fresh task review and commits qualification docs, then one whole-slice review from this plan's baseline. Resolve actionable findings with proportional tests.
 - [ ] On clean review, push existing branch under standing authorization and verify exact remote SHA. Preserve evidence/worktree; continue next selected schema requirement or governed creation as justified by actual Spark Hub calls.
 
 ## Installed qualification checkpoint
@@ -79,7 +79,9 @@ All selected results have original exit 0 and zero failures/errors/skips:
 Source/runtime/native manifests and generated build-metadata scope are recorded
 in the results and preserved Task 3 report. This is local installed Ranger
 client/plugin 2.8.0 evidence; the consolidated Ranger server 2.8.0/MinIO/S3/PySpark/
-Spark Hub gate remains required. Task and whole-slice review, commit and exact
-remote SHA verification remain separate closure gates above. The selected order
+Spark Hub gate remains required. Task and whole-slice reviews are READY with no
+actionable findings through `d8ae2a68ee350cef9755417311cd91591feb3b02`. The bounded
+installed checkpoint is closed for authorized branch publication; the controller
+records the exact pushed SHA and remote verification in the preserved ledger. The selected order
 is still schema, governed creation, inputs/transformations, then overwrite/full
 refresh; consumer/state and streaming work remain deferred.
