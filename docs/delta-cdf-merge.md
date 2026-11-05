@@ -22,8 +22,8 @@ The optional Spark 3.5 Ranger companion owns a bounded named SQL MERGE over
 Delta's native executors reconstruct rows and produce transaction actions.
 Historical fixed-schema local qualification completed on Spark 3.5.4/3.5.6 ×
 Delta 3.3.0/3.3.2 with actual Ranger 2.8.0, MinIO, JDK 17 and Scala 2.12.21.
-The additive schema-and-data MERGE qualification described below is installed
-fixture evidence; it adds no deployed Ranger server, provider, MinIO or Python
+The additive schema-and-data MERGE and additive-history CDF qualification
+described below is installed fixture evidence; it adds no deployed Ranger server, provider, MinIO or Python
 result. Separate-worker deployment remains unqualified.
 
 ## Trusted stock adaptive execution
@@ -185,7 +185,9 @@ current authorization and the existing known-commit protocol, never automatic
 wrapper replay.
 
 The source is exactly one fresh, bounded named Delta batch CDF read, with inclusive
-nonnegative integer starting/ending versions and fixed schema/partition metadata.
+nonnegative integer starting/ending versions, captured current read schema and
+fixed partition metadata. Historical schemas may differ only within the finite
+additive profile described below.
 Only Project/Filter/SubqueryAlias composition is admitted. The deterministic scalar
 expression whitelist is attributes, literals, aliases, casts, `=`, `<=>`, `>`, `>=`,
 `<`, `<=`, AND/OR/NOT, IS NULL/IS NOT NULL, IN, upper, lower, concat, coalesce and
@@ -232,6 +234,61 @@ This example is an explicit consumer program. It is not a generic replica:
 filtering preimages may leave stale destination rows when source images cross a
 policy boundary. The application must define its desired reconciliation semantics.
 
+## Bounded CDF across additive history
+
+Fresh named DataFrame CDF reads and `table_changes` use the captured current
+native schema. Delta reconstructs older images with nulls for subsequently added
+fields, retaining native change types, commit versions/timestamps and duplicate
+multiplicity. Inclusive numeric start/end versions remain mandatory. An addition
+after the requested end can affect the captured read schema without including
+later rows. A metadata-only interval can return that schema with no rows.
+
+Only append-only nullable concrete top-level scalar additions are qualified:
+Boolean, integral, floating, decimal, string, binary, date and timestamp. Every
+old field retains its exact ordinal, name, type, nullability and metadata.
+Existing nested fields may remain unchanged under the existing read profile, and
+ordinary comment/application metadata may remain. Nested additions, timestamp-NTZ,
+NullType, nonnullable additions, defaults, generated/identity/mapping metadata,
+type changes, drops, renames and reordering are refused. Duplicate/case-colliding, invalid and CDF virtual names are refused.
+Identical schemas retain the existing unchanged-schema admission profile.
+
+The history owner validates the start snapshot and every observed Metadata
+transition in the requested interval in native order, including duplicate actions,
+and compares historical schemas with the captured read schema. A drop/re-add or
+type-change/revert inside the interval cannot hide behind matching endpoints.
+Transitions before the start snapshot and unrelated suffix history after the end
+are not scanned; endpoint compatibility does not certify unrequested transitions.
+Identity, partitioning and protocol remain fixed. Installed tests cover legacy
+reader 1/writer 4 and reader 1/writer 7 with exactly `changeDataFeed`, `appendOnly`
+and `invariants`; unchanged reads retain reader 1/writer <=4 admission. Missing or
+corrupt requested history/files, disabled-CDF gaps, unsupported features, mapped
+columns, deletion vectors, row tracking and permissive bypass settings still fail.
+
+Current SELECT, masks and row filters apply to original requested source demands,
+including added fields and predicate-only demand. An authorized projection may
+read only old fields without SELECT on an unused added field. Historical nulls
+remain subject to the same policies as populated values. Reading an addition
+requires no ALTER. Captured subject/settings, registration and context ownership
+remain binding; retained and fresh actions recheck policy under the existing
+action-boundary contract. External schema advancement rejects retained and fresh
+access while named registration remains stale; it does not refresh registration
+automatically. Copied, foreign, expired and recovery-only owners gain no payload
+authority. Standalone reads create no source files or commits.
+
+Fresh SQL and JVM companion MERGE can consume qualified historical null/new-field
+images through the existing source grammar and policies. The companion API remains
+version 1. Evolving target writes retain their own ALTER/new-field UPDATE and
+settings obligations. Recovery never opens old payload or automatically replays a
+committed or unknown mutation.
+
+The [additive-history results](superpowers/specs/2026-11-04-delta-cdf-additive-history-results.md)
+distinguish pure, stock-native, installed and reused evidence on the four pinned
+pairs. This is installed local Ranger client/plugin 2.8.0 qualification. The
+consolidated Ranger server 2.8.0/MinIO/S3/PySpark/actual Spark Hub acceptance gate
+remains required. Historical fixed-schema live evidence below retains its original
+scope. Full schema evolution, broader source composition, consumer/checkpoint or
+replica semantics, policy-transition reconciliation and streaming remain unqualified.
+
 ## Additive schema-and-data MERGE
 
 The named SQL and JVM companion routes support one native atomic MERGE that adds
@@ -269,10 +326,10 @@ retain read/match semantics, so a hidden target row cannot suppress an authorize
 insert.
 
 The source remains one fresh bounded named CDF interval and the existing finite
-projection/filter/alias grammar. Ordinary CDF intervals spanning an additive
-schema boundary remain refused and are required next in the schema track.
-Recovery-only source deferral proves an already committed MERGE without opening
-its old payload; it does not authorize ordinary historical reads. Exact retained
+projection/filter/alias grammar. Fresh ordinary CDF reads may span the qualified
+additive history described above. Recovery-only source deferral proves an already
+committed MERGE without opening its old payload; it does not authorize ordinary
+historical reads. Exact retained
 native proof/digest, transaction marker, fresh permissions, original ALTER and
 added-column UPDATE demands, and current compatible named registration remain
 mandatory. Later data-only advancement may reconcile; later Metadata/Protocol
