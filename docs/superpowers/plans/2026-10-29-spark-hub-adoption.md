@@ -27,7 +27,7 @@
 
 **Spec:** [Adoption design](../specs/2026-10-29-spark-hub-adoption-design.md).
 
-Status: M0/M1 and append AQE are independently reviewed, closed and pushed. Adoption closure is Gravitino `c7681d08a0f8a562375e20bc6517c8c6d6c6da45` and Spark Hub `d01024b6f459ad2743b7b55099226b8c3dc742fd`; append closure is `90a0e1c65db133ecdbff8a2758c71a4b749c58f1`. The four original six-case read cells qualify only the bounded read profile. Next is the [M2 first-task plan](2026-10-30-spark-hub-write-foundation.md); later milestones remain design-gated. Historical dependency instructions below describe sequencing, not pending predecessor work.
+Status: M0/M1 and append AQE are independently reviewed, closed and pushed. Adoption closure is Gravitino `c7681d08a0f8a562375e20bc6517c8c6d6c6da45` and Spark Hub `d01024b6f459ad2743b7b55099226b8c3dc742fd`; append closure is `90a0e1c65db133ecdbff8a2758c71a4b749c58f1`. Subsequent bounded schema, creation and timestamp milestones are recorded below and in the [shared coverage register](../../delta-spark-parity.md#current-selected-capabilities--2026-11-05). Required inputs/transforms are active; governed refresh and consolidated schema/Spark Hub acceptance follow. Historical dependency instructions describe sequencing, not pending predecessor work.
 
 ## Global Constraints
 
@@ -88,9 +88,9 @@ CDF consumer/state improvements, optional maintenance, broad deployment/cutover 
 
 The additive APPEND checkpoint is reviewed and pushed at `5bb3af7dd4d5cd54d4c1b45e705fc83abff72998`; its [results](../specs/2026-11-04-delta-schema-evolution-results.md) distinguish installed four-pair qualification from the still-required live Ranger 2.8.0/MinIO gate. [Additive MERGE implementation](2026-11-04-delta-merge-schema-evolution.md) now has reviewed product changes through `a78f59f4d5b74197b78d305b4807996d762131db` and four-pair installed SQL/JVM qualification. Its [results](../specs/2026-11-04-delta-merge-schema-evolution-results.md) freeze 94 exact methods per pair, distinguish 277 fresh from 99 reused pair/method results, and retain the first cell's impact-qualified composition. Task and whole-slice reviews are clean; the bounded installed checkpoint is closed for the authorized branch publication, with exact remote verification retained in its ledger. No new deployed Ranger-server 2.8.0/MinIO, provider, PySpark or actual Spark Hub integration result is claimed.
 
-The bounded ordinary CDF dependency now has reviewed product changes through `28dd2d85a7890523299a8bacf973641314c86d36` and [four-pair installed qualification](../specs/2026-11-04-delta-cdf-additive-history-results.md). Its 84 exact invocations per pair combine pure/native controls, 13 installed additive cases and 57 affected controls: 238 fresh + 98 explicitly reused = 336 pair/invocation results, with zero selected failures/errors/skips. Native current-schema reads retain older null images, ordered in-range additive checks, current original SELECT/masks/filters and context ownership; reads require no ALTER. Fresh SQL/JVM companion MERGE consumes the admitted history, while recovery-only deferral still grants no payload authority. Task and whole-slice reviews are clean through `d8ae2a68ee350cef9755417311cd91591feb3b02`; the installed checkpoint is closed for authorized branch publication. Exact remote verification is retained in the [bounded implementation plan](2026-11-04-delta-cdf-additive-history.md) ledger. Governed creation is next; wider schema and live acceptance requirements remain open.
+The bounded ordinary CDF dependency now has reviewed product changes through `28dd2d85a7890523299a8bacf973641314c86d36` and [four-pair installed qualification](../specs/2026-11-04-delta-cdf-additive-history-results.md). Its 84 exact invocations per pair combine pure/native controls, 13 installed additive cases and 57 affected controls: 238 fresh + 98 explicitly reused = 336 pair/invocation results, with zero selected failures/errors/skips. Native current-schema reads retain older null images, ordered in-range additive checks, current original SELECT/masks/filters and context ownership; reads require no ALTER. Fresh SQL/JVM companion MERGE consumes the admitted history, while recovery-only deferral still grants no payload authority. Task and whole-slice reviews are clean through `d8ae2a68ee350cef9755417311cd91591feb3b02`; the installed checkpoint is closed for authorized branch publication. Exact remote verification is retained in the [bounded implementation plan](2026-11-04-delta-cdf-additive-history.md) ledger. Ordinary governed creation has since closed, as recorded below; wider schema and live acceptance requirements remain open.
 
-This installed checkpoint does not close the selected schema track or actual Ranger-server 2.8.0/MinIO/S3/PySpark/Spark Hub acceptance. Nested/type-changing evolution, governed metadata-only schema commands and schema replacement still need explicit supported/unsupported decisions grounded in actual platform calls; overwriteSchema belongs to the selected overwrite/full-refresh workstream. Continue the next concrete schema requirement or governed creation only as justified by those calls, preserving the selected order. Broad CDF consumer/state changes, policy-transition reconciliation and streaming remain deferred; no full Delta support is claimed.
+This installed checkpoint does not close the selected schema track or actual Ranger-server 2.8.0/MinIO/S3/PySpark/Spark Hub acceptance. Nested/type-changing evolution, governed metadata-only schema commands and schema replacement still need explicit supported/unsupported decisions grounded in actual platform calls; overwriteSchema belongs to the selected overwrite/full-refresh workstream. Finish required inputs/transforms and governed overwrite/full refresh, then close consolidated schema and Spark Hub acceptance, as agreed on November 5. Broad CDF consumer/state changes, policy-transition reconciliation and streaming remain deferred; no full Delta support is claimed.
 
 ## Current governed creation task
 
@@ -120,14 +120,36 @@ under SIMPLE application authentication; production audit capacity is unmeasured
 The [findings](../specs/2026-11-04-delta-governed-schema-create-findings.md) retain
 those limits and the original failed attempts.
 
-The next creation work must cover Spark Hub's caller-supplied StructType,
-ordinary identity partitions, comments, primary-key metadata, retention/CDF
-properties and safe `createIfNotExists` behavior through a real PySpark frontend.
-Reuse the existing native/provider route; qualify the frontend inside that
-implementation task instead of opening a standalone probe milestone. Generated
-date columns remain M5. Initial ingestion/input transformations and overwrite/full
-refresh follow, with wider schema coverage still required. CREATE0 -> publication0
--> WRITE1 remains the lifecycle; this checkpoint does not qualify payload creation.
+The [ordinary creation milestone](../specs/2026-11-05-delta-ordinary-schema-create-findings.md)
+subsequently closed and was pushed at `5b15972fbe870e5e8e4d7507445734172f3ff467`.
+SQL and actual classic PySpark now cover the bounded ordinary StructType,
+identity partitions, comments, primary-key metadata, retention/CDF properties
+and safe IF NOT EXISTS behavior. All four pairs ran against actual Gravitino,
+Ranger server/client 2.8.0 and MinIO, with 42 decisions. Generated date columns
+remain M5. CREATE0 -> publication0 -> WRITE1 remains the lifecycle; schema-only
+creation does not qualify payload ingestion or complete M2.
+
+## Current input task and remaining sequence
+
+The [direct input timestamp milestone](../specs/2026-11-05-delta-input-timestamp-findings.md)
+closed and was pushed at `57d318940b3d6ea32914d95df45daa59a9d41326`.
+Native classic PySpark withColumn/current_timestamp and both existing named
+APPEND writers passed the bounded four-pair actual-service profile. The retained
+77/78 broader focused result and schema-changing target-history observation
+limitation remain explicit; neither is concealed by the timestamp successes.
+
+Registered JDBC inputs through Gravitino's existing JDBC catalog are next.
+Externally authenticated JDBC is a separate required route, followed by required
+file/constructed origins and transformations grounded in Spark Hub callers.
+Reuse native catalog/credential/scan execution; preserve source Ranger SELECT,
+column permissions, masks and filters as well as target authorization. A schema
+match or arbitrary DataFrame is not proof of source authority.
+
+After required inputs/transforms, implement governed overwrite/full refresh and
+close consolidated schema-evolution actual-service and Spark Hub acceptance.
+Keep one capability and its evidence at a time; do not replay closed matrices.
+The [coverage register](../../delta-spark-parity.md#current-selected-capabilities--2026-11-05)
+separates implemented capabilities, installed-only results and pending work.
 
 ## Immediate steps
 
@@ -135,7 +157,7 @@ refresh follow, with wider schema coverage still required. CREATE0 -> publicatio
 - [x] Review this proposed design/roadmap and M0/M1 task plan as one concrete planning package.
 - [x] Start M0/M1 with the existing subagent-driven execution method; use isolated worktrees for both repositories and retain their current user changes.
 - [ ] At each later milestone boundary, write its exact source-level plan from the accepted contract and predecessor evidence; do not open all implementations at once.
-- [ ] Keep a single coverage register so completed capabilities, unresolved gaps and rejected/unqualified cases remain visible without rerunning unrelated evidence.
+- [x] Keep a single [coverage register](../../delta-spark-parity.md) so completed capabilities, unresolved gaps and rejected/unqualified cases remain visible without rerunning unrelated evidence; update it at each boundary.
 
 ## Reporting and scope control
 

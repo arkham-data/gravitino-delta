@@ -21,6 +21,28 @@ A bounded named CDF-to-MERGE milestone does not complete full Delta support.
 Unsupported profiles remain implementation and qualification obligations. They
 must not be admitted because their schema resembles a qualified relation.
 
+## Current selected capabilities — 2026-11-05
+
+This is the shared coverage register for the four selected integration tracks.
+Installed-stack tests and actual-service qualification are separate evidence.
+The next sequence is required inputs/transforms, governed overwrite/full refresh,
+then the consolidated schema-evolution and Spark Hub acceptance gaps. Earlier
+bounded milestones remain closed; they do not require unrelated matrix reruns.
+
+| Capability | Implemented and qualified | Still required |
+| --- | --- | --- |
+| Schema evolution | Bounded nullable top-level additive APPEND and MERGE, plus current-schema CDF across additive history, have four-pair installed qualification. See [APPEND](superpowers/specs/2026-11-04-delta-schema-evolution-results.md), [MERGE](superpowers/specs/2026-11-04-delta-merge-schema-evolution-results.md) and [CDF](superpowers/specs/2026-11-04-delta-cdf-additive-history-results.md). | Consolidated actual Ranger server/client 2.8.0, MinIO, provider, classic PySpark and Spark Hub evolution acceptance. Nested/type-changing evolution and metadata-only commands remain unsupported or unqualified; schema replacement belongs to refresh. |
+| Governed creation | Ordinary schema-only SQL and classic PySpark creation closed with 42 decisions across all four pairs against actual Gravitino, Ranger 2.8.0 and MinIO. Supported declarations, partitions, comments, properties and safe IF NOT EXISTS are documented in the [findings](superpowers/specs/2026-11-05-delta-ordinary-schema-create-findings.md). | Compose CREATE0 → publication0 → WRITE1 with real ingestion. Payload CTAS, generated date columns and broader declaration profiles are not established by schema-only creation. |
+| Inputs and transformations | Existing bounded named-source operations and direct current_timestamp projections with native APPEND; the [timestamp milestone](superpowers/specs/2026-11-05-delta-input-timestamp-findings.md) closed with actual-service qualification on all four pairs. | Registered Gravitino JDBC first, externally authenticated JDBC separately, then required file/constructed origins and Spark Hub unions, dedup/windows and materialization. Arbitrary DataFrames do not carry trusted source authority. |
+| Overwrite/full refresh | [Native behavior characterized](superpowers/specs/2026-10-30-spark-hub-write-native-findings.md); this is not governed acceptance. | Governed authorization, identity/registration consistency, empty and partitioned refresh, schema replacement and postcommit recovery. Schema-changing overwritten history has a retained committed-but-unconfirmed observation limitation. |
+| Shared Spark Hub ingestion | Named read foundation is closed; individual connector capabilities above are available only within their documented boundaries. | Adapt and qualify the real shared write path with required input/transform/create/append/refresh combinations. Connector-only successes do not close M2. |
+
+Catalog-demo, CDF consumer/state, streaming, broad deployment and optional
+maintenance remain deferred. Glue compatibility is not required. These gaps do
+not authorize Gravitino core changes or replacing native Spark/Delta execution.
+
+## Detailed compatibility boundaries
+
 | Area | Current boundary | Evidence required to close |
 | --- | --- | --- |
 | Named SQL CDF-to-MERGE | Locally qualified on all four pinned pairs | Retained original Ranger 2.8.0/MinIO, native-state, identity and artifact evidence; preserve the bounded profile across changes |
@@ -33,7 +55,7 @@ must not be admitted because their schema resembles a qualified relation.
 | Column mapping and defaults | Unsupported | Protocol/schema profiles, native features, authored-expression provenance and raw copy-forward |
 | AQE | Bounded named ordinary reads, CDF and native MERGE use trusted stock adaptive execution; caller chooses the profile | Four-pair installed defaults/coalescing and representative optimization branches; seven fresh packaged Python/Ranger/MinIO phases per pair, exact original artifacts/exits and operation-boundary revocation. See [current contract](delta-cdf-merge.md#trusted-stock-adaptive-execution) |
 | Named DataFrame append with caller AQE | Two existing matching-schema native classic PySpark append APIs passed the local four-pair runtime matrix | 66 installed methods/12 classes and 26 public-grant profiles/42 application attempts per pair; exact source/runtime/process and strengthened checker receipts. Fresh late cache-key queries, native CDF continued use and classic multipart checkpoints retain the [bounded append scope](delta-native-governed-append.md#caller-selected-adaptive-append); controller reviews remain separate |
-| Schema evolution | Unsupported | Native schema evolution with registration/publication and policy demand correctness |
+| Schema evolution | Bounded additive APPEND/MERGE and additive-history CDF installed qualification; see the current register above | Actual-service and Spark Hub qualification, plus explicit decisions for wider schema operations |
 | Row tracking and deletion vectors | Unsupported write profiles | Exact native feature semantics and owned action/reconstruction evidence |
 | Broader source grammar/clauses | One bounded CDF source with finite scalar grammar | Defined joins/windows/aggregates and NOT MATCHED BY SOURCE semantics; no admission by schema equivalence |
 | Named DataFrame builder | Locally qualified on all four pinned pairs with actual packaged classic Python | Five final partitioned Ranger 2.8.0/MinIO phases per pair; installed unpartitioned/partitioned API suites (37+37 inherited with 61 unique methods per 3.5.4 pin, 51 fresh per 3.5.6 pin). Exact source/package/original-exit provenance and the bounded historical common-JAR exception are retained; final integrated SPEC/QUALITY review approved this bounded API milestone. See [supported API](delta-cdf-merge.md#named-dataframe-api); stock DeltaTable.forName remains unqualified |
