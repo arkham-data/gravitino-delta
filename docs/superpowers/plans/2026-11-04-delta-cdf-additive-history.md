@@ -62,7 +62,7 @@ Focused command: `./gradlew :spark-connector:spark-delta-ranger-3.5:test --tests
 - [x] Execute missing exact method/pair cells with fresh evidence roots; inspect actual XML, runtime pins, rows/schema/native actions and original exit. Require no failures/errors/skips and exact identities. Do not rebuild services or repeat unchanged unrelated APPEND/MERGE matrices.
 - [x] Document current-schema/null semantics, bounded additive profile, current policies and context lifecycle, unqualified nested/type/consumer/streaming cases and installed-only evidence. Actual server 2.8.0/MinIO/PySpark/Spark Hub consolidated acceptance remains required. Update selected-workstream status without claiming full Delta support.
 - [x] Controller obtains fresh task review and commits qualification docs, then one whole-slice review from this plan's baseline. Resolve actionable findings with proportional tests.
-- [ ] On clean review, push existing branch under standing authorization and verify exact remote SHA. Preserve evidence/worktree; continue next selected schema requirement or governed creation as justified by actual Spark Hub calls.
+- [x] On clean review, push existing branch under standing authorization and verify exact remote SHA. Preserve evidence/worktree; continue next selected schema requirement or governed creation as justified by actual Spark Hub calls.
 
 ## Installed qualification checkpoint
 
@@ -85,3 +85,6 @@ installed checkpoint is closed for authorized branch publication; the controller
 records the exact pushed SHA and remote verification in the preserved ledger. The selected order
 is still schema, governed creation, inputs/transformations, then overwrite/full
 refresh; consumer/state and streaming work remain deferred.
+
+Publication verified: `54b5f23595063eaa705d382e9a3c0ad56c761972` equals the remote
+`codex/spark-hub-adoption-plan` SHA; the publication record remains in the ledger.
