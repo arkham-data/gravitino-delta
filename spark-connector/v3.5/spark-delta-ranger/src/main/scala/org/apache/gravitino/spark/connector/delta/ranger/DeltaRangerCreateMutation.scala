@@ -62,7 +62,6 @@ private[ranger] final class DeltaRangerCreateMutation(
     .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
     .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
   private var receipt: DeltaRegistrationReceipt = null
-  private var stamp: DeltaRangerPolicyEngine.SnapshotStamp = null
   private var operation: DeltaRangerNativeOperation = null
   private var transaction: OptimisticTransaction = null
   private var snapshot: Snapshot = null
@@ -177,7 +176,7 @@ private[ranger] final class DeltaRangerCreateMutation(
     context()
     if (closed || !nativeEntered || nativeClosed || (active.get() ne this))
       denied("expired native owner")
-    engine.requireSnapshot(stamp)
+    authorize()
     if (transaction != null) {
       if (
         (transaction.snapshot ne snapshot) || transaction.readVersion != -1 ||
@@ -250,12 +249,10 @@ private[ranger] final class DeltaRangerCreateMutation(
   private def authorize(): Unit = {
     context()
     if (closed || (catalog.policyEngine() ne engine)) denied("expired catalog")
-    // Each boundary reauthorizes against the current effective policy, including new owner grants.
-    val currentStamp = engine.snapshotStamp()
+    // This fixed schema-only operation has no policy-derived plan. Each check reauthorizes the
+    // same literal CREATE; the engine requires a stable current publication during evaluation.
     engine.authorize(subject, key)
-    engine.requireSnapshot(currentStamp)
     context()
-    stamp = currentStamp
   }
   private def observePublication(): Unit = {
     if (transaction == null || receipt == null) denied("missing captured transaction")

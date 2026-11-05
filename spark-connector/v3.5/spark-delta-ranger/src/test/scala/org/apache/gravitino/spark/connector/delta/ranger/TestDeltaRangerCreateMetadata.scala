@@ -111,15 +111,18 @@ class TestDeltaRangerCreateMetadata {
   def rejectsLogMarkerAndVersionDriftBeforePublication(): Unit = {
     import InstalledSchemaCreateBoundaryProbe._
     Seq("marker", "native-id", "version").foreach { drift =>
-      var checks = 0
+      var faults = 0
       fixture.withCase(
         "metadata-drift-" + drift,
         installed = true,
         observed = false,
         policySetup = policy =>
           policy.onRequest = _ => {
-            checks += 1
-            if (checks == 3) {
+            if (
+              DeltaRangerCreateMutation.current.isEmpty && DeltaRangerNativeOperation
+                .current() == null && Files.exists(trace.log0)
+            ) {
+              faults += 1
               val bytes = Files.readAllBytes(trace.log0)
               Files.write(trace.directory.resolve("original-create0.json"), bytes)
               if (drift == "version")
@@ -154,7 +157,7 @@ class TestDeltaRangerCreateMetadata {
         )
         evidence.failed("expected-drift", failure)
         assertTrue(failure.getMessage.contains("native=CREATE0_CONFIRMED"), failure.toString)
-        assertEquals(3, checks)
+        assertEquals(1, faults)
         assertEquals(Vector("RESERVE"), transport.commands.map(_.operation().name()).toVector)
         assertTrue(Files.exists(evidence.log0))
         assertTrue(DeltaRangerCreateMutation.current.isEmpty)

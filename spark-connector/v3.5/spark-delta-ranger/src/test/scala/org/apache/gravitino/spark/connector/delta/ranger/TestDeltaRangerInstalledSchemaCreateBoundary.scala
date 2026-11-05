@@ -231,7 +231,8 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
       name: String,
       installed: Boolean,
       observed: Boolean = true,
-      policySetup: TestDeltaRangerNativeSelect.Fixture => Unit = _ => ()
+      policySetup: TestDeltaRangerNativeSelect.Fixture => Unit = _ => (),
+      logStoreClass: Option[String] = None
   )(
       body: (SparkSession, Transport, Trace) => Unit
   ): Unit = {
@@ -272,6 +273,7 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
       .config("spark.databricks.delta.catalog.update.enabled", "false")
       .config("spark.sql.catalog.a", classOf[InstalledSchemaCreateForwardingCatalog].getName)
     fixtureMap("settings").foreach { case (key, value) => builder.config(key, value) }
+    logStoreClass.foreach(value => builder.config("spark.delta.logStore.class", value))
     DeltaLog.clearCache()
     val spark = builder.getOrCreate()
     var bound: Wrapper = null

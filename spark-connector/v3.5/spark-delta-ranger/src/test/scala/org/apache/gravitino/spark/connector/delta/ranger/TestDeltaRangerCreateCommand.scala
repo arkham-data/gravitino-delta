@@ -23,13 +23,18 @@ import java.io.{ByteArrayInputStream, ByteArrayOutputStream, ObjectInputStream, 
 import java.nio.file.Files
 import java.util.Collections
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{Path => HadoopPath}
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.ranger.plugin.model.RangerPolicy
 import org.apache.ranger.plugin.policyengine.RangerAccessRequest
 import org.apache.ranger.plugin.service.RangerBasePlugin
 import org.apache.ranger.plugin.util.ServicePolicies
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.storage.HDFSLogStore
 import org.apache.spark.sql.catalyst.analysis.ResolvedIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, TableSpec}
 import org.apache.spark.sql.connector.catalog.Identifier
@@ -37,6 +42,8 @@ import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.types.{LongType, StructType}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentMatchers.any
 import org.mockito.Mockito.{doAnswer, mock}
 
@@ -171,23 +178,28 @@ class TestDeltaRangerCreateCommand {
 
   @Test
   def revocationAtEachBoundaryPreservesEffects(): Unit = (1 to 3).foreach { boundary =>
-    var requests = 0
+    var policy: TestDeltaRangerNativeSelect.Fixture = null
     fixture.withCase(
       "command-revoked-" + boundary,
       installed = true,
       observed = false,
-      policySetup = policy =>
-        policy.onRequest = request => {
-          assertEquals("create", request.getAccessType)
-          assertEquals("created", request.getResource.getValue("table"))
-          assertEquals("*", request.getResource.getValue("column"))
-          assertNull(request.getResource.getOwnerUser)
-          requests += 1
-          if (requests == boundary) policy.denied.add("a:*")
-        }
+      policySetup = configured => policy = configured
     ) { (spark, transport, evidence) =>
+      var deniedAtBoundary = false
+      policy.onRequest = _ => {
+        val phase =
+          if (transport.commands.isEmpty) 1
+          else if (DeltaRangerCreateMutation.current.isEmpty) {
+            if (Files.exists(evidence.log0)) 3 else 2
+          } else 0
+        if (phase == boundary) {
+          deniedAtBoundary = true
+          policy.denied.add("a:*")
+        }
+      }
       assertThrows(classOf[Exception], () => { spark.sql(statement()).collect(); () })
-      assertEquals(boundary, requests)
+      assertTrue(deniedAtBoundary)
+      assertLiteralCreateRequests(policy)
       assertEquals(
         if (boundary == 1) 0 else 1,
         transport.commands.count(_.operation().name() == "RESERVE")
@@ -213,14 +225,58 @@ class TestDeltaRangerCreateCommand {
       ) { (spark, transport, evidence) =>
         transport.publishSuccess = true
         spark.sql(statement()).collect()
-        assertEquals(3, policy.requests.size())
-        assertTrue(policy.requests.asScala.forall(_.getAccessType == "create"))
+        assertLiteralCreateRequests(policy)
+        evidence.record("policy-request-count", policy.requests.size().toString)
         assertEquals("PUBLISHED", transport.receipt.state().name())
         assertEquals(0, loads)
         assertTrue(Files.exists(evidence.log0))
         assertTrue(Files.exists(evidence.log0.resolveSibling("00000000000000000000.crc")))
       }
     finally if (real != null) real.cleanup()
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = Array("changed-version", "same-version"))
+  def completedPolicyRefreshKeepsLiteralCreateAuthorized(mode: String): Unit =
+    policyRefreshAfterCreate0(mode)
+
+  @ParameterizedTest
+  @ValueSource(strings = Array("deny", "unavailable", "overlap"))
+  def postCommitPolicyFailuresBlockPublishWithoutReplay(mode: String): Unit =
+    policyRefreshAfterCreate0(mode)
+
+  @Test
+  def scopeAcquisitionDenyIsNotNativeInvocation(): Unit = {
+    var policy: TestDeltaRangerNativeSelect.Fixture = null
+    fixture.withCase(
+      "command-scope-denied",
+      installed = true,
+      observed = false,
+      policySetup = configured => policy = configured
+    ) { (spark, transport, evidence) =>
+      var deniedAtScope = false
+      policy.onRequest = _ => {
+        if (
+          DeltaRangerCreateMutation.current.nonEmpty && DeltaRangerNativeOperation.current() == null
+        ) {
+          deniedAtScope = true
+          policy.denied.add("a:*")
+        }
+      }
+      val carrier = issued(spark)
+      val physical = carrier.owner.plan(carrier, spark)
+      val failure = assertThrows(classOf[SecurityException], () => physical.run())
+      evidence.failed("expected-scope-deny", failure)
+      assertTrue(deniedAtScope)
+      assertEquals("Delta Ranger access denied", failure.getMessage)
+      assertEquals(Vector("RESERVE"), transport.commands.map(_.operation().name()).toVector)
+      assertFalse(Files.exists(evidence.log0))
+      assertTrue(DeltaRangerCreateMutation.current.isEmpty)
+      assertNull(DeltaRangerNativeOperation.current())
+      val commands = transport.commands.toVector
+      assertThrows(classOf[SecurityException], () => physical.run())
+      assertEquals(commands, transport.commands.toVector)
+    }
   }
 
   @Test
@@ -347,7 +403,8 @@ class TestDeltaRangerCreateCommand {
 
   private def realPolicies(
       fixture: TestDeltaRangerNativeSelect.Fixture,
-      deny: Boolean
+      deny: Boolean,
+      version: Long = 1L
   ): RangerBasePlugin = {
     val real = new RangerBasePlugin(fixture.plugin.getConfig)
     val definition = fixture.plugin.getServiceDef
@@ -371,7 +428,7 @@ class TestDeltaRangerCreateCommand {
     }
     val policies = new ServicePolicies
     policies.setServiceName("service"); policies.setServiceDef(definition);
-    policies.setPolicyVersion(1L)
+    policies.setPolicyVersion(version)
     policies.setServiceConfig(
       Collections.singletonMap("ranger.plugin.spark.gravitino.metalake", "lake")
     )
@@ -384,8 +441,153 @@ class TestDeltaRangerCreateCommand {
     doAnswer(call => {
       val request = call.getArgument[RangerAccessRequest](0)
       fixture.requests.add(request)
+      fixture.onRequest.accept(request)
       real.isAccessAllowed(request)
     }).when(fixture.plugin).isAccessAllowed(any(classOf[RangerAccessRequest]))
     real
   }
+
+  private def assertLiteralCreateRequests(policy: TestDeltaRangerNativeSelect.Fixture): Unit = {
+    assertFalse(policy.requests.isEmpty)
+    policy.requests.asScala.foreach { request =>
+      assertEquals("create", request.getAccessType)
+      assertEquals("create", request.getAction)
+      assertEquals("a", request.getResource.getValue("catalog"))
+      assertEquals("db", request.getResource.getValue("database"))
+      assertEquals("created", request.getResource.getValue("table"))
+      assertEquals("*", request.getResource.getValue("column"))
+      assertNull(request.getResource.getOwnerUser)
+      assertEquals(UserGroupInformation.getCurrentUser.getShortUserName, request.getUser)
+    }
+  }
+
+  private def policyRefreshAfterCreate0(mode: String): Unit = {
+    var policy: TestDeltaRangerNativeSelect.Fixture = null
+    val plugins = ArrayBuffer.empty[RangerBasePlugin]
+    try
+      fixture.withCase(
+        "command-postcommit-policy-" + mode,
+        installed = true,
+        observed = false,
+        policySetup = configured => {
+          policy = configured
+          plugins += realPolicies(policy, deny = false)
+        },
+        logStoreClass = Some(classOf[CreatePolicyLogStore].getName)
+      ) { (spark, transport, evidence) =>
+        val allowed = mode == "changed-version" || mode == "same-version"
+        var wroteLog0 = false
+        var requestsAtWrite = -1
+        var overlapped = false
+        def publish(version: Long): Unit = {
+          doAnswer(_ => java.lang.Long.valueOf(version)).when(policy.plugin).getPoliciesVersion
+          policy.start()
+        }
+        CreatePolicyLogStore.afterWrite = path => {
+          if (path.toUri.getPath == evidence.log0.toString) {
+            assertFalse(wroteLog0)
+            wroteLog0 = true
+            assertTrue(Files.exists(evidence.log0))
+            assertTrue(DeltaRangerCreateMutation.current.nonEmpty)
+            assertNotNull(DeltaRangerNativeOperation.current())
+            requestsAtWrite = policy.requests.size()
+            mode match {
+              case "changed-version" | "same-version" | "deny" =>
+                val version = if (mode == "same-version") 1L else 2L
+                plugins += realPolicies(policy, deny = mode == "deny", version = version)
+                publish(version)
+              case "unavailable" =>
+                doAnswer(_ => java.lang.Long.valueOf(2L)).when(policy.plugin).getPoliciesVersion
+              case "overlap" =>
+                policy.onRequest = _ => {
+                  if (!overlapped) {
+                    overlapped = true
+                    publish(2L)
+                  }
+                }
+            }
+            evidence.record(
+              "completed-log0-policy-boundary",
+              s"mode=$mode requests=$requestsAtWrite"
+            )
+          }
+        }
+        transport.publishSuccess = true
+        val carrier = issued(spark)
+        val physical = carrier.owner.plan(carrier, spark)
+        val start = System.nanoTime()
+        try {
+          if (allowed) {
+            physical.run()
+            assertEquals("PUBLISHED", transport.receipt.state().name())
+            assertTrue(Files.exists(evidence.log0.resolveSibling("00000000000000000000.crc")))
+          } else {
+            val failure = assertThrows(classOf[Exception], () => physical.run())
+            evidence.failed("expected-postcommit-policy-" + mode, failure)
+            assertTrue(failure.getMessage.contains("native=UNKNOWN"), failure.toString)
+            assertTrue(failure.getMessage.contains("publication=NOT_ATTEMPTED"), failure.toString)
+            val causes = Iterator
+              .iterate[Throwable](failure)(_.getCause)
+              .takeWhile(_ != null)
+              .map(_.getMessage)
+              .toVector
+            val expected = mode match {
+              case "deny"        => "Delta Ranger access denied"
+              case "unavailable" => "Completed policy binding/version mismatch"
+              case "overlap"     => "Delta Ranger publication changed; reanalyze the query"
+            }
+            assertTrue(causes.contains(expected), causes.mkString("; "))
+          }
+        } finally {
+          evidence.record(
+            "policy-reauthorization-cost",
+            s"requests=${policy.requests.size()} requestsAtWrite=$requestsAtWrite elapsedNanos=${System.nanoTime() - start}"
+          )
+        }
+        assertTrue(wroteLog0)
+        assertTrue(Files.exists(evidence.log0))
+        if (mode != "unavailable") assertTrue(policy.requests.size() > requestsAtWrite)
+        assertEquals(mode == "overlap", overlapped)
+        assertLiteralCreateRequests(policy)
+        assertEquals(
+          if (allowed) Vector("RESERVE", "PUBLISH") else Vector("RESERVE"),
+          transport.commands.map(_.operation().name()).toVector
+        )
+        assertFalse(Files.exists(evidence.log0.resolveSibling("00000000000000000001.json")))
+        assertEquals(0, loads)
+        assertTrue(DeltaRangerCreateMutation.current.isEmpty)
+        assertNull(DeltaRangerNativeOperation.current())
+        assertTrue(OptimisticTransaction.getActive.isEmpty)
+        val commands = transport.commands.toVector
+        val files = evidence.files()
+        assertFalse(files.keys.exists(_.endsWith(".parquet")))
+        assertThrows(classOf[SecurityException], () => physical.run())
+        assertEquals(commands, transport.commands.toVector)
+        assertEquals(files, evidence.files())
+      }
+    finally {
+      CreatePolicyLogStore.afterWrite = _ => ()
+      plugins.foreach(_.cleanup())
+    }
+  }
+}
+
+/** Exposes only the return from the public native store write, preserving all original bytes. */
+class CreatePolicyLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
+    extends HDFSLogStore(sparkConf, hadoopConf) {
+
+  /** Completes the native write before notifying the deterministic policy-refresh fixture. */
+  override def write(
+      path: HadoopPath,
+      actions: Iterator[String],
+      overwrite: Boolean,
+      conf: Configuration
+  ): Unit = {
+    super.write(path, actions, overwrite, conf)
+    CreatePolicyLogStore.afterWrite(path)
+  }
+}
+
+private[ranger] object CreatePolicyLogStore {
+  var afterWrite: HadoopPath => Unit = (_: HadoopPath) => ()
 }
