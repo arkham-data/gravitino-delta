@@ -481,7 +481,12 @@ class TestDeltaRangerAppendV1Input {
   }
 
   @Test
-  def actualInputRechecksPolicyPublicationRegistrationAndContext(): Unit = {
+  def actualInputRechecksPolicyPublicationRegistrationAndContext(): Unit = inputChanges()
+
+  private[ranger] def inputChanges(
+      sourceSql: String = "SELECT id, secret, region FROM b.db.t",
+      nativeSetup: SparkSession => Unit = _ => ()
+  ): Unit = {
     Seq(
       "select",
       "update",
@@ -494,8 +499,8 @@ class TestDeltaRangerAppendV1Input {
       "subject",
       "configuration"
     ).foreach { change =>
-      withCase("input-" + change) { c =>
-        val data = c.spark.sql("SELECT id, secret, region FROM b.db.t")
+      withCase("input-" + change, nativeSetup = nativeSetup) { c =>
+        val data = c.spark.sql(sourceSql)
         var fired = false
         var retained: DeltaRangerAppendInputExec = null
         val conf = c.spark.conf.get("spark.sql.shuffle.partitions")
@@ -1534,6 +1539,38 @@ class TestDeltaRangerAppendV1Input {
         }
       finally c.source.onRequest = _ => ()
     }
+
+  private[ranger] def timestampDemandRejections(): Unit = withCase(
+    "timestamp-demand",
+    nativeSetup = native => {
+      native
+        .sql(
+          "ALTER TABLE delta.`" + NativeSelectFixture.locations("a") +
+            "` ADD COLUMNS (__arkham_loaded_at TIMESTAMP, second_time TIMESTAMP)"
+        )
+        .collect()
+      ()
+    }
+  ) { c =>
+    val times = ", current_timestamp() AS __arkham_loaded_at, current_timestamp() AS second_time"
+    val columnless = c.spark.sql(
+      "SELECT 9L AS id, 'constant' AS secret, 'keep' AS region" + times + " FROM b.db.t"
+    )
+    assertReason(appendFailure(c, columnless), "columnless original source demand")
+    c.source.denied.add("b:region")
+    try {
+      val hidden = c.spark.sql(
+        "SELECT id, secret, 'keep' AS region" + times +
+          " FROM b.db.t WHERE false AND region = 'keep'"
+      )
+      assertReason(appendFailure(c, hidden), "denied")
+    } finally c.source.denied.clear()
+    c.target.denied.add("a:*")
+    try {
+      val source = c.spark.sql("SELECT id, secret, region" + times + " FROM b.db.t")
+      assertReason(appendFailure(c, source), "denied")
+    } finally c.target.denied.clear()
+  }
 
   private def asApp(body: => Unit): Unit =
     UserGroupInformation

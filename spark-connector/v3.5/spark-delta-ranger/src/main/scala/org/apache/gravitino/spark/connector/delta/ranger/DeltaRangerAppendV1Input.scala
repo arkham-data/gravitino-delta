@@ -85,7 +85,7 @@ private[ranger] object DeltaRangerAppendV1Input {
         // ordinary receipt is not proof that the source passed append's extraction boundary.
         if (!DeltaRangerOrdinaryRead.pending(command.query))
           denied("missing original pending source")
-        DeltaRangerPlanAdmission.query(command.query)
+        DeltaRangerPlanAdmission.inputQuery(command.query)
         val demand = DeltaRangerReadRule.extract(
           DeltaRangerOrdinaryAdmission.authoredDemandPlan(command.query),
           spark

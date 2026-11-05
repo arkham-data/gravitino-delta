@@ -76,6 +76,19 @@ private[ranger] object DeltaRangerPlanAdmission {
     }
   }
 
+  // Append retains its finite operator set; only Project has the input expression extension.
+  def inputQuery(plan: LogicalPlan): Unit = {
+    if (!plan.resolved || plan.isStreaming) reject("unresolved or streaming plan")
+    plan.foreach {
+      case project: Project   => project.projectList.foreach(DeltaRangerInputProjection.expression)
+      case _: LogicalRelation =>
+      case node @ (_: Filter | _: SubqueryAlias) => node.expressions.foreach(expression)
+      case join: Join if join.joinType == Inner && join.condition.nonEmpty =>
+        join.expressions.foreach(expression)
+      case other => reject(other.nodeName)
+    }
+  }
+
   def expression(expr: Expression): Unit = expr.foreach {
     case _: AttributeReference | _: Literal | _: Alias | _: Cast | _: EqualTo | _: EqualNullSafe |
         _: GreaterThan | _: GreaterThanOrEqual | _: LessThan | _: LessThanOrEqual | _: And | _: Or |

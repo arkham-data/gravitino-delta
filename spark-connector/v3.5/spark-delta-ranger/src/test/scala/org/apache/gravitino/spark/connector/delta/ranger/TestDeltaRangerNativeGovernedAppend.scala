@@ -1089,6 +1089,10 @@ class TestDeltaRangerNativeGovernedAppend {
       sourceSql: String = "SELECT id, secret, region FROM b.db.t",
       expectedAppendedRows: Vector[Row] =
         Vector(Row(1L, "b-one-masked", "keep"), Row(3L, null, "keep")),
+      timestampColumns: Seq[String] = Seq.empty,
+      inspectInput: DataFrame => Unit = _ => (),
+      inspectFrozenInput: LogicalPlan => Unit = _ => (),
+      inspectRows: Vector[Row] => Unit = _ => (),
       checkConstraint: Boolean = false,
       revokeAfterHelper: Boolean = false,
       revokeTargetAfterHelper: Boolean = false,
@@ -1257,6 +1261,7 @@ class TestDeltaRangerNativeGovernedAppend {
           val input = spark.sql(
             sourceSql + (if (emptySource) " WHERE false" else "")
           )
+          inspectInput(input)
           val registration = NativeSelectFixture.bindingFixture(spark, "a")
           val sourceRegistration = NativeSelectFixture.bindingFixture(spark, "b")
           val sourceRegistrationBefore =
@@ -1319,7 +1324,8 @@ class TestDeltaRangerNativeGovernedAppend {
               field[ThreadLocal[DeltaRangerAppendHelper]](DeltaRangerAppendHelper, "active").get()
             helperObserved ||= helper != null
             if (helper != null) {
-              helpers.put(helper, true)
+              if (helpers.put(helper, true) == null)
+                inspectFrozenInput(field[LogicalPlan](helper, "original"))
               Option(spark.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)).foreach {
                 id =>
                   Option(SQLExecution.getQueryExecution(id.toLong)).foreach(qe =>
@@ -2116,7 +2122,11 @@ class TestDeltaRangerNativeGovernedAppend {
               )
               assertEquals(checkpointRows.count(), last.get("size").asLong())
             }
-            val actualRows = native.read.format("delta").load(location).collect().toVector
+            val observedRows = native.read.format("delta").load(location).collect().toVector
+            inspectRows(observedRows)
+            val actualRows =
+              if (timestampColumns.isEmpty) observedRows
+              else observedRows.map(row => Row.fromSeq(row.toSeq.take(3)))
             trace.record(
               "native-rows-json",
               json.writeValueAsString(actualRows.map(_.toSeq.asJava).asJava)
@@ -2186,7 +2196,7 @@ class TestDeltaRangerNativeGovernedAppend {
                   "` ADD CONSTRAINT positive_id CHECK (id > 0)"
               )
               .collect()
-          if (partitionedTarget || rewriteTarget) {
+          if ((partitionedTarget && timestampColumns.isEmpty) || rewriteTarget) {
             val writer = native
               .sql(
                 "SELECT 1L id, 'a-one' secret, 'keep' region UNION ALL SELECT 2L, 'a-two', 'drop' UNION ALL SELECT 3L, CAST(NULL AS STRING), 'keep'"
@@ -2260,7 +2270,17 @@ class TestDeltaRangerNativeGovernedAppend {
             "native-state-before",
             s"version=$beforeVersion metadata=$beforeMetadata protocol=$beforeProtocol"
           )
-        }
+        },
+        initialData = (catalog, data) =>
+          if (catalog != "a" || timestampColumns.isEmpty) data
+          else
+            data.selectExpr(
+              (Seq("id", "secret", "region") ++ timestampColumns
+                .map(name => "CAST(NULL AS TIMESTAMP) AS `" + name + "`")): _*
+            ),
+        initialPartitions =
+          if (timestampColumns.nonEmpty && partitionedTarget) Map("a" -> Seq("region"))
+          else Map.empty
       )
     finally {
       target.engine.close()

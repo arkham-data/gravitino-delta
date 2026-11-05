@@ -153,7 +153,9 @@ private[ranger] object DeltaRangerOrdinaryRead {
     val origin = plan.getTagValue(tag).get.origin
     val copy = plan.clone()
     copy.foreach(_.unsetTagValue(tag))
-    val authorized = new DeltaRangerReadRule(spark, origin.catalogs).authorizeComplete(copy)
+    val frozen = DeltaRangerInputProjection.freeze(copy)
+    origin.validate(plan, spark)
+    val authorized = new DeltaRangerReadRule(spark, origin.catalogs).authorizeComplete(frozen)
     origin.validate(plan, spark)
     DeltaRangerDecisionReceipt.check(authorized, spark, optimized = false)
     Some(authorized)

@@ -33,7 +33,7 @@ import org.apache.kyuubi.plugin.spark.authz.rule.rowfilter.RowFilterMarker
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, Project, SubqueryAlias}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
-import org.apache.spark.sql.{Row, SparkSession, SparkSessionExtensions}
+import org.apache.spark.sql.{DataFrame, Row, SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableChange}
@@ -485,7 +485,9 @@ private[ranger] object NativeSelectFixture {
       extension: Option[SparkSessionExtensions => Unit] = None,
       startupOptions: Map[String, String] = Map.empty,
       beforeExtension: SparkSession => Unit = _ => (),
-      clearNativeCacheBeforeExtension: Boolean = true
+      clearNativeCacheBeforeExtension: Boolean = true,
+      initialData: (String, DataFrame) => DataFrame = (_, data) => data,
+      initialPartitions: Map[String, Seq[String]] = Map.empty
   ): Unit = {
     val directory = Files.createTempDirectory("delta-ranger-native")
     locations = Seq("a", "b", "q").map(c => c -> directory.resolve(c).toString).toMap
@@ -527,8 +529,11 @@ private[ranger] object NativeSelectFixture {
     spark.sparkContext.setLogLevel("WARN")
     try {
       locations.foreach { case (catalog, location) =>
-        val data = spark.sql(
-          s"SELECT CAST(1 AS BIGINT) id, '$catalog-one' secret, 'keep' region UNION ALL SELECT 2L, '$catalog-two', 'drop' UNION ALL SELECT 3L, CAST(NULL AS STRING), 'keep'"
+        val data = initialData(
+          catalog,
+          spark.sql(
+            s"SELECT CAST(1 AS BIGINT) id, '$catalog-one' secret, 'keep' region UNION ALL SELECT 2L, '$catalog-two', 'drop' UNION ALL SELECT 3L, CAST(NULL AS STRING), 'keep'"
+          )
         )
         if (catalog == "q")
           data
@@ -540,6 +545,7 @@ private[ranger] object NativeSelectFixture {
         else
           data.write
             .format("delta")
+            .partitionBy(initialPartitions.getOrElse(catalog, Seq.empty): _*)
             .option(
               "delta.enableRowTracking",
               startupOptions.getOrElse("spark.test.delta.rowTracking", "false")

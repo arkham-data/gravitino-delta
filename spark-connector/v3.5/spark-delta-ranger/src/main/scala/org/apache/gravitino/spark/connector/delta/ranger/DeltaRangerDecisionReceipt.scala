@@ -49,6 +49,9 @@ private[ranger] final class DeltaRangerDecisionReceipt private (
     configuration: SQLConf
 ) {
   import DeltaRangerDecisionReceipt._
+  // Pending structural bindings may contain query time; executable receipts never do.
+  if (approved.exists(_.expressions.exists(_.exists(_.isInstanceOf[CurrentTimestamp]))))
+    denied("unfrozen input timestamp")
   private val conf = configuration.clone()
   private val settings = conf.getAllConfs
   private val original = detached(approved)
@@ -276,6 +279,8 @@ private[ranger] object DeltaRangerDecisionReceipt {
   private val expressionClasses: Set[Class[_]] = Set(
     classOf[AggregateExpression],
     classOf[Count],
+    // Structural pending-intent binding only; executable input freezes this before issuance.
+    classOf[CurrentTimestamp],
     classOf[SortOrder],
     classOf[ToPrettyString],
     classOf[AttributeReference],

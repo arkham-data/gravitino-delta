@@ -40,7 +40,9 @@ private[ranger] object DeltaRangerOrdinaryAdmission {
       case _: LogicalRelation =>
       case view: View         => DeltaRangerOrdinaryViews.validateDefinition(view)
       case project: Project if displayProjection(project) =>
-      case node @ (_: Project | _: Filter | _: SubqueryAlias) =>
+      case project: Project =>
+        project.projectList.foreach(DeltaRangerInputProjection.expression)
+      case node @ (_: Filter | _: SubqueryAlias) =>
         node.expressions.foreach(DeltaRangerPlanAdmission.expression)
       case join: Join if join.joinType == Inner && (pending || join.condition.nonEmpty) =>
         join.expressions.foreach(DeltaRangerPlanAdmission.expression)
