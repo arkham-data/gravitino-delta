@@ -258,6 +258,14 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case _                                 => denied("append physical product changed")
     }
   }
+  final class CreateTicket(private val spark: SparkSession) extends Ticket {
+    override def requireSession(session: SparkSession): Unit =
+      if (session ne spark) denied("CREATE planning session changed")
+    override def verify(plan: SparkPlan): Unit = plan match {
+      case command: DeltaRangerCreateExec => command.verify(spark)
+      case _                              => denied("CREATE physical command changed")
+    }
+  }
   final class CdfTicket(private val spark: SparkSession) extends Ticket {
     override def requireSession(session: SparkSession): Unit =
       if (session ne spark) denied("CDF planning session changed")
@@ -336,6 +344,11 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case _ =>
     }
     plan match {
+      case command: DeltaRangerCreateExec =>
+        val ticket = new CreateTicket(spark)
+        ticket.verify(command)
+        command.setTagValue(tag, new Reference(ticket))
+        return command
       case command: DeltaRangerCdfPropertyExec =>
         val ticket = new CdfTicket(spark)
         ticket.verify(command)
@@ -469,6 +482,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         DeltaRangerAppendCommit.current
           .map(_.metadata)
           .orElse(DeltaRangerCdfPropertyMutation.current.map(_.metadata))
+          .orElse(DeltaRangerCreateMutation.current.map(_.metadata))
           .orElse(DeltaRangerMergeCommit.current.map(_.metadata)) match {
           case Some(commit) =>
             DeltaRangerCollectGuardExec(plan)(new DeltaRangerCollectValidationContext {
@@ -482,6 +496,7 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         }
       case _: AppendTicket => plan
       case _: CdfTicket    => plan
+      case _: CreateTicket => plan
     }
   }
 

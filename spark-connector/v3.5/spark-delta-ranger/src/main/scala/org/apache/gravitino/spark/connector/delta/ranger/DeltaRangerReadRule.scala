@@ -71,7 +71,11 @@ private[ranger] class DeltaRangerReadRule(
     plan match {
       case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return helper
       case cdf: DeltaRangerCdfRead.Carrier               => cdf.receipt; return cdf
-      case cdf: DeltaRangerCdfPropertyCommand.Carrier    => cdf.owner.check(cdf, spark); return cdf
+      case create: DeltaRangerCreateCommand.Carrier =>
+        create.owner.check(create, spark); return create
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return cdf
+      case create: CreateTable if create.resolved =>
+        return DeltaRangerCreateCommand.resolve(create, spark, catalogs)
       case cdf: SetTableProperties if cdf.resolved =>
         return DeltaRangerCdfPropertyCommand.resolve(cdf, spark, catalogs)
       case append: AppendData if append.resolved =>
@@ -250,8 +254,9 @@ private[ranger] object DeltaRangerReadRule {
     plan match {
       case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return
       case cdf: DeltaRangerCdfRead.Carrier               => cdf.receipt; return
-      case cdf: DeltaRangerCdfPropertyCommand.Carrier    => cdf.owner.check(cdf, spark); return
-      case _                                             =>
+      case create: DeltaRangerCreateCommand.Carrier   => create.owner.check(create, spark); return
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return
+      case _                                          =>
     }
     if (DeltaRangerAppendHelper.analysis(plan, spark)) return
     if (plan.isInstanceOf[AppendData]) {
@@ -277,10 +282,12 @@ private[ranger] object DeltaRangerReadRule {
     plan match {
       case helper: DeltaRangerCdfReadScans.HelperCarrier => helper.ticket; return helper
       case cdf: DeltaRangerCdfRead.Carrier               => cdf.receipt; return cdf
-      case cdf: DeltaRangerCdfPropertyCommand.Carrier    => cdf.owner.check(cdf, spark); return cdf
-      case merge: DeltaRangerMergeCommand                => merge.receipt; return merge
-      case raw: DeltaRangerRawMaintenance.Carrier        => return raw.owner.prepare(raw.child)
-      case _                                             =>
+      case create: DeltaRangerCreateCommand.Carrier =>
+        create.owner.check(create, spark); return create
+      case cdf: DeltaRangerCdfPropertyCommand.Carrier => cdf.owner.check(cdf, spark); return cdf
+      case merge: DeltaRangerMergeCommand             => merge.receipt; return merge
+      case raw: DeltaRangerRawMaintenance.Carrier     => return raw.owner.prepare(raw.child)
+      case _                                          =>
     }
     if (plan.isInstanceOf[AppendData])
       return DeltaRangerAppendV1Input.prepare(plan.asInstanceOf[AppendData], spark)

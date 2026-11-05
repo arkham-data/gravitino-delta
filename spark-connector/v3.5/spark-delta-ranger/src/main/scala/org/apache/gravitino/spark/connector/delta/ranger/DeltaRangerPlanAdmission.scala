@@ -100,6 +100,7 @@ private[ranger] object DeltaRangerPlanAdmission {
   private[ranger] def nativeShape(plan: LogicalPlan): Boolean = {
     DeltaRangerNativeOperation.requireNoRawSelection()
     DeltaRangerRawMetadata.current.foreach(owner => return owner.executable(plan))
+    if (DeltaRangerCreateMutation.current.exists(owner => !owner.prefix(plan))) return false
     if (
       operation != null && operation.committing() &&
       DeltaRangerAppendCommit.current

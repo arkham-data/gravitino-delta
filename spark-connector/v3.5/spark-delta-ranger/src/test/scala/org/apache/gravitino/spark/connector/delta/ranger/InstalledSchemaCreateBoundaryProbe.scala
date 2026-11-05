@@ -50,6 +50,9 @@ import org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35
 import org.apache.ranger.admin.client.RangerAdminRESTClient
 import org.apache.ranger.plugin.model.RangerServiceDef
 import org.apache.ranger.plugin.service.RangerBasePlugin
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.execution.{LogicalRDD, QueryExecution}
+import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -137,6 +140,22 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
       }
     }
     def activate(spark: SparkSession): Unit = {
+      spark.listenerManager.register(new QueryExecutionListener {
+        override def onSuccess(name: String, query: QueryExecution, duration: Long): Unit =
+          consumer("success", name, query)
+        override def onFailure(name: String, query: QueryExecution, failure: Exception): Unit =
+          consumer("failure", name, query)
+        private def consumer(outcome: String, name: String, query: QueryExecution): Unit =
+          Trace.this.synchronized {
+            if (!closed) {
+              // The listener observes returned plans only, without requesting analysis or execution.
+              record(
+                "query-consumer",
+                s"outcome=$outcome name=$name logical=${query.logical.treeString}"
+              )
+            }
+          }
+      })
       record(
         "runtime",
         s"spark=${spark.version} scala=${scala.util.Properties.versionNumberString} java=${System.getProperty("java.version")} session=${id(spark)}"
@@ -152,6 +171,11 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
         classOf[scala.Option[_]],
         classOf[GravitinoDeltaCatalogSpark35],
         classOf[DeltaRangerSparkExtension],
+        classOf[DeltaRangerCatalogSpark35],
+        classOf[DeltaRangerCreateCommand.Owner],
+        classOf[DeltaRangerCreateMutation],
+        classOf[DeltaRangerCreateMetadata],
+        classOf[DeltaRangerCreateExec],
         classOf[ResolutionObserver],
         classOf[TestDeltaRangerInstalledSchemaCreateBoundary]
       ).foreach(origin)
@@ -186,6 +210,46 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
           }
           plan.foreach { root =>
             plans += root
+            root.foreach {
+              case logical: LogicalRDD if logical.getClass == classOf[LogicalRDD] =>
+                record(
+                  "public-logical-rdd",
+                  s"logical=${id(logical)} rdd=${id(logical.rdd)} schema=${logical.schema.json} streaming=${logical.isStreaming} partitioning=${logical.outputPartitioning} ordering=${logical.outputOrdering}"
+                )
+                val visited = new IdentityHashMap[RDD[_], java.lang.Boolean]()
+                def graph(rdd: RDD[_]): Unit = {
+                  if (!visited.containsKey(rdd)) {
+                    visited.put(rdd, true)
+                    origin(rdd.getClass)
+                    val known = rdd.getClass == Class.forName(
+                      "org.apache.spark.rdd.MapPartitionsRDD",
+                      false,
+                      classOf[RDD[_]].getClassLoader
+                    ) ||
+                      rdd.getClass == Class.forName(
+                        "org.apache.spark.rdd.EmptyRDD",
+                        false,
+                        classOf[RDD[_]].getClassLoader
+                      ) ||
+                      rdd.getClass == Class.forName(
+                        "org.apache.spark.rdd.ParallelCollectionRDD",
+                        false,
+                        classOf[RDD[_]].getClassLoader
+                      )
+                    if (!known) record("public-rdd-unknown", s"rdd=${id(rdd)} getters=NOT_INVOKED")
+                    else {
+                      val dependencies = rdd.dependencies.toVector
+                      record(
+                        "public-rdd",
+                        s"rdd=${id(rdd)} context=${id(rdd.context)} partitions=${rdd.partitions.toVector.map(p => id(p) + ":" + p.index)} dependencies=${dependencies.map(d => id(d) + "->" + id(d.rdd))}"
+                      )
+                      dependencies.foreach(d => graph(d.rdd))
+                    }
+                  }
+                }
+                graph(logical.rdd)
+              case _ =>
+            }
             record(
               phase + "-plan",
               root
@@ -258,7 +322,7 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
   def observer(trace: Trace): SparkSessionExtensions => Unit = extensions =>
     extensions.injectResolutionRule(spark => new ResolutionObserver(spark, trace))
 
-  /** Scripted absent metadata and RESERVED transport, with no published substitute. */
+  /** Scripted typed registration transport; never evidence of live provider publication. */
   final class Transport(trace: Trace, schema: StructType) {
     val metadata = mock(classOf[Catalog])
     val actor = mock(classOf[Catalog])
@@ -267,6 +331,10 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
     private val reservedTable = mock(classOf[MetadataTable])
     val commands = ArrayBuffer.empty[DeltaRegistrationCommand]
     var reads = 0
+    var publishSuccess = false
+    var metadataFailure: RuntimeException = null
+    var reserveFailure: RuntimeException = null
+    var afterPublishedResponse: () => Unit = () => ()
     var receipt: DeltaRegistrationReceipt = _
     val sentinel = new IllegalStateException("INSTALLED_SCHEMA_CREATE_PUBLISH_STOP")
     Seq(metadata, actor).foreach { catalog =>
@@ -278,6 +346,7 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
     when(metadataTables.loadTable(any(classOf[NameIdentifier]))).thenAnswer(call => {
       val name = call.getArgument[NameIdentifier](0)
       reads += 1
+      if (metadataFailure != null) throw metadataFailure
       trace.record("metadata-absence", s"name=$name type=${classOf[NoSuchTableException].getName}")
       throw new NoSuchTableException("Absent installed schema CREATE fixture: %s", name)
     })
@@ -301,6 +370,7 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
         DeltaRegistrationCommand.decode(properties.get(DeltaRegistrationCommand.COMMAND_PROPERTY))
       commands += command
       trace.record("actor-command", command.encode())
+      if (reserveFailure != null) throw reserveFailure
       assertEquals(DeltaRegistrationCommand.Operation.RESERVE, command.operation())
       assertEquals(mapper.readTree(schema.json), mapper.readTree(command.exactSchemaJson().get()))
       assertFalse(command.schemaContract().isPresent)
@@ -338,8 +408,31 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
         trace.record("actor-command", command.encode())
         assertEquals(DeltaRegistrationCommand.Operation.PUBLISH, command.operation())
         assertEquals(receipt.identity(), command.expected().get())
-        trace.failed("publish-sentinel", sentinel)
-        throw sentinel
+        if (!publishSuccess) {
+          trace.failed("publish-sentinel", sentinel)
+          throw sentinel
+        }
+        val actions = Files.readAllLines(trace.log0).asScala.map(mapper.readTree)
+        val nativeId = actions.find(_.has("metaData")).get.get("metaData").get("id").asText()
+        receipt = DeltaRegistrationReceipt.of(
+          receipt.identity(),
+          receipt.operation(),
+          DeltaRegistrationReceipt.State.PUBLISHED,
+          receipt.runId(),
+          DeltaRegistrationReceipt.Evidence.EXACT_NATIVE_COMMIT,
+          "NONE",
+          Optional.empty[DeltaOperationMarker](),
+          Optional.of(trace.target.toUri.toString),
+          Optional.of(nativeId),
+          OptionalLong.of(0)
+        )
+        trace.record(
+          "scripted-published-receipt",
+          receipt.toProperties().asScala.toSeq.sorted.mkString("\n")
+        )
+        when(reservedTable.properties()).thenReturn(receipt.toProperties())
+        afterPublishedResponse()
+        reservedTable
       })
   }
   final class Wrapper(

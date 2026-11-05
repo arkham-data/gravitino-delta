@@ -45,8 +45,8 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
   private val lastCommit = "spark.databricks.delta.lastCommitVersionInSession"
 
   @Test
-  def namedSchemaCreateRetainsInstalledRefusal(): Unit = withCase("A-named", installed = true) {
-    (spark, transport, evidence) =>
+  def issuedNamedSchemaCreatePublishesWithoutSelect(): Unit =
+    withCase("A-issued-named", installed = true, observed = false) { (spark, transport, evidence) =>
       val properties = fixtureMap("tableProperties")
       val declaration = properties.toSeq.sorted
         .map { case (key, value) => "'" + key + "'='" + value + "'" }
@@ -55,14 +55,21 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
       evidence.record("sql", sql)
       val parsed = spark.sessionState.sqlParser.parsePlan(sql)
       assertSame(parsed, new ResolutionObserver(spark, evidence).apply(parsed))
-      val failure = rejected(evidence, "named-sql") { spark.sql(sql).collect() }
-      assertBoundary(failure, "Unqualified Delta Ranger route: CreateTable")
-      assertTrue(evidence.plans.exists(_.nodeName == "CreateTable"))
-      assertEquals(0, exists, "tableExists should remain NOT_REACHED at analysis refusal")
-      assertEquals(0, creates, "createTable should remain NOT_REACHED at analysis refusal")
-      assertTrue(transport.commands.isEmpty)
-      assertTrue(evidence.files().isEmpty)
-  }
+      // Scripted registration transport, real wrapper, base stage and installed native execution.
+      transport.publishSuccess = true
+      spark.sql(sql).collect()
+      assertEquals(
+        Vector("RESERVE", "PUBLISH"),
+        transport.commands.map(_.operation().name()).toVector
+      )
+      assertEquals("PUBLISHED", transport.receipt.state().name())
+      assertEquals(0L, transport.receipt.nativeVersion().getAsLong)
+      assertTrue(Files.exists(evidence.log0))
+      assertEquals(0, loads, "Issued CREATE must not require a final SELECT/loadTable")
+      assertEquals(0, exists, "Provider reserve is authoritative for name occupancy")
+      assertEquals(0, creates, "Issued CREATE uses the real stage without convenience loading")
+
+    }
 
   @Test
   def baseSchemaCreateRecordsInstalledNativeBoundary(): Unit =
@@ -220,11 +227,17 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
     } finally adapter.close()
   }
 
-  private def withCase(name: String, installed: Boolean)(
+  private[ranger] def withCase(
+      name: String,
+      installed: Boolean,
+      observed: Boolean = true,
+      policySetup: TestDeltaRangerNativeSelect.Fixture => Unit = _ => ()
+  )(
       body: (SparkSession, Transport, Trace) => Unit
   ): Unit = {
     val evidence = fresh(name)
     val policy = new TestDeltaRangerNativeSelect.Fixture
+    policySetup(policy)
     val transport = new Transport(evidence, schema)
     val metadataConfig = evidence.directory.resolve("metadata.properties")
     write(
@@ -235,7 +248,7 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
     loads = 0; exists = 0; creates = 0
     trace = evidence
     installer = extensions => {
-      observer(evidence)(extensions)
+      if (observed) observer(evidence)(extensions)
       if (installed) new DeltaRangerSparkExtension((_, _) => wrapper)(extensions)
     }
     val builder = SparkSession
@@ -302,6 +315,7 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
           assertEquals(value, spark.conf.get(key))
         }
         assertNull(DeltaRangerNativeOperation.current())
+        assertTrue(DeltaRangerCreateMutation.current.isEmpty)
         assertTrue(OptimisticTransaction.getActive.isEmpty)
         assertTrue(evidence.errors.isEmpty, "Trace instrumentation failed independently")
       }

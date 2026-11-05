@@ -29,6 +29,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.function.Function;
@@ -37,6 +38,7 @@ import javax.annotation.Nullable;
 import org.apache.gravitino.Catalog;
 import org.apache.gravitino.spark.connector.GravitinoSparkConfig;
 import org.apache.gravitino.spark.connector.catalog.GravitinoCatalogManager;
+import org.apache.gravitino.spark.connector.delta.DeltaCreateLifecycle;
 import org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.spark.SparkConf;
@@ -44,16 +46,23 @@ import org.apache.spark.SparkContext;
 import org.apache.spark.scheduler.SparkListener;
 import org.apache.spark.scheduler.SparkListenerApplicationEnd;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.plans.logical.TableSpec;
+import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableChange;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import scala.collection.JavaConverters;
 
 /** Optional native catalog with separate application, current actor, and metadata identities. */
 public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark35 {
   static final String PREFIX = "spark.gravitino.deltaRanger.";
   static final String EXTENSION =
       "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerSparkExtension";
+  private static final ThreadLocal<CreateInvocation> CREATE = new ThreadLocal<>();
   private static final ThreadLocal<CdfAlterInvocation> CDF_ALTER = new ThreadLocal<>();
   private final State state;
   @Nullable private DeltaRangerPolicyEngine engine;
@@ -160,6 +169,55 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   @Override
   public Table loadTable(Identifier id) {
     return registrationBindings().load(id, () -> super.loadTable(id));
+  }
+
+  interface CreateInvocation {
+    /**
+     * Returns the privately issued lifecycle after validating the immutable catalog declaration.
+     *
+     * @param catalog exact invoking wrapper
+     * @param intent base-owned immutable declaration
+     * @return the single issued lifecycle
+     */
+    DeltaCreateLifecycle lifecycle(
+        DeltaRangerCatalogSpark35 catalog, DeltaCreateLifecycle.Intent intent);
+  }
+
+  static void withCreate(CreateInvocation invocation, Runnable body) {
+    if (CREATE.get() != null) throw new SecurityException("Nested CREATE command");
+    CREATE.set(invocation);
+    try {
+      body.run();
+    } finally {
+      CREATE.remove();
+    }
+  }
+
+  static Map<String, String> convertCreateProperties(TableSpec specification) {
+    return JavaConverters.mapAsJavaMapConverter(CatalogV2Util.convertTableProperties(specification))
+        .asJava();
+  }
+
+  /** Accepts only the exact declaration carried by the privately issued CREATE invocation. */
+  @Override
+  protected DeltaCreateLifecycle newCreateLifecycle(DeltaCreateLifecycle.Intent intent) {
+    CreateInvocation invocation = CREATE.get();
+    if (invocation == null) throw new SecurityException("Unbound CREATE command");
+    return invocation.lifecycle(this, intent);
+  }
+
+  /** Rejects replacement outside the qualified initial schema CREATE profile. */
+  @Override
+  public StagedTable stageReplace(
+      Identifier id, StructType schema, Transform[] partitions, Map<String, String> properties) {
+    throw new SecurityException("Delta Ranger replacement is not qualified");
+  }
+
+  /** Rejects replacement outside the qualified initial schema CREATE profile. */
+  @Override
+  public StagedTable stageCreateOrReplace(
+      Identifier id, StructType schema, Transform[] partitions, Map<String, String> properties) {
+    throw new SecurityException("Delta Ranger replacement is not qualified");
   }
 
   interface CdfAlterInvocation {
