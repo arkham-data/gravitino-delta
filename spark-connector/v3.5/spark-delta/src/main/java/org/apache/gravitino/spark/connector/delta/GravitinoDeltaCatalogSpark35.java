@@ -427,7 +427,7 @@ public class GravitinoDeltaCatalogSpark35
                     Arrays.asList(boundId.namespace()),
                     boundId.name(),
                     schema.json(),
-                    partitions.length,
+                    partitions,
                     properties))
             : DeltaCreateLifecycle.noop();
     Pending pending =

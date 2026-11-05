@@ -1,0 +1,24 @@
+{
+  "settings": {
+    "spark.databricks.delta.optimizeWrite.enabled": "true",
+    "spark.databricks.delta.autoCompact.enabled": "true",
+    "spark.databricks.delta.properties.defaults.compatibility.symlinkFormatManifest.enabled": "true",
+    "spark.databricks.delta.properties.defaults.dataSkippingNumIndexedCols": "-1",
+    "spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled": "true",
+    "spark.sql.adaptive.enabled": "true",
+    "spark.sql.adaptive.coalescePartitions.enabled": "true",
+    "spark.sql.adaptive.advisoryPartitionSizeInBytes": "128m",
+    "spark.sql.adaptive.coalescePartitions.initialPartitionNum": "2000",
+    "spark.sql.adaptive.coalescePartitions.minPartitionSize": "16m",
+    "spark.sql.adaptive.coalescePartitions.parallelismFirst": "false",
+    "spark.databricks.delta.schema.autoMerge.enabled": "false",
+    "spark.sql.sources.partitionOverwriteMode": "static"
+  },
+  "tableProperties": {
+    "delta.compatibility.symlinkFormatManifest.enabled": "true",
+    "delta.deletedFileRetentionDuration": "interval 7 days",
+    "delta.enableChangeDataFeed": "true",
+    "delta.logRetentionDuration": "interval 30 days",
+    "primary_key": "id,region"
+  }
+}

@@ -60,6 +60,7 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.delta.OptimisticTransaction
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.commands.CreateDeltaTableCommand
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -156,6 +157,23 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
             }
           }
       })
+      val conf = spark.sessionState.conf
+      record(
+        "effective-native-tuning",
+        Vector(
+          "autoCompact.minNumFiles=" + conf.getConf(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_NUM_FILES),
+          "autoCompact.maxFileSize=" + conf.getConf(DeltaSQLConf.DELTA_AUTO_COMPACT_MAX_FILE_SIZE),
+          "autoCompact.minFileSize=" + conf.getConf(DeltaSQLConf.DELTA_AUTO_COMPACT_MIN_FILE_SIZE),
+          "optimizeWrite.binSize=" + conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_WRITE_BIN_SIZE),
+          "optimizeWrite.numShuffleBlocks=" + conf.getConf(
+            DeltaSQLConf.DELTA_OPTIMIZE_WRITE_SHUFFLE_BLOCKS
+          ),
+          "optimizeWrite.maxShufflePartitions=" + conf.getConf(
+            DeltaSQLConf.DELTA_OPTIMIZE_WRITE_MAX_SHUFFLE_PARTITIONS
+          ),
+          "snapshotPartitions=" + conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+        ).mkString("\n")
+      )
       record(
         "runtime",
         s"spark=${spark.version} scala=${scala.util.Properties.versionNumberString} java=${System.getProperty("java.version")} session=${id(spark)}"
@@ -174,6 +192,8 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
         classOf[DeltaRangerCatalogSpark35],
         classOf[DeltaRangerCreateCommand.Owner],
         classOf[DeltaRangerCreateMutation],
+        classOf[DeltaRangerCreateDeclaration],
+        classOf[TestDeltaRangerOrdinaryCreate],
         classOf[DeltaRangerCreateMetadata],
         classOf[DeltaRangerCreateExec],
         classOf[ResolutionObserver],

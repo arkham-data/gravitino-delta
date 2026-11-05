@@ -108,12 +108,11 @@ class TestDeltaRangerCreateCommand {
     fixture.withCase("command-declarations", installed = true, observed = false) {
       (spark, transport, evidence) =>
         Seq(
-          statement("id INT"),
-          statement("id BIGINT NOT NULL"),
-          statement("id BIGINT COMMENT 'x'"),
-          statement(suffix = "PARTITIONED BY (id)"),
+          statement("id STRUCT<nested:BIGINT>"),
+          statement("id TIMESTAMP_NTZ"),
+          statement("id ARRAY<ARRAY<STRING>>"),
+          statement(suffix = "PARTITIONED BY (missing)"),
           statement(suffix = "LOCATION 'file:/tmp/foreign-create'"),
-          statement(suffix = "COMMENT 'x'"),
           statement().replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"),
           "CREATE TABLE a.db.created USING delta AS SELECT 1L id"
         )
@@ -401,7 +400,7 @@ class TestDeltaRangerCreateCommand {
         assertTrue(DeltaRangerCreateMutation.current.isEmpty)
     }
 
-  private def realPolicies(
+  private[ranger] def realPolicies(
       fixture: TestDeltaRangerNativeSelect.Fixture,
       deny: Boolean,
       version: Long = 1L

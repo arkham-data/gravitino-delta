@@ -24,8 +24,19 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationReceipt;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaSchemaContract.OperationMode;
+import org.apache.spark.sql.connector.expressions.FieldReference;
+import org.apache.spark.sql.connector.expressions.IdentityTransform;
+import org.apache.spark.sql.connector.expressions.NamedReference;
+import org.apache.spark.sql.connector.expressions.Transform;
+import scala.collection.Seq;
+import scala.collection.immutable.$colon$colon;
+import scala.collection.immutable.Nil$;
+import scala.collection.immutable.Vector;
+import scala.collection.mutable.ArrayBuffer;
+import scala.collection.mutable.WrappedArray;
 
 /** Boundaries for a single CREATE, with the base catalog retaining native execution ownership. */
 public interface DeltaCreateLifecycle extends AutoCloseable {
@@ -36,6 +47,7 @@ public interface DeltaCreateLifecycle extends AutoCloseable {
     private final String table;
     private final String schemaJson;
     private final int partitionCount;
+    private final Optional<List<String>> identityPartitionColumns;
     private final Map<String, String> properties;
 
     /**
@@ -55,6 +67,46 @@ public interface DeltaCreateLifecycle extends AutoCloseable {
         String schemaJson,
         int partitionCount,
         Map<String, String> properties) {
+      this(catalog, namespace, table, schemaJson, partitionCount, properties, Optional.empty());
+    }
+
+    /**
+     * Captures exact stock top-level identity partitions without retaining caller-owned transforms.
+     * Unsupported transforms leave the optional evidence absent and remain usable by base catalogs.
+     *
+     * @param catalog initialized catalog name
+     * @param namespace literal namespace components
+     * @param table literal table name
+     * @param schemaJson declared schema JSON
+     * @param partitions declared partition transforms
+     * @param properties declared table properties
+     */
+    public Intent(
+        String catalog,
+        List<String> namespace,
+        String table,
+        String schemaJson,
+        Transform[] partitions,
+        Map<String, String> properties) {
+      this(
+          catalog,
+          namespace,
+          table,
+          schemaJson,
+          partitions.length,
+          properties,
+          snapshotIdentityPartitionColumns(partitions));
+    }
+
+    private Intent(
+        String catalog,
+        List<String> namespace,
+        String table,
+        String schemaJson,
+        int partitionCount,
+        Map<String, String> properties,
+        Optional<List<String>> identityPartitionColumns) {
+      this.identityPartitionColumns = identityPartitionColumns;
       this.catalog = catalog;
       this.namespace = Collections.unmodifiableList(new ArrayList<>(namespace));
       this.table = table;
@@ -99,10 +151,61 @@ public interface DeltaCreateLifecycle extends AutoCloseable {
     }
 
     /**
+     * @return immutable ordered identity column names, or absent when exact evidence is unavailable
+     */
+    public Optional<List<String>> identityPartitionColumns() {
+      return identityPartitionColumns;
+    }
+
+    /**
      * @return immutable declared table properties
      */
     public Map<String, String> properties() {
       return properties;
+    }
+
+    /**
+     * Snapshots literal names from known stock top-level identity transforms. No caller-owned
+     * array, transform, reference or sequence is retained, and unknown implementations are not
+     * inspected. This pure snapshot supplies declaration evidence, not mutation authority.
+     *
+     * @param partitions non-null declared partition transforms
+     * @return immutable ordered names, including an empty list for no partitions, or absent when
+     *     exact stock evidence is unavailable
+     */
+    public static Optional<List<String>> snapshotIdentityPartitionColumns(Transform[] partitions) {
+      List<String> columns = new ArrayList<>();
+      for (Transform transform : partitions) {
+        if (transform == null || transform.getClass() != IdentityTransform.class) {
+          return Optional.empty();
+        }
+        NamedReference reference = ((IdentityTransform) transform).ref();
+        if (reference == null || reference.getClass() != FieldReference.class) {
+          return Optional.empty();
+        }
+        Seq<String> parts = ((FieldReference) reference).parts();
+        if (parts == null) {
+          return Optional.empty();
+        }
+        // A stock reference may still wrap a custom sequence. Inspect only the concrete stock
+        // containers produced by Spark's parser and expression factory, before invoking getters.
+        if (parts.getClass() == $colon$colon.class) {
+          if (parts.tail().getClass() != Nil$.class) {
+            return Optional.empty();
+          }
+        } else if ((parts.getClass() != Vector.class
+                && parts.getClass() != ArrayBuffer.class
+                && parts.getClass() != WrappedArray.ofRef.class)
+            || parts.length() != 1) {
+          return Optional.empty();
+        }
+        Object column = parts.apply(0);
+        if (!(column instanceof String) || ((String) column).isEmpty()) {
+          return Optional.empty();
+        }
+        columns.add((String) column);
+      }
+      return Optional.of(Collections.unmodifiableList(columns));
     }
   }
 

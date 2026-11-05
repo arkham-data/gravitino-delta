@@ -232,14 +232,16 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
       installed: Boolean,
       observed: Boolean = true,
       policySetup: TestDeltaRangerNativeSelect.Fixture => Unit = _ => (),
-      logStoreClass: Option[String] = None
+      logStoreClass: Option[String] = None,
+      declaredSchema: StructType = schema,
+      settingsOverride: Option[Map[String, String]] = None
   )(
       body: (SparkSession, Transport, Trace) => Unit
   ): Unit = {
     val evidence = fresh(name)
     val policy = new TestDeltaRangerNativeSelect.Fixture
     policySetup(policy)
-    val transport = new Transport(evidence, schema)
+    val transport = new Transport(evidence, declaredSchema)
     val metadataConfig = evidence.directory.resolve("metadata.properties")
     write(
       metadataConfig,
@@ -272,7 +274,9 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .config("spark.databricks.delta.catalog.update.enabled", "false")
       .config("spark.sql.catalog.a", classOf[InstalledSchemaCreateForwardingCatalog].getName)
-    fixtureMap("settings").foreach { case (key, value) => builder.config(key, value) }
+    settingsOverride.getOrElse(fixtureMap("settings")).foreach { case (key, value) =>
+      builder.config(key, value)
+    }
     logStoreClass.foreach(value => builder.config("spark.delta.logStore.class", value))
     DeltaLog.clearCache()
     val spark = builder.getOrCreate()
@@ -313,7 +317,7 @@ class TestDeltaRangerInstalledSchemaCreateBoundary {
           s"loadTable=$loads tableExists=${if (exists == 0) "NOT_REACHED" else exists.toString} createTable=${if (creates == 0) "NOT_REACHED" else creates.toString}"
         )
         assertEquals(before - lastCommit, after - lastCommit)
-        fixtureMap("settings").foreach { case (key, value) =>
+        settingsOverride.getOrElse(fixtureMap("settings")).foreach { case (key, value) =>
           assertEquals(value, spark.conf.get(key))
         }
         assertNull(DeltaRangerNativeOperation.current())

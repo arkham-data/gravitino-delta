@@ -31,6 +31,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
@@ -45,6 +46,10 @@ import org.apache.gravitino.exceptions.TableAlreadyExistsException;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.SupportsWrite;
+import org.apache.spark.sql.connector.expressions.Expressions;
+import org.apache.spark.sql.connector.expressions.FieldReference;
+import org.apache.spark.sql.connector.expressions.IdentityTransform;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.types.DataTypes;
@@ -54,6 +59,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import scala.collection.Seq;
 
 @SuppressWarnings("deprecation")
 class TestDeltaCreateLifecycle {
@@ -122,6 +128,53 @@ class TestDeltaCreateLifecycle {
         UnsupportedOperationException.class, () -> lifecycle.options.put("compression", "gzip"));
     stage.abortStagedChanges();
     assertEquals(1, Collections.frequency(fixture.effects, "close"));
+  }
+
+  @Test
+  void exactIdentityEvidenceIsFrozenAndUnknownTransformsAreNotInspected() {
+    Transform[] partitions = {Expressions.identity("region"), Expressions.identity("id")};
+    DeltaCreateLifecycle.Intent intent =
+        new DeltaCreateLifecycle.Intent(
+            "a", List.of("db"), "t", fixture.schema.json(), partitions, Map.of());
+    partitions[0] = Expressions.identity("changed");
+    assertEquals(List.of("region", "id"), intent.identityPartitionColumns().orElseThrow());
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> intent.identityPartitionColumns().orElseThrow().set(0, "changed"));
+    Transform unknown = mock(Transform.class);
+    NamedReference unknownReference = mock(NamedReference.class);
+    @SuppressWarnings("unchecked")
+    Seq<String> unknownParts = mock(Seq.class);
+    for (Transform transform :
+        new Transform[] {
+          unknown,
+          new IdentityTransform(unknownReference),
+          new IdentityTransform(new FieldReference(unknownParts)),
+          Expressions.identity("nested.field"),
+          Expressions.years("id")
+        }) {
+      DeltaCreateLifecycle.Intent unsupported =
+          new DeltaCreateLifecycle.Intent(
+              "a",
+              List.of("db"),
+              "t",
+              fixture.schema.json(),
+              new Transform[] {transform},
+              Map.of());
+      assertFalse(unsupported.identityPartitionColumns().isPresent());
+      assertEquals(1, unsupported.partitionCount());
+    }
+    verifyNoInteractions(unknown, unknownReference, unknownParts);
+    assertFalse(
+        new DeltaCreateLifecycle.Intent("a", List.of("db"), "t", fixture.schema.json(), 0, Map.of())
+            .identityPartitionColumns()
+            .isPresent());
+    assertEquals(
+        List.of(),
+        new DeltaCreateLifecycle.Intent(
+                "a", List.of("db"), "t", fixture.schema.json(), new Transform[0], Map.of())
+            .identityPartitionColumns()
+            .orElseThrow());
   }
 
   @Test

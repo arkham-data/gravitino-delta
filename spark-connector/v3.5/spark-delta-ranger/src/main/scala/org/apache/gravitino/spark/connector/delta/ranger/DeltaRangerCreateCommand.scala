@@ -27,36 +27,13 @@ import org.apache.spark.sql.catalyst.analysis.ResolvedIdentifier
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.{CreateTable, LeafNode, LogicalPlan, TableSpec}
 import org.apache.spark.sql.connector.catalog.Identifier
-import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.datasources.v2.{LeafV2CommandExec, V2CommandExec}
-import org.apache.spark.sql.types.{DataType, LongType, StructType}
+import org.apache.spark.sql.types.{DataType, StructType}
 
 /** One privately issued initial named schema CREATE, without a final SELECT observation. */
 private[ranger] object DeltaRangerCreateCommand {
-  private val properties = Map(
-    "delta.compatibility.symlinkFormatManifest.enabled" -> "true",
-    "delta.deletedFileRetentionDuration" -> "interval 364 days",
-    "delta.enableChangeDataFeed" -> "true",
-    "delta.logRetentionDuration" -> "interval 45 days"
-  )
-  private val settings = Map(
-    "spark.databricks.delta.optimizeWrite.enabled" -> "true",
-    "spark.databricks.delta.autoCompact.enabled" -> "true",
-    "spark.databricks.delta.properties.defaults.compatibility.symlinkFormatManifest.enabled" -> "true",
-    "spark.databricks.delta.snapshotPartitions" -> "2",
-    "spark.sql.adaptive.enabled" -> "false",
-    "spark.databricks.delta.schema.autoMerge.enabled" -> "false",
-    "spark.sql.sources.partitionOverwriteMode" -> "static",
-    "spark.databricks.delta.autoCompact.minNumFiles" -> "3",
-    "spark.databricks.delta.autoCompact.maxFileSize" -> "1048576",
-    "spark.databricks.delta.autoCompact.minFileSize" -> "524288",
-    "spark.databricks.delta.optimizeWrite.binSize" -> "1",
-    "spark.databricks.delta.optimizeWrite.numShuffleBlocks" -> "2"
-  )
-  private val schema = new StructType().add("id", LongType, nullable = true)
-
   def resolve(
       command: CreateTable,
       spark: SparkSession,
@@ -77,22 +54,13 @@ private[ranger] object DeltaRangerCreateCommand {
       case value: TableSpec if value.getClass == classOf[TableSpec] => value
       case _ => denied("unsupported table specification")
     }
-    if (
-      command.ignoreIfExists || command.partitioning.nonEmpty ||
-      command.tableSchema != schema || specification.properties != properties ||
-      specification.provider != Some("delta") || specification.options.nonEmpty ||
-      specification.location.nonEmpty || specification.comment.nonEmpty ||
-      specification.serde.nonEmpty || specification.external
-    )
-      denied("unsupported declaration")
-    if (settings.exists { case (key, value) => !spark.conf.getOption(key).contains(value) })
-      denied("unsupported initial CREATE settings")
+    val declaration = DeltaRangerCreateDeclaration(command, specification, spark)
     new Owner(
       command,
       resolved,
       catalog,
       spark,
-      DeltaRangerCatalogSpark35.convertCreateProperties(specification).asScala.toMap
+      declaration
     ).logical
   }
 
@@ -101,7 +69,7 @@ private[ranger] object DeltaRangerCreateCommand {
       resolved: ResolvedIdentifier,
       catalog: DeltaRangerCatalogSpark35,
       spark: SparkSession,
-      frozenProperties: Map[String, String]
+      declaration: DeltaRangerCreateDeclaration
   ) extends DeltaRangerCatalogSpark35.CreateInvocation {
     private val thread = Thread.currentThread()
     private val subject = DeltaRangerQuerySubject.current(spark)
@@ -109,7 +77,7 @@ private[ranger] object DeltaRangerCreateCommand {
     private val namespace = resolved.identifier.namespace().toVector
     private val name = resolved.identifier.name()
     private val plugin = resolved.catalog
-    private val schemaJson = original.tableSchema.json
+    private val schemaJson = declaration.schemaJson
     private var used = false
     private var invoking = false
     private var mutation: DeltaRangerCreateMutation = null
@@ -123,7 +91,7 @@ private[ranger] object DeltaRangerCreateCommand {
         plugin.name() != catalog.name() || original.name != resolved ||
         resolved.identifier.namespace().toVector != namespace || resolved.identifier
           .name() != name ||
-        original.tableSchema.json != schemaJson
+        !declaration.unchanged(original)
       )
         denied("command context changed")
       val now = DeltaRangerQuerySubject.current(spark)
@@ -165,8 +133,8 @@ private[ranger] object DeltaRangerCreateCommand {
             val stage = catalog.stageCreate(
               Identifier.of(namespace.toArray, name),
               DataType.fromJson(schemaJson).asInstanceOf[StructType],
-              Array.empty[Transform],
-              frozenProperties.asJava
+              declaration.partitions,
+              declaration.properties.asJava
             )
             stage.commitStagedChanges()
           }
@@ -187,11 +155,9 @@ private[ranger] object DeltaRangerCreateCommand {
       if (
         !invoking || !used || mutation != null || (candidate ne catalog) ||
         intent.catalog() != catalog.name() || intent.namespace().asScala.toVector != namespace ||
-        intent.table() != name || intent.schemaJson() != schemaJson || intent
-          .partitionCount() != 0 ||
-        intent.properties().asScala.toMap != frozenProperties
+        intent.table() != name || !declaration.matches(intent)
       ) denied("unbound catalog declaration")
-      mutation = new DeltaRangerCreateMutation(intent, catalog, spark, this)
+      mutation = new DeltaRangerCreateMutation(intent, catalog, spark, this, declaration)
       mutation
     }
     def requireMutation(candidate: DeltaRangerCreateMutation): Unit = {

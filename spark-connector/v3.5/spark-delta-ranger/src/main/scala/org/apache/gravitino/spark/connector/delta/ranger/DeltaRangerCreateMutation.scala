@@ -43,7 +43,8 @@ private[ranger] final class DeltaRangerCreateMutation(
     intent: DeltaCreateLifecycle.Intent,
     catalog: DeltaRangerCatalogSpark35,
     spark: SparkSession,
-    command: DeltaRangerCreateCommand.Owner
+    command: DeltaRangerCreateCommand.Owner,
+    declaration: DeltaRangerCreateDeclaration
 ) extends DeltaCreateLifecycle
     with DeltaRangerNativeOperation.CommitOwner {
   import DeltaRangerCreateMutation._
@@ -267,15 +268,17 @@ private[ranger] final class DeltaRangerCreateMutation(
       )
     )
       denied("native identity changed")
-    val expected = intent.properties().asScala.toMap.filter(_._1.startsWith("delta.")) ++
+    val expected = declaration.configuration ++
       Map(
         DeltaOperationMarker.PROPERTY_KEY -> marker.encode(),
         "delta.columnMapping.mode" -> "none"
       )
     if (
       mapper.readTree(expectedMetadata.schemaString) != mapper.readTree(intent.schemaJson()) ||
-      expectedMetadata.configuration != expected || expectedMetadata.partitionColumns.nonEmpty ||
-      expectedMetadata.description != null || expectedMetadata.format.provider != "parquet" ||
+      expectedMetadata.configuration != expected || expectedMetadata.partitionColumns.toVector != declaration.partitionColumns ||
+      Option(
+        expectedMetadata.description
+      ) != declaration.description || expectedMetadata.format.provider != "parquet" ||
       expectedMetadata.format.options.nonEmpty || expectedMetadata.id.isEmpty
     )
       denied("native metadata differs from reservation")
@@ -307,9 +310,10 @@ private[ranger] final class DeltaRangerCreateMutation(
         .path("txnId")
         .asText() != nativeId ||
       info.has("readVersion") || info.has("userMetadata") ||
-      info.path("operationParameters").path("partitionBy").asText() != "[]" ||
-      info.path("operationParameters").path("clusterBy").asText() != "[]" ||
-      mapper.readTree(info.path("operationParameters").path("properties").asText()) !=
+      mapper.readTree(info.path("operationParameters").path("partitionBy").asText()) !=
+        mapper.readTree(mapper.writeValueAsString(declaration.partitionColumns.asJava)) ||
+        info.path("operationParameters").path("clusterBy").asText() != "[]" ||
+        mapper.readTree(info.path("operationParameters").path("properties").asText()) !=
         mapper.readTree(mapper.writeValueAsString(expected.asJava))
     )
       denied("CREATE0 does not correlate to the captured invocation")
