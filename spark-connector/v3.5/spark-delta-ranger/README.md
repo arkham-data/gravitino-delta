@@ -457,3 +457,12 @@ and records outcomes; Python invokes the packaged public CREATE API directly.
 No-op acceptance verifies a positive PUBLISHED read and unchanged registration,
 native objects and mutation journal, including an explicit SELECT-denied control.
 See the acceptance README for finite inputs and retained provenance.
+
+Named snapshot inputs support a direct `current_timestamp()` projection through
+native PySpark `withColumn` and named APPEND (`insertInto` or Delta `saveAsTable`).
+Spark captures one timestamp per completed query; receipt checks and native write
+phases retain that value while source masks, filters and column permissions apply.
+The four-pair qualification uses targets created with their timestamp schema,
+including a partitioned AQE target. See the
+[input timestamp findings](../../../docs/superpowers/specs/2026-11-05-delta-input-timestamp-findings.md)
+for the schema-changing target-history limitation and pending JDBC/input work.
