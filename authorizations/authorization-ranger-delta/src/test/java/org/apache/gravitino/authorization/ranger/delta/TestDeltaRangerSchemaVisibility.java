@@ -131,7 +131,7 @@ class TestDeltaRangerSchemaVisibility {
               schema("delta_a.sales", Privileges.UseSchema.deny()),
               schema("delta_a.sales", Privileges.SelectTable.allow()),
               schema("delta_a.sales", Privileges.UseCatalog.allow()),
-              schema("delta_a.sales", Privileges.CreateTable.allow()),
+              schema("delta_a.sales", Privileges.CreateTable.deny()),
               SecurableObjects.parse(
                   "delta_a", MetadataObject.Type.CATALOG, List.of(Privileges.UseSchema.allow())),
               SecurableObjects.parse(

@@ -91,6 +91,8 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
     return Map.of(
         Privilege.Name.SELECT_TABLE,
         Set.of(RangerPrivileges.RangerHadoopSQLPrivilege.SELECT),
+        Privilege.Name.CREATE_TABLE,
+        Set.of(RangerPrivileges.RangerHadoopSQLPrivilege.CREATE),
         Privilege.Name.MODIFY_TABLE,
         Set.of(
             RangerPrivileges.RangerHadoopSQLPrivilege.UPDATE,
@@ -105,6 +107,7 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
   public Set<Privilege.Name> allowPrivilegesRule() {
     return Set.of(
         Privilege.Name.SELECT_TABLE,
+        Privilege.Name.CREATE_TABLE,
         Privilege.Name.MODIFY_TABLE,
         Privilege.Name.USE_CATALOG,
         Privilege.Name.USE_SCHEMA);
@@ -139,16 +142,22 @@ public final class RangerDeltaAuthorizationPlugin extends RangerAuthorizationHad
         } else {
           throw new IllegalArgumentException("Unsupported Delta privilege or condition");
         }
-      } else if (object.type() == MetadataObject.Type.SCHEMA
-          ? privilege.name() != Privilege.Name.USE_SCHEMA
-          : privilege.name() != Privilege.Name.USE_CATALOG) {
+      } else if (object.type() == MetadataObject.Type.SCHEMA) {
+        if (privilege.name() == Privilege.Name.CREATE_TABLE) {
+          accesses.add(RangerPrivileges.RangerHadoopSQLPrivilege.CREATE);
+        } else if (privilege.name() != Privilege.Name.USE_SCHEMA) {
+          throw new IllegalArgumentException("Unsupported Delta privilege or condition");
+        }
+      } else if (privilege.name() != Privilege.Name.USE_CATALOG) {
         throw new IllegalArgumentException("Unsupported Delta privilege or condition");
       }
     }
-    if (object.privileges().isEmpty() || object.type() != MetadataObject.Type.TABLE) {
+    if (accesses.isEmpty()) {
       return List.of();
     }
-    names.add("*");
+    while (names.size() < 4) {
+      names.add("*");
+    }
     List<AuthorizationPrivilege> privileges = new ArrayList<>();
     for (RangerPrivileges.RangerHadoopSQLPrivilege access : accesses) {
       privileges.add(

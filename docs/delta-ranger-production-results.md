@@ -35,6 +35,32 @@ disabled. They do not establish full Delta support, general user caching/AQE, or
 deployment readiness. Historical checkpoints below remain evidence for their
 original artifacts; the current checkpoint supersedes their pending-query status.
 
+## Current schema CREATE grant support
+
+The Delta authorization plugin now maps exact `SCHEMA / CREATE_TABLE / ALLOW`
+grants on a canonical schema such as `delta_a.sales` to Ranger `create` on
+`catalog=delta_a / database=sales / table=* / column=*`. CREATE may accompany
+USE_SCHEMA; repeated CREATE entries still produce one access. Catalog, metalake,
+table and column CREATE grants, DENY and nonliteral resources remain refused.
+Deploying the plugin does not migrate live policies: operators must explicitly
+grant or regrant through Gravitino after deployment.
+
+USE_CATALOG and USE_SCHEMA still grant metadata visibility only. Existing table
+SELECT and MODIFY (`update` plus `alter`) mappings remain unchanged. Schema grant
+lifecycle tests preserve owners, other roles, exact table policies and
+Ranger-authored access, mask and row-filter policies through grant/update/revoke.
+The complete offline module run passed 58 tests with actual Ranger 2.8.0
+client/model JARs; four Docker-tagged live/fixture methods were excluded. The new
+four-test CREATE class first reproduced the missing support, then passed. These
+callback tests use a mocked Admin state fixture; they do not evaluate access on
+a real Ranger server.
+
+This is a grant-propagation dependency of governed creation. Real public
+CREATE grant/revoke propagation, reservation-bound native creation, publication
+and non-owner Spark CREATE against Ranger 2.8.0/MinIO remain open. Gravitino owns
+registration; native Delta owns files, log, schema and transactions. The historical
+checkpoints below retain their original scope and artifact claims.
+
 ## Current packaged SELECT checkpoint
 
 The accepted production guard is commit `55d8b746a`; the retained-query test

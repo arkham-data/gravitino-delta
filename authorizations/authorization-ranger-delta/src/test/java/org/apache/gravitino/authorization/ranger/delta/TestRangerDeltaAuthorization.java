@@ -476,7 +476,7 @@ class TestRangerDeltaAuthorization {
               SecurableObjects.parse(
                   "delta_a.sales",
                   MetadataObject.Type.SCHEMA,
-                  List.of(Privileges.CreateTable.allow())))) {
+                  List.of(Privileges.CreateTable.deny())))) {
         assertThrows(RuntimeException.class, () -> plugin.translatePrivilege(unsupported));
       }
       plugin.onRoleCreated(role("visible", visibility()));
