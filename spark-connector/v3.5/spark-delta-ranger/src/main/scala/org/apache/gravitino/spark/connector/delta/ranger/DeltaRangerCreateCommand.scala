@@ -73,6 +73,7 @@ private[ranger] object DeltaRangerCreateCommand {
   ) extends DeltaRangerCatalogSpark35.CreateInvocation {
     private val thread = Thread.currentThread()
     private val subject = DeltaRangerQuerySubject.current(spark)
+    private val engine = catalog.policyEngine()
     private val settings = spark.sessionState.conf.getAllConfs.toMap
     private val namespace = resolved.identifier.namespace().toVector
     private val name = resolved.identifier.name()
@@ -127,6 +128,14 @@ private[ranger] object DeltaRangerCreateCommand {
       used = true
       invoking = true
       try {
+        if (original.ignoreIfExists) {
+          authorizeCreate()
+          if (catalog.publishedForCreate(Identifier.of(namespace.toArray, name)).isPresent) {
+            authorizeCreate()
+            catalog.requireCreateMetadataLive()
+            return Nil
+          }
+        }
         DeltaRangerCatalogSpark35.withCreate(
           this,
           () => {
@@ -146,6 +155,15 @@ private[ranger] object DeltaRangerCreateCommand {
           throw mutation.failure(failure)
       } finally invoking = false
       Nil
+    }
+    private def authorizeCreate(): Unit = {
+      context()
+      if (catalog.policyEngine() ne engine) denied("expired catalog")
+      engine.authorize(
+        subject,
+        new DeltaRangerResourceKey(catalog.name(), namespace.head, name, null, "create", null)
+      )
+      context()
     }
     override def lifecycle(
         candidate: DeltaRangerCatalogSpark35,

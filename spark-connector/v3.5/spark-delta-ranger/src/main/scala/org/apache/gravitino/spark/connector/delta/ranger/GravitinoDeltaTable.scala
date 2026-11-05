@@ -19,15 +19,80 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
+import javax.annotation.Nullable
+import scala.collection.JavaConverters._
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedRelation
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, SubqueryAlias}
+import org.apache.spark.sql.catalyst.analysis.{UnresolvedIdentifier, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.plans.logical.{
+  CreateTable,
+  LogicalPlan,
+  SubqueryAlias,
+  TableSpec
+}
+import org.apache.spark.sql.catalyst.util.QuotingUtils
+import org.apache.spark.sql.connector.expressions.Expressions
+import org.apache.spark.sql.types.{DataType, StructType}
 
-/** Named, governed Delta table handles for the classic Spark DataFrame MERGE API. */
+/** Named, governed Delta schema creation and classic Spark DataFrame MERGE handles. */
 object GravitinoDeltaTable {
 
   /** The companion API protocol version, for language bindings. */
   def apiVersion(): Int = 1
+
+  /** Create an empty named Delta table through normal analysis and the issued CREATE command.
+    *
+    * The schema and collections are copied before analysis. Partition entries are literal top-level
+    * column names. Completion never performs a final table read or returns a handle.
+    */
+  def create(
+      spark: SparkSession,
+      name: String,
+      schema: StructType,
+      partitionBy: java.util.List[String],
+      properties: java.util.Map[String, String],
+      @Nullable comment: String,
+      ifNotExists: Boolean
+  ): Unit = {
+    require(spark != null, "SparkSession is required")
+    require(name != null && name.trim.nonEmpty, "Target name is required")
+    require(schema != null, "StructType schema is required")
+    require(partitionBy != null && properties != null, "CREATE collections are required")
+    if (!SparkSession.getActiveSession.exists(_ eq spark))
+      throw new SecurityException("Schema CREATE requires the active owning session")
+    val parts = spark.sessionState.sqlParser.parseMultipartIdentifier(name).toVector
+    require(
+      parts.size == 3 && parts.forall(_.nonEmpty),
+      "Canonical three-part target name required"
+    )
+    val copiedSchema = DataType.fromJson(schema.json).asInstanceOf[StructType]
+    val copiedPartitions = partitionBy.asScala.toVector.map { column =>
+      require(column != null && column.trim.nonEmpty, "Partition column name is required")
+      Expressions.identity(QuotingUtils.quoteIdentifier(column))
+    }
+    val copiedProperties = properties.asScala.toMap
+    require(
+      copiedProperties.forall { case (key, value) =>
+        key != null && key.trim.nonEmpty && value != null
+      },
+      "String CREATE properties are required"
+    )
+    val command = CreateTable(
+      UnresolvedIdentifier(parts),
+      copiedSchema,
+      copiedPartitions,
+      TableSpec(copiedProperties, Some("delta"), Map.empty, None, Option(comment), None, false),
+      ifNotExists
+    )
+    val execution = spark.sessionState.executePlan(command)
+    execution.assertAnalyzed()
+    execution.analyzed match {
+      case owned: DeltaRangerCreateCommand.Carrier => owned.owner.check(owned, spark)
+      case _ => throw new SecurityException("Schema CREATE requires an issued owned command")
+    }
+    // The issued CREATE carrier is a leaf, so commandExecuted alone is not an action.
+    execution.executedPlan.executeCollect()
+    ()
+  }
 
   /** Capture a canonical three-part target name and its owning query context. */
   def forName(spark: SparkSession, name: String): GravitinoDeltaTable = {

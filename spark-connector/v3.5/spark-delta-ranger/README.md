@@ -28,6 +28,67 @@ records accepted four-pair packaged public-grant evidence and its limits. Explic
 writer options are empty; session transaction identity/version require
 `spark.databricks.delta.write.txnVersion.autoReset.enabled=false`.
 
+## Ordinary schema-only CREATE
+
+The additive protocol-v1 classic Python API is:
+
+```python
+from gravitino_delta.tables import GravitinoDeltaTable
+
+GravitinoDeltaTable.create(
+    spark, "catalog.database.table", schema,
+    partition_by=["region", "id"],
+    properties={
+        "delta.enableChangeDataFeed": "true",
+        "delta.compatibility.symlinkFormatManifest.enabled": "true",
+        "delta.logRetentionDuration": "interval 30 days",
+        "delta.deletedFileRetentionDuration": "interval 7 days",
+        "primary_key": "id",
+    },
+    comment="Table description",
+    if_not_exists=False,
+)
+```
+
+`schema` must be a classic PySpark `StructType`. `partition_by`, `properties`, and
+`comment` default to `None`; `if_not_exists` defaults to `False`. Partition entries are
+literal existing top-level column names, in order (a dot or backtick inside an entry
+is part of the column name). The target uses Spark's multipart identifier parser and
+must contain exactly catalog, database, and table, with backtick quoting as needed.
+The method copies inputs, uses Spark's JSON schema codec, and synchronously executes
+one issued CREATE through normal analysis and planning. It returns `None` without a
+final SELECT or a native DeltaTable handle. The JVM entry is
+`GravitinoDeltaTable.create(SparkSession, String, StructType, java.util.List[String],
+java.util.Map[String,String], String, Boolean): Unit`; only the comment may be null.
+The companion protocol remains version1. A runtime without the additive entry reports
+a missing-create API error; native/publication failures propagate without replay.
+
+This route and ordinary SQL CREATE share the bounded declaration profile: ordinary
+scalar/decimal types, nullable-element scalar arrays, and nullable-value
+`map<string,string>`; exact top-level nullability and string column comments;
+ordered identity partitions on scalar columns; optional table comments and opaque
+`primary_key`. Supported explicit Delta properties are CDF, symlink manifests,
+log/deleted-file retention of integer 1–364 days, and column mapping `none`.
+Effective CDF and symlink properties must be true, either explicitly or through
+approved session defaults. The qualified CREATE session settings are still required.
+Nested structs/collections, generated/default/identity/mapping metadata, mapping-name,
+CTAS, payload writes, and other properties remain unsupported.
+
+`if_not_exists=True` still requires literal CREATE permission and a supported proposed
+declaration. Only a lease-bound, positively PUBLISHED registration produces a no-op;
+a differing supported declaration is accepted without changing the existing table.
+The no-op creates no journal, reservation, native files, or publication, and grants no
+read permission. Missing metadata proceeds to the existing reservation lifecycle.
+Denied, unavailable, expired, malformed, or pending metadata fails; a concurrent
+reservation winner remains a conflict/uncertain outcome, never a retry or success.
+An explicit later read is independently authorized and cannot roll back a completed
+publication. The stock Delta builder cannot substitute for this interface: its
+three-part parsing and final `forName` observation have different failure boundaries.
+
+Local installed JVM/native and Python transport tests cover this interface. Real
+PySpark-to-Ranger/Gravitino/MinIO qualification is tracked separately; this interface
+does not claim full Spark Hub compatibility or payload-write support.
+
 ## Shared startup and SELECT boundary
 
 Configure the Gravitino driver plugin before creating the first Spark session. Both

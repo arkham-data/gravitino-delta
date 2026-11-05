@@ -352,6 +352,9 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
     val commands = ArrayBuffer.empty[DeltaRegistrationCommand]
     var reads = 0
     var publishSuccess = false
+    var visibleTable: MetadataTable = null
+    var afterMetadataRead: () => Unit = () => ()
+    var nanos = 0L
     var metadataFailure: RuntimeException = null
     var reserveFailure: RuntimeException = null
     var afterPublishedResponse: () => Unit = () => ()
@@ -366,9 +369,16 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
     when(metadataTables.loadTable(any(classOf[NameIdentifier]))).thenAnswer(call => {
       val name = call.getArgument[NameIdentifier](0)
       reads += 1
-      if (metadataFailure != null) throw metadataFailure
-      trace.record("metadata-absence", s"name=$name type=${classOf[NoSuchTableException].getName}")
-      throw new NoSuchTableException("Absent installed schema CREATE fixture: %s", name)
+      afterMetadataRead()
+      if (visibleTable != null) visibleTable
+      else {
+        if (metadataFailure != null) throw metadataFailure
+        trace.record(
+          "metadata-absence",
+          s"name=$name type=${classOf[NoSuchTableException].getName}"
+        )
+        throw new NoSuchTableException("Absent installed schema CREATE fixture: %s", name)
+      }
     })
     when(
       actorTables.createTable(
@@ -463,7 +473,11 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
     private val client = mock(classOf[GravitinoClient])
     when(client.loadCatalog("a")).thenReturn(transport.metadata)
     private val metadata =
-      new DeltaRangerMetadataClient(() => 0L, mock(classOf[ScheduledExecutorService]), _ => client)
+      new DeltaRangerMetadataClient(
+        () => transport.nanos,
+        mock(classOf[ScheduledExecutorService]),
+        _ => client
+      )
     val catalog = new DeltaRangerCatalogSpark35(
       new DeltaRangerCatalogSpark35.State(
         metadata,

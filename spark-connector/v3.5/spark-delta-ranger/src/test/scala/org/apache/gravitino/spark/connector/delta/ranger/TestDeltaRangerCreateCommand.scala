@@ -113,7 +113,8 @@ class TestDeltaRangerCreateCommand {
           statement("id ARRAY<ARRAY<STRING>>"),
           statement(suffix = "PARTITIONED BY (missing)"),
           statement(suffix = "LOCATION 'file:/tmp/foreign-create'"),
-          statement().replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"),
+          statement("id STRUCT<nested:BIGINT>")
+            .replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS"),
           "CREATE TABLE a.db.created USING delta AS SELECT 1L id"
         )
           .foreach(sql => assertThrows(classOf[Exception], () => { spark.sql(sql).collect(); () }))

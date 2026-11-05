@@ -100,7 +100,7 @@ private[ranger] object DeltaRangerCreateDeclaration {
       spark: SparkSession
   ): DeltaRangerCreateDeclaration = {
     if (
-      command.ignoreIfExists || specification.provider != Some("delta") ||
+      specification.provider != Some("delta") ||
       specification.options.nonEmpty || specification.location.nonEmpty ||
       specification.serde.nonEmpty || specification.external
     ) denied("unsupported declaration")

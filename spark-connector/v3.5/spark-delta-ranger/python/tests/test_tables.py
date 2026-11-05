@@ -17,6 +17,7 @@
 
 """Transport-only facade tests; installed policy behavior is exercised by the live gate."""
 import importlib
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -24,6 +25,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from pyspark.sql import Column, DataFrame, SparkSession
+from py4j.java_gateway import JavaGateway, GatewayParameters, launch_gateway
+from pyspark.sql.types import StructType, StructField, LongType, StringType, ArrayType, MapType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -31,6 +34,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 class JavaMap(dict):
     def put(self, key, value):
         self[key] = value
+
+
+class JavaList(list):
+    def add(self, value):
+        self.append(value)
 
 
 class TestTables(unittest.TestCase):
@@ -54,6 +62,89 @@ class TestTables(unittest.TestCase):
         self.column = object.__new__(Column)
         self.column._jc = object()
         self.table = self.api.GravitinoDeltaTable.forName(self.spark, "c.d.target")
+
+    def test_create_uses_native_schema_codec_and_copies_arguments(self):
+        self.spark._jsparkSession = MagicMock()
+        self.jvm.java.util.ArrayList.side_effect = JavaList
+        schema = StructType([StructField("id", LongType(), False, {"comment": "clé '雪'"}),
+                             StructField("tags", ArrayType(StringType(), True)),
+                             StructField("attrs", MapType(StringType(), StringType(), True))])
+        partitions = ["id"]
+        properties = {"primary_key": "id", "delta.enableChangeDataFeed": "true"}
+        name = "`a`.`db`.`ta``ble`"
+        self.assertIsNone(self.api.GravitinoDeltaTable.create(
+            self.spark, name, schema, partition_by=partitions, properties=properties,
+            comment="table '雪'", if_not_exists=True))
+        self.spark._jsparkSession.parseDataType.assert_called_once_with(schema.json())
+        args = self.entry.create.call_args.args
+        self.assertEqual((self.spark._jsparkSession, name, self.spark._jsparkSession.parseDataType.return_value,
+                          ["id"], dict(properties), "table '雪'", True), args)
+        partitions.append("changed")
+        properties["primary_key"] = "changed"
+        self.assertEqual(["id"], args[3])
+        self.assertEqual("id", args[4]["primary_key"])
+
+    def test_create_validates_types_before_gateway_execution(self):
+        schema = StructType([StructField("id", LongType())])
+        invalid = [({"schema": "id BIGINT"}, TypeError), ({"spark": object()}, TypeError),
+                   ({"partition_by": "id"}, TypeError), ({"partition_by": [1]}, TypeError),
+                   ({"partition_by": [""]}, ValueError), ({"partition_by": {"id"}}, TypeError),
+                   ({"properties": []}, TypeError), ({"properties": {"x": 1}}, TypeError),
+                   ({"properties": {1: "x"}}, TypeError), ({"comment": 1}, TypeError),
+                   ({"if_not_exists": 1}, TypeError), ({"name": ""}, ValueError)]
+        for overrides, error in invalid:
+            arguments = dict(spark=self.spark, name="a.db.t", schema=schema)
+            arguments.update(overrides)
+            with self.subTest(overrides=overrides), self.assertRaises(error):
+                self.api.GravitinoDeltaTable.create(**arguments)
+        self.entry.create.assert_not_called()
+
+    def test_create_missing_api_is_separate_from_native_execution_failure(self):
+        self.spark._jsparkSession = MagicMock()
+        self.jvm.java.util.ArrayList.side_effect = JavaList
+        schema = StructType([StructField("id", LongType())])
+        for version in [0, 2, None, True]:
+            self.entry.apiVersion.return_value = version
+            with self.assertRaisesRegex(RuntimeError, "API"):
+                self.api.GravitinoDeltaTable.create(self.spark, "a.db.t", schema)
+        self.entry.apiVersion.return_value = 1
+        entry_path = self.jvm.org.apache.gravitino.spark.connector.delta.ranger
+        entry_path.GravitinoDeltaTable = SimpleNamespace(apiVersion=lambda: 1)
+        with self.assertRaisesRegex(RuntimeError, "create.*missing"):
+            self.api.GravitinoDeltaTable.create(self.spark, "a.db.t", schema)
+        entry_path.GravitinoDeltaTable = self.entry
+        error = RuntimeError("native committed; publication status needed")
+        self.entry.create.side_effect = error
+        with self.assertRaises(RuntimeError) as caught:
+            self.api.GravitinoDeltaTable.create(self.spark, "a.db.t", schema)
+        self.assertIs(caught.exception, error)
+        self.entry.create.assert_called_once()
+        self.assertEqual(([], {}, None, False), self.entry.create.call_args.args[3:])
+
+    def test_real_py4j_missing_companion_and_missing_create_lookup(self):
+        java = str(Path(os.environ["JAVA_HOME"]) / "bin" / "java") if "JAVA_HOME" in os.environ else "java"
+        port, process = launch_gateway(java_path=java, die_on_exit=True, return_proc=True)
+        gateway = JavaGateway(gateway_parameters=GatewayParameters(port=port))
+        try:
+            self.spark._sc._jvm = gateway.jvm
+            schema = StructType([StructField("id", LongType())])
+            with self.assertRaisesRegex(RuntimeError, "companion API is missing"):
+                self.api.GravitinoDeltaTable.create(self.spark, "a.db.t", schema)
+            # A real JavaClass performs the missing static method lookup in the JVM.
+            # Only the protocol value is scripted; no fake JavaMember is invoked.
+            entry = gateway.jvm.java.lang.System
+            entry.apiVersion = lambda: 1
+            self.spark._sc._jvm = self.jvm
+            self.jvm.org.apache.gravitino.spark.connector.delta.ranger.GravitinoDeltaTable = entry
+            with self.assertRaisesRegex(RuntimeError, "create API is missing"):
+                self.api.GravitinoDeltaTable.create(self.spark, "a.db.t", schema)
+        finally:
+            gateway.shutdown()
+            process.stdin.close()
+            process.wait(timeout=10)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
 
     def test_factory_alias_and_merge_preserve_actual_objects(self):
         self.entry.forName.assert_called_once_with(self.spark._jsparkSession, "c.d.target")

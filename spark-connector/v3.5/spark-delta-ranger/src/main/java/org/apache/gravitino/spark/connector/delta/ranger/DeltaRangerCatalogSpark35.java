@@ -30,12 +30,17 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import org.apache.gravitino.Catalog;
+import org.apache.gravitino.NameIdentifier;
+import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaRegistrationReceipt;
+import org.apache.gravitino.exceptions.NoSuchTableException;
+import org.apache.gravitino.rel.TableCatalog;
 import org.apache.gravitino.spark.connector.GravitinoSparkConfig;
 import org.apache.gravitino.spark.connector.catalog.GravitinoCatalogManager;
 import org.apache.gravitino.spark.connector.delta.DeltaCreateLifecycle;
@@ -169,6 +174,46 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   @Override
   public Table loadTable(Identifier id) {
     return registrationBindings().load(id, () -> super.loadTable(id));
+  }
+
+  Optional<DeltaRegistrationReceipt> publishedForCreate(Identifier id) {
+    if (id.namespace().length != 1) throw new SecurityException("Invalid CREATE namespace");
+    String database = DeltaRangerResourceKey.literal(id.namespace()[0]);
+    String tableName = DeltaRangerResourceKey.literal(id.name());
+    return state.metadata.read(
+        metadata -> {
+          if (closed
+              || !name().equals(metadata.name())
+              || !"lakehouse-delta".equals(metadata.provider())) {
+            throw new SecurityException("Invalid CREATE catalog metadata");
+          }
+          TableCatalog tables = metadata.asTableCatalog();
+          org.apache.gravitino.rel.Table table;
+          try {
+            table = tables.loadTable(NameIdentifier.of(database, tableName));
+          } catch (NoSuchTableException absent) {
+            return Optional.empty();
+          }
+          if (table == null || !tableName.equals(table.name())) {
+            throw new SecurityException("Invalid CREATE table metadata");
+          }
+          DeltaRegistrationReceipt receipt =
+              DeltaRegistrationReceipt.fromProperties(table.properties());
+          if (receipt.state() != DeltaRegistrationReceipt.State.PUBLISHED
+              || !receipt.location().isPresent()
+              || !receipt.nativeId().isPresent()
+              || !receipt.nativeVersion().isPresent()
+              || receipt.nativeVersion().getAsLong() < 0) {
+            throw new SecurityException("CREATE requires positively published metadata");
+          }
+          return Optional.of(receipt);
+        });
+  }
+
+  void requireCreateMetadataLive() {
+    // This catalog owns one nonrenewable lease; it cannot be rebound after the observation.
+    if (closed) throw new SecurityException("CREATE catalog is closed");
+    state.metadata.requireLive(state.metadata.leaseStamp());
   }
 
   interface CreateInvocation {

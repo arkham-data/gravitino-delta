@@ -21,10 +21,11 @@ Expression strings use Spark parser semantics. Use ``lit`` or a quoted expressio
 literal strings. Builders are single-use, mutable, and not thread-safe. The JVM
 independently validates session, expression provenance, policy, and execution state.
 """
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Optional, Union
 
 from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql.types import StructType
 
 Expression = Union[str, Column]
 
@@ -45,6 +46,19 @@ def _expression(value: Expression):
     raise TypeError("Expression must be a string or classic PySpark Column; Spark Connect is unsupported")
 
 
+def _entry(spark: SparkSession):
+    if not isinstance(spark, SparkSession):
+        raise TypeError("A classic PySpark SparkSession is required; Spark Connect is unsupported")
+    entry = spark._sc._jvm.org.apache.gravitino.spark.connector.delta.ranger.GravitinoDeltaTable
+    try:
+        version = entry.apiVersion()
+    except Exception as error:
+        raise RuntimeError("Gravitino Delta JVM companion API is missing; install the matching runtime") from error
+    if type(version) is not int or version != 1:
+        raise RuntimeError("Gravitino Delta JVM API version must be 1, got " + repr(version))
+    return entry
+
+
 class GravitinoDeltaTable:
     """A named target bound to its original classic SparkSession and JVM context."""
 
@@ -58,14 +72,58 @@ class GravitinoDeltaTable:
         if not isinstance(spark, SparkSession):
             raise TypeError("A classic PySpark SparkSession is required; Spark Connect is unsupported")
         _name(name, "Target name")
-        entry = spark._sc._jvm.org.apache.gravitino.spark.connector.delta.ranger.GravitinoDeltaTable
-        try:
-            version = entry.apiVersion()
-        except Exception as error:
-            raise RuntimeError("Gravitino Delta JVM companion API is missing; install the matching runtime") from error
-        if type(version) is not int or version != 1:
-            raise RuntimeError("Gravitino Delta JVM API version must be 1, got " + repr(version))
+        entry = _entry(spark)
         return cls(spark, entry.forName(spark._jsparkSession, name))
+
+    @classmethod
+    def create(cls, spark: SparkSession, name: str, schema: StructType, *,
+               partition_by: Optional[Sequence] = None, properties: Optional[Mapping] = None,
+               comment: Optional[str] = None, if_not_exists: bool = False) -> None:
+        """Synchronously create an empty canonical named table from a classic StructType.
+
+        Partition entries are literal top-level column names. Inputs are copied, and
+        Spark's JSON schema codec preserves types, nullability, and field metadata.
+        IF NOT EXISTS succeeds only on positively published metadata after CREATE
+        authorization. Unsupported declarations still reject. No final SELECT is made.
+        """
+        if not isinstance(spark, SparkSession):
+            raise TypeError("A classic PySpark SparkSession is required; Spark Connect is unsupported")
+        _name(name, "Target name")
+        if not isinstance(schema, StructType):
+            raise TypeError("Schema must be a PySpark StructType")
+        if partition_by is not None and (not isinstance(partition_by, Sequence) or isinstance(partition_by, (str, bytes))):
+            raise TypeError("partition_by must be a sequence of column names")
+        partitions = [] if partition_by is None else [_name(value, "Partition column") for value in partition_by]
+        if properties is not None and not isinstance(properties, Mapping):
+            raise TypeError("Properties must be a mapping from strings to strings")
+        copied = []
+        for key, value in ({} if properties is None else properties).items():
+            _name(key, "Property key")
+            if not isinstance(value, str):
+                raise TypeError("Property values must be strings")
+            copied.append((key, value))
+        if comment is not None and not isinstance(comment, str):
+            raise TypeError("Comment must be a string or None")
+        if type(if_not_exists) is not bool:
+            raise TypeError("if_not_exists must be a bool")
+        schema_json = schema.json()
+        entry = _entry(spark)
+        try:
+            create = entry.create
+            if not callable(create):
+                raise TypeError("Not callable")
+        except Exception as error:
+            raise RuntimeError("Gravitino Delta JVM create API is missing; install the matching runtime") from error
+        java_list = spark._sc._jvm.java.util.ArrayList()
+        for value in partitions:
+            java_list.add(value)
+        java_map = spark._sc._jvm.java.util.HashMap()
+        for key, value in copied:
+            java_map.put(key, value)
+        java_schema = spark._jsparkSession.parseDataType(schema_json)
+        # Invocation failures carry native/publication outcomes and must never be
+        # reclassified as an absent API or retried by the language binding.
+        create(spark._jsparkSession, name, java_schema, java_list, java_map, comment, if_not_exists)
 
     def alias(self, name: str) -> "GravitinoDeltaTable":
         """Return a target handle with a parser-validated occurrence alias."""
