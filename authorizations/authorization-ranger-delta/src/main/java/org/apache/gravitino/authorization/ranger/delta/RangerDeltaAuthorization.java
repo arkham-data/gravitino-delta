@@ -22,7 +22,7 @@ import java.util.Map;
 import org.apache.gravitino.connector.authorization.AuthorizationPlugin;
 import org.apache.gravitino.connector.authorization.BaseAuthorization;
 
-/** Optional Delta authorization provider for a provisioned Ranger 2.8 service. */
+/** Optional Delta and PostgreSQL authorization provider for a provisioned Ranger 2.8 service. */
 public final class RangerDeltaAuthorization extends BaseAuthorization<RangerDeltaAuthorization> {
   /** Creates the ServiceLoader provider. */
   public RangerDeltaAuthorization() {}
@@ -31,12 +31,20 @@ public final class RangerDeltaAuthorization extends BaseAuthorization<RangerDelt
   public String shortName() {
     return "ranger-delta";
   }
-  /** {@inheritDoc} */
+  /**
+   * {@inheritDoc}
+   *
+   * <p>Delta and PostgreSQL catalogs share the existing catalog-qualified Spark Ranger translator.
+   *
+   * @throws IllegalArgumentException if the provider is neither {@code lakehouse-delta} nor {@code
+   *     jdbc-postgresql}, or the catalog/service binding is invalid
+   */
   @Override
   public AuthorizationPlugin newPlugin(
       String metalake, String catalogProvider, Map<String, String> properties) {
-    if (!"lakehouse-delta".equals(catalogProvider)) {
-      throw new IllegalArgumentException("ranger-delta requires lakehouse-delta");
+    if (!"lakehouse-delta".equals(catalogProvider) && !"jdbc-postgresql".equals(catalogProvider)) {
+      throw new IllegalArgumentException(
+          "ranger-delta requires lakehouse-delta or jdbc-postgresql");
     }
     return new RangerDeltaAuthorizationPlugin(metalake, properties);
   }

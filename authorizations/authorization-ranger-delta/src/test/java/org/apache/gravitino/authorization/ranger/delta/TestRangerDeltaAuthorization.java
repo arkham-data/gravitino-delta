@@ -20,16 +20,20 @@ package org.apache.gravitino.authorization.ranger.delta;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -46,6 +50,7 @@ import org.apache.gravitino.MetadataObject;
 import org.apache.gravitino.MetadataObjects;
 import org.apache.gravitino.authorization.AuthorizationSecurableObject;
 import org.apache.gravitino.authorization.Group;
+import org.apache.gravitino.authorization.MetadataObjectChange;
 import org.apache.gravitino.authorization.Owner;
 import org.apache.gravitino.authorization.Privilege;
 import org.apache.gravitino.authorization.Privileges;
@@ -68,14 +73,258 @@ import org.apache.ranger.plugin.model.RangerPolicy;
 import org.apache.ranger.plugin.model.RangerRole;
 import org.apache.ranger.plugin.model.RangerService;
 import org.apache.ranger.plugin.model.RangerServiceDef;
+import org.apache.ranger.plugin.util.GrantRevokeRoleRequest;
 import org.apache.ranger.plugin.util.JsonUtilsV2;
 import org.codehaus.jackson.map.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
+import org.mockito.ArgumentCaptor;
 import org.mockito.MockedConstruction;
 import org.slf4j.LoggerFactory;
 
 class TestRangerDeltaAuthorization {
+  @Test
+  void postgresqlSelectLifecycleUsesExistingTranslatorAndCatalogQualifiedResources()
+      throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin plugin = postgresqlPlugin("postgres_a", "30");
+      assertInstanceOf(RangerDeltaAuthorizationPlugin.class, plugin);
+      SecurableObject select =
+          table("postgres_a.sales.orders", List.of(Privileges.SelectTable.allow()));
+      SecurableObject catalog =
+          SecurableObjects.parse(
+              "postgres_a", MetadataObject.Type.CATALOG, List.of(Privileges.UseCatalog.allow()));
+      SecurableObject schema =
+          SecurableObjects.parse(
+              "postgres_a.sales",
+              MetadataObject.Type.SCHEMA,
+              List.of(Privileges.UseSchema.allow()));
+      AuthorizationSecurableObject translated = plugin.translatePrivilege(select).get(0);
+      assertEquals(List.of("postgres_a", "sales", "orders", "*"), translated.names());
+      assertEquals(List.of("select"), accessNames(translated));
+      assertEquals(Privilege.Condition.ALLOW, translated.privileges().get(0).condition());
+      assertTrue(plugin.translatePrivilege(catalog).isEmpty());
+      assertTrue(plugin.translatePrivilege(schema).isEmpty());
+      assertTrue(plugin.onRoleCreated(role("visible", catalog, schema)));
+      assertTrue(admin.policies.isEmpty());
+      Role reader = role("reader", catalog, schema, select);
+      assertTrue(plugin.onRoleCreated(reader));
+      assertTrue(plugin.onRoleAcquired(reader));
+      assertEquals(1, admin.policies.size());
+      RangerPolicy policy = admin.clonePolicies().get(0);
+      assertEquals("delta_local", policy.getService());
+      assertEquals(
+          Set.of("catalog", "database", "table", "column"), policy.getResources().keySet());
+      assertEquals(List.of("postgres_a"), policy.getResources().get("catalog").getValues());
+      assertEquals(List.of("sales"), policy.getResources().get("database").getValues());
+      assertEquals(List.of("orders"), policy.getResources().get("table").getValues());
+      assertEquals(List.of("*"), policy.getResources().get("column").getValues());
+      assertEquals(List.of("select"), roleAccesses(policy, "reader"));
+      assertTrue(policy.getPolicyLabels().contains("gravitino-catalog-id:30"));
+      assertTrue(plugin.onRoleUpdated(reader, RoleChange.removeSecurableObject("reader", select)));
+      assertTrue(admin.policies.isEmpty());
+      assertTrue(
+          plugin.onRoleUpdated(
+              role("reader", catalog, schema), RoleChange.addSecurableObject("reader", select)));
+      assertEquals(1, admin.policies.size());
+      assertTrue(plugin.onRoleDeleted(reader));
+      assertTrue(admin.policies.isEmpty());
+      assertEquals(Set.of("GRAVITINO_METALAKE_10_ROLE_visible"), admin.roles.keySet());
+    }
+  }
+
+  @Test
+  void postgresqlRoleMembershipCallbacksUseTheExistingMetalakeScopedRole() throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin plugin = postgresqlPlugin("postgres_a", "30");
+      Role reader =
+          role("reader", table("postgres_a.sales.orders", List.of(Privileges.SelectTable.allow())));
+      assertTrue(plugin.onRoleCreated(reader));
+      User user = mock(User.class);
+      when(user.name()).thenReturn("source_reader");
+      Group group = mock(Group.class);
+      when(group.name()).thenReturn("source_group");
+      String before =
+          admin.mapper.writeValueAsString(Map.of("policies", admin.policies, "roles", admin.roles));
+      assertTrue(plugin.onGrantedRolesToUser(List.of(reader), user));
+      assertTrue(plugin.onGrantedRolesToGroup(List.of(reader), group));
+      assertTrue(plugin.onRevokedRolesFromUser(List.of(reader), user));
+      assertTrue(plugin.onRevokedRolesFromGroup(List.of(reader), group));
+      ArgumentCaptor<GrantRevokeRoleRequest> grants =
+          ArgumentCaptor.forClass(GrantRevokeRoleRequest.class);
+      ArgumentCaptor<GrantRevokeRoleRequest> revokes =
+          ArgumentCaptor.forClass(GrantRevokeRoleRequest.class);
+      verify(plugin.getRangerClient(), times(2)).grantRole(eq("delta_local"), grants.capture());
+      verify(plugin.getRangerClient(), times(2)).revokeRole(eq("delta_local"), revokes.capture());
+      for (List<GrantRevokeRoleRequest> requests :
+          List.of(grants.getAllValues(), revokes.getAllValues())) {
+        assertEquals(Set.of("source_reader"), requests.get(0).getUsers());
+        assertTrue(requests.get(0).getGroups().isEmpty());
+        assertEquals(Set.of("source_group"), requests.get(1).getGroups());
+        assertTrue(requests.get(1).getUsers().isEmpty());
+        requests.forEach(
+            request ->
+                assertEquals(
+                    Set.of("GRAVITINO_METALAKE_10_ROLE_reader"), request.getTargetRoles()));
+      }
+      assertEquals(
+          before,
+          admin.mapper.writeValueAsString(
+              Map.of("policies", admin.policies, "roles", admin.roles)));
+    }
+  }
+
+  @Test
+  void postgresqlCatalogsAndDeltaShareServiceWithoutMutatingForeignPoliciesOrRoles()
+      throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin postgresA = postgresqlPlugin("postgres_a", "30");
+      RangerAuthorizationHadoopSQLPlugin postgresB = postgresqlPlugin("postgres_b", "31");
+      RangerAuthorizationHadoopSQLPlugin delta = plugin();
+      SecurableObject selectA =
+          table("postgres_a.sales.orders", List.of(Privileges.SelectTable.allow()));
+      SecurableObject selectB =
+          table("postgres_b.sales.orders", List.of(Privileges.SelectTable.allow()));
+      postgresA.onRoleCreated(role("other_a", selectA));
+      postgresA.onOwnerSet(selectA, null, owner("source_owner", Owner.Type.USER));
+      postgresB.onRoleCreated(role("other_b", selectB));
+      delta.onRoleCreated(role("target_reader", select()));
+      RangerPolicy policyA = catalogPolicy(admin, "postgres_a");
+      RangerPolicy policyB = catalogPolicy(admin, "postgres_b");
+      RangerPolicy policyDelta = catalogPolicy(admin, "delta_a");
+      String baselineA = admin.mapper.writeValueAsString(policyA);
+      String baselineB = admin.mapper.writeValueAsString(policyB);
+      String baselineDelta = admin.mapper.writeValueAsString(policyDelta);
+      installPostgresqlForeignPolicies(admin, policyA);
+      RangerRole foreignRole = new RangerRole();
+      foreignRole.setName("ranger_authored_role");
+      foreignRole.setUsers(List.of(new RangerRole.RoleMember("foreign_user", false)));
+      admin.roles.put(foreignRole.getName(), foreignRole);
+      String foreignBefore = foreignModels(admin);
+      String foreignRoleBefore = admin.mapper.writeValueAsString(foreignRole);
+
+      postgresA.onRoleCreated(role("reader", selectA));
+      postgresB.onRoleUpdated(
+          role("reader", selectA), RoleChange.addSecurableObject("reader", selectB));
+      delta.onRoleUpdated(
+          role("reader", selectA, selectB), RoleChange.addSecurableObject("reader", select()));
+      assertEquals(List.of("select"), roleAccesses(admin.policies.get(policyA.getId()), "reader"));
+      assertEquals(List.of("select"), roleAccesses(admin.policies.get(policyB.getId()), "reader"));
+      assertEquals(
+          List.of("select"), roleAccesses(admin.policies.get(policyDelta.getId()), "reader"));
+      postgresA.onRoleUpdated(
+          role("reader", selectA, selectB, select()),
+          RoleChange.removeSecurableObject("reader", selectA));
+      assertEquals(baselineA, admin.mapper.writeValueAsString(admin.policies.get(policyA.getId())));
+      assertEquals(List.of("select"), roleAccesses(admin.policies.get(policyB.getId()), "reader"));
+      assertEquals(
+          List.of("select"), roleAccesses(admin.policies.get(policyDelta.getId()), "reader"));
+      assertEquals(foreignBefore, foreignModels(admin));
+      assertTrue(postgresA.onRoleDeleted(role("reader", selectA)));
+      assertTrue(admin.roles.containsKey("GRAVITINO_METALAKE_10_ROLE_reader"));
+      assertTrue(postgresB.onRoleDeleted(role("reader", selectB)));
+      assertEquals(baselineB, admin.mapper.writeValueAsString(admin.policies.get(policyB.getId())));
+      assertTrue(admin.roles.containsKey("GRAVITINO_METALAKE_10_ROLE_reader"));
+      assertTrue(delta.onRoleDeleted(role("reader", select())));
+      assertEquals(
+          baselineDelta, admin.mapper.writeValueAsString(admin.policies.get(policyDelta.getId())));
+      assertEquals(
+          Set.of(
+              "GRAVITINO_METALAKE_10_ROLE_other_a",
+              "GRAVITINO_METALAKE_10_ROLE_other_b",
+              "GRAVITINO_METALAKE_10_ROLE_target_reader",
+              "GRAVITINO_OWNER_ROLE",
+              "ranger_authored_role"),
+          admin.roles.keySet());
+      assertEquals(foreignBefore, foreignModels(admin));
+      assertEquals(
+          foreignRoleBefore,
+          admin.mapper.writeValueAsString(admin.roles.get("ranger_authored_role")));
+    }
+  }
+
+  @Test
+  void postgresqlProviderRejectsUnsupportedProvidersAndInvalidBindingsBeforeMutation()
+      throws Exception {
+    try (Admin admin = new Admin()) {
+      BaseAuthorization<?> spi = provider();
+      assertEquals("ranger-delta", spi.shortName());
+      for (String unsupported :
+          new String[] {
+            null,
+            "",
+            "hive",
+            "jdbc-mysql",
+            "jdbc-PostgreSQL",
+            "JDBC-POSTGRESQL",
+            "jdbc-postgresql ",
+            "lakehouse-iceberg"
+          }) {
+        assertThrows(
+            IllegalArgumentException.class, () -> spi.newPlugin("lake", unsupported, config()));
+      }
+      assertTrue(admin.construction.constructed().isEmpty());
+      assertTrue(admin.baseConstruction.constructed().isEmpty());
+      Map<String, String> properties = postgresqlConfig("postgres_a", "30");
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> spi.newPlugin("wrong", "jdbc-postgresql", properties));
+      properties.put("authorization.ranger.delta.catalog", "postgres_?");
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> spi.newPlugin("lake", "jdbc-postgresql", properties));
+      properties.put("authorization.ranger.delta.catalog", "postgres_a");
+      admin.definition.getResources().get(0).getMatcherOptions().put("ignoreCase", "true");
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> spi.newPlugin("lake", "jdbc-postgresql", properties));
+      assertTrue(admin.roles.isEmpty());
+      assertTrue(admin.policies.isEmpty());
+    }
+  }
+
+  @Test
+  void postgresqlRejectsUnsupportedGrantsAndRenameDropBeforeAdminInteraction() throws Exception {
+    try (Admin admin = new Admin()) {
+      RangerAuthorizationHadoopSQLPlugin plugin = postgresqlPlugin("postgres_a", "30");
+      SecurableObject select =
+          table("postgres_a.sales.orders", List.of(Privileges.SelectTable.allow()));
+      for (SecurableObject unsupported :
+          List.of(
+              table("postgres_a.sales.orders", List.of(Privileges.SelectTable.deny())),
+              table("postgres_a.sales.orders", List.of(Privileges.CreateTable.allow())),
+              table("postgres_b.sales.orders", List.of(Privileges.SelectTable.allow())),
+              table("delta_a.sales.orders", List.of(Privileges.SelectTable.allow())),
+              table("postgres_a.sales.o*", List.of(Privileges.SelectTable.allow())))) {
+        clearInvocations(plugin.getRangerClient());
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> plugin.onRoleCreated(role("reader", unsupported)));
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                plugin.onRoleUpdated(
+                    role("reader"),
+                    RoleChange.addSecurableObject("reader", select),
+                    RoleChange.addSecurableObject("reader", unsupported)));
+        verifyNoInteractions(plugin.getRangerClient());
+      }
+      for (MetadataObjectChange change :
+          List.of(
+              MetadataObjectChange.rename(
+                  select,
+                  MetadataObjects.parse("postgres_a.sales.renamed", MetadataObject.Type.TABLE),
+                  List.of()),
+              MetadataObjectChange.remove(select, List.of()))) {
+        clearInvocations(plugin.getRangerClient());
+        assertThrows(UnsupportedOperationException.class, () -> plugin.onMetadataUpdated(change));
+        verifyNoInteractions(plugin.getRangerClient());
+      }
+      assertTrue(admin.roles.isEmpty());
+      assertTrue(admin.policies.isEmpty());
+    }
+  }
+
   @Test
   void userRemovalRejectsGlobalDeletionWithoutAdminMutation() throws Exception {
     assertPrincipalRemovalRejected(Owner.Type.USER);
@@ -802,6 +1051,57 @@ class TestRangerDeltaAuthorization {
     when(owner.name()).thenReturn(name);
     when(owner.type()).thenReturn(type);
     return owner;
+  }
+
+  private static Map<String, String> postgresqlConfig(String catalog, String catalogId) {
+    Map<String, String> properties = new HashMap<>(config());
+    properties.put("authorization.ranger.delta.catalog", catalog);
+    properties.put("authorization.catalog.id", catalogId);
+    return properties;
+  }
+
+  private static RangerAuthorizationHadoopSQLPlugin postgresqlPlugin(
+      String catalog, String catalogId) {
+    return (RangerAuthorizationHadoopSQLPlugin)
+        provider().newPlugin("lake", "jdbc-postgresql", postgresqlConfig(catalog, catalogId));
+  }
+
+  private static RangerPolicy catalogPolicy(Admin admin, String catalog) throws Exception {
+    return admin.clonePolicies().stream()
+        .filter(policy -> policy.getResources().get("catalog").getValues().equals(List.of(catalog)))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private static void installPostgresqlForeignPolicies(Admin admin, RangerPolicy original)
+      throws Exception {
+    for (int type = 0; type < 3; type++) {
+      RangerPolicy foreign = admin.copy(original, RangerPolicy.class);
+      foreign.setId(900L + type);
+      foreign.setName("ranger_authored_" + type);
+      foreign.setPolicyLabels(List.of());
+      foreign.setPolicyType(type);
+      RangerPolicy.RangerPolicyItem access = new RangerPolicy.RangerPolicyItem();
+      access.setUsers(List.of("foreign_user"));
+      access.setAccesses(List.of(new RangerPolicy.RangerPolicyItemAccess("select", true)));
+      foreign.setPolicyItems(type == RangerPolicy.POLICY_TYPE_ACCESS ? List.of(access) : List.of());
+      if (type == RangerPolicy.POLICY_TYPE_DATAMASK) {
+        RangerPolicy.RangerDataMaskPolicyItem mask = new RangerPolicy.RangerDataMaskPolicyItem();
+        mask.setUsers(access.getUsers());
+        mask.setAccesses(access.getAccesses());
+        mask.setDataMaskInfo(
+            new RangerPolicy.RangerPolicyItemDataMaskInfo("CUSTOM", null, "'MASKED'"));
+        foreign.setDataMaskPolicyItems(List.of(mask));
+      } else if (type == RangerPolicy.POLICY_TYPE_ROWFILTER) {
+        RangerPolicy.RangerRowFilterPolicyItem filter =
+            new RangerPolicy.RangerRowFilterPolicyItem();
+        filter.setUsers(access.getUsers());
+        filter.setAccesses(access.getAccesses());
+        filter.setRowFilterInfo(new RangerPolicy.RangerPolicyItemRowFilterInfo("id = 1"));
+        foreign.setRowFilterPolicyItems(List.of(filter));
+      }
+      admin.policies.put(foreign.getId(), foreign);
+    }
   }
 
   private void assertPrincipalRemovalRejected(Owner.Type type) throws Exception {

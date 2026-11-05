@@ -72,7 +72,9 @@ three resource levels, whereas this Spark service uses four.
 PostgreSQL and Delta use the same provisioned Spark Ranger service and metalake,
 under their own canonical catalog names. Resource keys are
 `catalog / PostgreSQL schema / table / column`; the remote database belongs to
-the catalog configuration and is not the resource's schema level. Public
+the catalog configuration and is not the resource's schema level. The deployed
+Ranger resource field is literally `database`, matching DeltaRangerResourceKey;
+its value is the PostgreSQL schema. Public
 Gravitino SELECT_TABLE grants/revocations must reach the source resource through
 the existing authorization plugin. Fine-grained column policies, filters and
 masks remain Ranger-authored. Existing CREATE/MODIFY and owner translation is unchanged; unsupported DROP
