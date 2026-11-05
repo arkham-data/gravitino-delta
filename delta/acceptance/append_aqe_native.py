@@ -105,7 +105,8 @@ def main():
                 ).manifest(), "Fresh prefix required; no replay"
                 writer = (
                     spark.createDataFrame(
-                        table["rows"], "id LONG, secret STRING, region STRING"
+                        table["rows"],
+                        table.get("schema", "id LONG, secret STRING, region STRING"),
                     )
                     .coalesce(1)
                     .write.format("delta")
@@ -183,9 +184,11 @@ def main():
                 except Exception as error:
                     attempt["error"] = {
                         "class": type(error).__name__,
-                        "errorClass": error.getErrorClass()
-                        if hasattr(error, "getErrorClass")
-                        else None,
+                        "errorClass": (
+                            error.getErrorClass()
+                            if hasattr(error, "getErrorClass")
+                            else None
+                        ),
                     }
                 intervals.append(attempt)
             fs_path = jvm.org.apache.hadoop.fs.Path(table["location"] + "/_delta_log")

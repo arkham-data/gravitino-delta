@@ -384,7 +384,9 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
           witness.put("publicStateSha256", sha(Paths.get(state.path("publicStateFile").asText())))
           witness.put("rangerStateSha256", sha(Paths.get(state.path("rangerStateFile").asText())))
           witness.put("publicRevokeComplete", state.path("publicRevokeComplete").asBoolean())
-          witness.put("updateAbsent", state.path("updateAbsent").asBoolean())
+          val absence =
+            if (request.path("revokeSource").asBoolean()) "sourceSelectAbsent" else "updateAbsent"
+          witness.put(absence, state.path(absence).asBoolean())
           witness.put("roleMatchesInitialDownload", engine.versions().role() == initialRole)
           gateway.releaseAfter(witness, initialPolicy, initialRole)
         } catch {

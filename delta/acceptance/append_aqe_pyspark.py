@@ -30,7 +30,7 @@ import traceback
 
 from py4j.protocol import Py4JJavaError
 from pyspark import SparkContext
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, functions as F
 from append_aqe_profiles import module_provenance
 
 
@@ -179,6 +179,10 @@ def main():
                     source = left.join(right, left["id"] == right["id"]).select(
                         "l.id", "l.secret", "l.region"
                     )
+                    if request.get("inputTimestamp"):
+                        source = source.withColumn(
+                            "__arkham_loaded_at", F.current_timestamp()
+                        ).withColumn("second_time", F.current_timestamp())
                     if request["barrier"]:
                         assert (
                             bridge.armCurrentThread(request["target"], 120) == thread_id
@@ -187,7 +191,12 @@ def main():
                     if api == "insertInto":
                         source.write.mode("append").insertInto(target_name)
                     else:
-                        source.write.mode("append").saveAsTable(target_name)
+                        if request.get("inputTimestamp"):
+                            source.write.format("delta").mode("append").saveAsTable(
+                                target_name
+                            )
+                        else:
+                            source.write.mode("append").saveAsTable(target_name)
                 except Py4JJavaError as failure:
                     error = failure.java_exception
                     save(
@@ -207,9 +216,9 @@ def main():
                         pinnedEnvironment=os.environ.get("PYSPARK_PIN_THREAD"),
                     ),
                 )
-                assert before == after, (
-                    "Connection/thread ambiguity invalidates the writer proof"
-                )
+                assert (
+                    before == after
+                ), "Connection/thread ambiguity invalidates the writer proof"
                 observation = bridge.finishAppend(name, error)
                 save(name + "-observation", dict(path=observation))
                 if request["warmOrder"] != "none":

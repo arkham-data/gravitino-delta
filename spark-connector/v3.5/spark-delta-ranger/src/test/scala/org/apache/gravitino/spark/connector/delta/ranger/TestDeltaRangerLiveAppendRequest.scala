@@ -497,6 +497,15 @@ class TestDeltaRangerLiveAppendRequest {
       "rangerStateSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "publicRevokeComplete":true,"updateAbsent":true,"roleMatchesInitialDownload":true}""")
     DeltaRangerLiveMetadataBarrier.validateRelease(valid, 2, 4)
+    val source = valid.deepCopy[ObjectNode]()
+    source.remove("updateAbsent")
+    source.put("sourceSelectAbsent", true)
+    DeltaRangerLiveMetadataBarrier.validateRelease(source, 2, 4)
+    source.put("sourceSelectAbsent", false)
+    assertThrows(
+      classOf[IllegalArgumentException],
+      () => DeltaRangerLiveMetadataBarrier.validateRelease(source, 2, 4)
+    )
     for (
       (key, replacement) <- Seq(
         "policy" -> "2",

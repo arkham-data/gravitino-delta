@@ -61,7 +61,8 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
   def validateRelease(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit = {
     val numbers = Set("initialPolicy", "policy", "role", "downloadVersion")
     val digests = Set("responseSha256", "publicStateSha256", "rangerStateSha256")
-    val flags = Set("publicRevokeComplete", "updateAbsent", "roleMatchesInitialDownload")
+    val absence = if (value.has("sourceSelectAbsent")) "sourceSelectAbsent" else "updateAbsent"
+    val flags = Set("publicRevokeComplete", absence, "roleMatchesInitialDownload")
     require(
       value.isObject && value.fieldNames().asScala.toSet == numbers ++ digests ++ flags,
       "Unexpected release witness"

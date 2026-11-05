@@ -51,9 +51,9 @@ from live_common import OwnedObjects
 def wait_for(path, process, seconds):
     deadline = time.monotonic() + seconds
     while not path.exists():
-        assert process.poll() is None and time.monotonic() < deadline, (
-            "Original process failed before required evidence; no replay"
-        )
+        assert (
+            process.poll() is None and time.monotonic() < deadline
+        ), "Original process failed before required evidence; no replay"
         time.sleep(0.025)
 
 
@@ -141,10 +141,12 @@ def observe(plan, runtime, table, output, intervals=None):
     )
     registrations = {name: rest.call("GET", base + name) for name in ("source", table)}
     save(output / "registrations.private.json", registrations)
-    from verify import verify_registration_native
+    from append_aqe_profiles import verify_registration_native
 
     verify_registration_native(
-        registrations, {item["name"]: item for item in image["tables"]}
+        registrations,
+        {item["name"]: item for item in image["tables"]},
+        bool(plan.get("inputTimestampProfile")),
     )
     prefix = next(t["prefix"] for t in tables if t["name"] == table) + "_delta_log/"
     commits = {}
@@ -223,6 +225,8 @@ def run_case(plan, runtime, spec, output, app):
         targetLocation=target["location"],
         deadlineSeconds=1200,
     )
+    if spec.get("inputTimestamp"):
+        request.update(inputTimestamp=True, revokeSource=spec["revokeSource"])
     properties = Path(request["sparkConfigurationFile"])
     explicit = settings(spec, "append-aqe-" + plan["nonce"] + "-" + spec["name"])
     if spec["warmOrder"] != "none":
@@ -258,6 +262,10 @@ def run_case(plan, runtime, spec, output, app):
         HADOOP_USER_NAME=plan["subject"],
         PYSPARK_PIN_THREAD="true",
     )
+    if spec.get("inputTimestamp"):
+        env["JAVA_TOOL_OPTIONS"] = (
+            "-XX:ActiveProcessorCount=2 -XX:MaxMetaspaceSize=768m"
+        )
     argv = [
         runtime["sparkHome"] + "/bin/spark-submit",
         "--driver-memory",
@@ -301,10 +309,19 @@ def run_case(plan, runtime, spec, output, app):
                 )
                 for key in added
             )
+            revoke_source = spec.get("revokeSource", False)
             state, public_transition = transition(
-                plan, table, "MODIFY_TABLE", False, output / "barrier-revoke"
+                plan,
+                "source" if revoke_source else table,
+                "SELECT_TABLE" if revoke_source else "MODIFY_TABLE",
+                False,
+                output / "barrier-revoke",
             )
-            state = dict(state, publicRevokeComplete=True, updateAbsent=True)
+            state = dict(
+                state,
+                publicRevokeComplete=True,
+                **{"sourceSelectAbsent" if revoke_source else "updateAbsent": True}
+            )
             save(output / "barrier-state.private.json", state)
             save(
                 control / "revoke-complete.private.json",
@@ -360,9 +377,18 @@ def run_case(plan, runtime, spec, output, app):
                 if not denied and not duplicate
                 else []
             )
-            assert Counter(map(tuple, current["native"]["rows"])) == Counter(
-                map(tuple, expected_rows)
-            )
+            if spec.get("inputTimestamp"):
+                from input_timestamp_checks import verify_timestamp_rows
+
+                verify_timestamp_rows(
+                    read(previous["image"]["path"]),
+                    read(current["image"]["path"]),
+                    not denied and not duplicate,
+                )
+            else:
+                assert Counter(map(tuple, current["native"]["rows"])) == Counter(
+                    map(tuple, expected_rows)
+                )
             verify_registration_transition(
                 previous["registrations"],
                 current["registrations"],
@@ -444,6 +470,8 @@ def run_case(plan, runtime, spec, output, app):
                 request=file_ref(output / "request/request.private.json"),
                 pythonRuntime=file_ref(output / "python/python-runtime.json"),
             )
+            if spec.get("inputTimestamp"):
+                record.update(inputTimestamp=True, revokeSource=spec["revokeSource"])
             if spec["warmOrder"] != "none":
                 warm = dict(
                     read(output / "jvm" / (name + "-warm-rows.json")),
@@ -506,18 +534,23 @@ def run_case(plan, runtime, spec, output, app):
             finish(process, log, output / "writer", 5)
         if current is None or process.returncode:
             observe(plan, runtime, table, output / "failure-native-after")
-    if spec["profile"] == "source-denied":
+    if spec["profile"] == "source-denied" or spec.get("revokeSource"):
         transition(plan, "source", "SELECT_TABLE", True, output / "source-regrant")
     return records
 
 
-def run(runtime_path, inputs_path, output, selected):
+def run(runtime_path, inputs_path, output, selected, timestamp_profile=None):
     output.mkdir(mode=0o700)
     runtime = read(runtime_path)
     runtime["manifestPath"] = str(runtime_path)
     verify_runtime(runtime)
     assert runtime["application"] == "append-aqe"
     inputs = read(inputs_path)
+    if timestamp_profile:
+        from input_timestamp_checks import timestamp_cases
+
+        assert not selected
+        inputs = dict(inputs, inputTimestampProfile=timestamp_profile)
     association = verify_deployed(inputs, output / "deployed-ranger")
     inputs = dict(inputs, deployedRangerEvidence=str(association))
     save(output / "inputs.private.json", inputs)
@@ -554,10 +587,20 @@ def run(runtime_path, inputs_path, output, selected):
     try:
         wait_for(fixture / "ready.json", process, 600)
         plan = read(fixture / "state.private.json")
-        specs = [
-            case for case in case_specs() if not selected or case["name"] in selected
-        ]
-        assert len(specs) == (len(set(selected)) if selected else 26)
+        specs = (
+            timestamp_cases(timestamp_profile)
+            if timestamp_profile
+            else [
+                case
+                for case in case_specs()
+                if not selected or case["name"] in selected
+            ]
+        )
+        assert len(specs) == (
+            len(timestamp_cases(timestamp_profile))
+            if timestamp_profile
+            else (len(set(selected)) if selected else 26)
+        )
         for spec in specs:
             records = run_case(
                 plan, runtime, spec, output / "cases" / spec["name"], app
@@ -638,6 +681,8 @@ def run(runtime_path, inputs_path, output, selected):
         ),
         persistenceAfter=file_ref(output / "registrations-after-restart.private.json"),
     )
+    if timestamp_profile:
+        result["inputTimestampProfile"] = timestamp_profile
     save(output / "raw-result.json", result)
 
 
@@ -646,6 +691,7 @@ def main():
     for name in ("runtime", "inputs", "out"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--input-timestamp-profile", choices=["lead", "remaining"])
     args = parser.parse_args()
     os.umask(0o077)
     run(
@@ -653,6 +699,7 @@ def main():
         Path(args.inputs).resolve(),
         Path(args.out).resolve(),
         args.case,
+        args.input_timestamp_profile,
     )
 
 

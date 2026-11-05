@@ -49,12 +49,14 @@ def case_specs():
                 "warm-target-first",
                 "warm-project-first",
             ),
-            appendCount=3
-            if profile == "checkpoint"
-            else (2 if profile.startswith("cdf-") else 1),
-            warmOrder=profile.removeprefix("warm-")
-            if profile.startswith("warm-")
-            else "none",
+            appendCount=(
+                3
+                if profile == "checkpoint"
+                else (2 if profile.startswith("cdf-") else 1)
+            ),
+            warmOrder=(
+                profile.removeprefix("warm-") if profile.startswith("warm-") else "none"
+            ),
         )
         for api in ("insertInto", "saveAsTable")
         for profile in PROFILES
@@ -140,9 +142,9 @@ def verify_registration_transition(
         assert image[target]["table"]["properties"][key] == str(version)
     expected = copy.deepcopy(before)
     expected[target]["table"]["properties"][key] = str(after_version)
-    assert expected == after, (
-        "Registration changed outside exact target receipt version"
-    )
+    assert (
+        expected == after
+    ), "Registration changed outside exact target receipt version"
 
 
 def module_provenance(module):
@@ -152,9 +154,9 @@ def module_provenance(module):
 
     origin = module.__file__
     loader = module.__spec__.loader
-    assert callable(getattr(loader, "get_data", None)), (
-        "Python provider has no byte loader"
-    )
+    assert callable(
+        getattr(loader, "get_data", None)
+    ), "Python provider has no byte loader"
     data = loader.get_data(origin)
     archive = getattr(loader, "archive", None)
     container = Path(archive or origin).resolve()
@@ -170,3 +172,58 @@ def module_provenance(module):
             sha256=hashlib.sha256(container.read_bytes()).hexdigest(),
         ),
     )
+
+
+def verify_registration_native(registrations, native, input_timestamp=False):
+    """Join native receipt/schema evidence, extending only the finite timestamp target.
+
+    This is the original append fixture's primitive registration join, with the
+    explicit timestamp pair mapped to Gravitino's public microsecond TZ type.
+    """
+    import json
+
+    assert set(registrations) == set(native)
+    for name, observed in native.items():
+        response = registrations[name]
+        assert response["code"] == 0
+        table = response["table"]
+        assert table["name"] == name
+        properties = table["properties"]
+        for key, value in {
+            "nativeId": observed["native"]["id"],
+            "location": observed["location"],
+            "nativeVersion": str(observed["version"]),
+        }.items():
+            assert (
+                properties["delta.registration.receipt." + key] == value
+            ), "Registration native receipt differs"
+        schema = json.loads(observed["schemaJson"])
+        assert set(schema) == {"type", "fields"} and schema["type"] == "struct"
+        expected = [("id", "long"), ("secret", "string"), ("region", "string")]
+        if input_timestamp and name != "source":
+            expected += [
+                ("__arkham_loaded_at", "timestamp"),
+                ("second_time", "timestamp"),
+            ]
+        fields = schema["fields"]
+        assert len(fields) == len(expected)
+        for field, (field_name, field_type) in zip(fields, expected):
+            assert set(field) == {"name", "type", "nullable", "metadata"}
+            assert field["name"] == field_name and field["type"] == field_type
+            assert type(field["nullable"]) is bool and type(field["metadata"]) is dict
+        columns = table["columns"]
+        assert len(columns) == len(fields)
+        assert all(column.get("autoIncrement", False) is False for column in columns)
+        assert [
+            {key: column[key] for key in ("name", "type", "nullable")}
+            for column in columns
+        ] == [
+            dict(
+                name=field["name"],
+                type=(
+                    "timestamp_tz(6)" if field["type"] == "timestamp" else field["type"]
+                ),
+                nullable=field["nullable"],
+            )
+            for field in fields
+        ], "Registration primitive schema mismatch"

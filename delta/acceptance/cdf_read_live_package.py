@@ -104,6 +104,19 @@ def verify_supplemental_artifacts(runtime):
 def verify_runtime(runtime):
     """Recheck immutable build receipts and every class/provider/origin before live use."""
     assert capture_sources(ROOT)==runtime['sourceInputs'],'Source moved after package capture'
+    _verify_runtime_artifacts(runtime)
+
+
+def revalidate_runtime_read_only(runtime, source_delta):
+    """Rejoin original immutable artifacts after a finite checker/docs-only source delta."""
+    from cdf_merge_live_checks import read_ref
+    from input_timestamp_checks import verify_source_delta
+    assert runtime['application'] == 'append-aqe'
+    verify_source_delta(runtime['sourceInputs'], capture_sources(ROOT), read_ref(source_delta))
+    _verify_runtime_artifacts(runtime)
+
+
+def _verify_runtime_artifacts(runtime):
     assert canonical_digest(runtime['sourceInputs'])==runtime['sourceInputDigest']
     if runtime.get('pythonZip'):verify_python_package(runtime)
     verify_supplemental_artifacts(runtime)
@@ -163,7 +176,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     if not reuse_companion:tasks=[':spark-connector:spark-delta-ranger-3.5:clean']+tasks+[':spark-connector:spark-delta-ranger-runtime-3.5:shadowJar']
     argv=['./gradlew','-I',profile['init']]+tasks+[
         '-P'+profile['property']+'='+str(output/'app'),'-PdeltaSparkVersion='+spark,'-PdeltaVersion='+delta,
-        '-PskipITs','-PskipDockerTests=false','--offline','--max-workers=2','--no-daemon','-Dorg.gradle.jvmargs=-Xmx1536m','--console=plain']
+        '-PskipITs','-PskipDockerTests=false','--offline','--max-workers=1','--no-daemon','-Dorg.gradle.jvmargs=-Xmx2g','--console=plain']
     launch(argv,dict(os.environ,JAVA_HOME=JAVA),output/'build',timeout=900)
     after=capture_sources(ROOT);save(output/'source-after.json',{'files':after,'digest':canonical_digest(after)})
     assert before==after,'Source changed during fresh build'

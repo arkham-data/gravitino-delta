@@ -793,3 +793,20 @@ properties retain their existing restricted projection.
 
 This is schema-only creation under the declared Hub CREATE settings, not payload
 writes, generated partitions, schema evolution, full Hub compute or cutover.
+
+
+Input timestamp qualification uses `append_aqe_live.py --input-timestamp-profile
+lead` for the two native named writers, partitioned AQE exchange, target denial
+and late source SELECT revocation. `remaining` selects one named positive and one
+target denial for each other pinned pair. Only that finite target inventory is
+provisioned. Timestamp targets have their five-column schema at initial native
+creation. The actual classic PySpark caller chains direct `withColumn` calls with
+`functions.current_timestamp()`; saveAsTable explicitly uses `format("delta")`.
+
+The existing original-process, downloaded-policy, native-log, source-bound package
+and registration checks remain required. `input_timestamp_checks.py` adds exact
+masked/filtered row, equal non-null timestamp and native publication checks.
+Committed/unconfirmed writes cannot qualify as denials and are never replayed.
+Late revocation can retain uncommitted payload files. These runs do not qualify
+schema-changing overwritten target history, either JDBC route, full Spark Hub M2,
+or broader transform/overwrite families. See the input timestamp findings.

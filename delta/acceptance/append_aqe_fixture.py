@@ -82,6 +82,10 @@ def native(plan, runtime, tables, mode, out, intervals=None):
         SPARK_USER=plan["serviceAdmin"],
         HADOOP_USER_NAME=plan["serviceAdmin"],
     )
+    if plan.get("inputTimestampProfile"):
+        env["JAVA_TOOL_OPTIONS"] = (
+            "-XX:ActiveProcessorCount=2 -XX:MaxMetaspaceSize=768m"
+        )
     launch(
         [
             runtime["sparkHome"] + "/bin/spark-submit",
@@ -184,7 +188,16 @@ def run():
     }
     from append_aqe_profiles import fixture_tables
 
-    tables = fixture_tables(plan)
+    if inputs.get("inputTimestampProfile"):
+        from input_timestamp_checks import timestamp_cases, timestamp_tables
+
+        tables = timestamp_tables(
+            plan, timestamp_cases(inputs["inputTimestampProfile"])
+        )
+        plan["inputTimestampProfile"] = inputs["inputTimestampProfile"]
+        plan["python"] = inputs["pythonRuntime"]
+    else:
+        tables = fixture_tables(plan)
     names = [table["name"] for table in tables]
     plan["tables"] = tables
     plan["deployedRangerEvidence"] = str(association.resolve())

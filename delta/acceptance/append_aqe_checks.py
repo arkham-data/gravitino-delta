@@ -87,9 +87,9 @@ def verify_iceberg_append(result: dict) -> None:
             "gravitino": "org.apache.gravitino.spark.connector.iceberg.GravitinoIcebergCatalogSpark35",
         }[result["catalogRoute"]]
     ), "actual catalog identity"
-    assert result["verificationSubject"] not in result["subjects"].values(), (
-        "independent readback identity"
-    )
+    assert (
+        result["verificationSubject"] not in result["subjects"].values()
+    ), "independent readback identity"
     executed_profiles = {
         case["identity"]
         for case in result["cases"] + result.get("supplementalCases", [])
@@ -105,9 +105,9 @@ def verify_iceberg_append(result: dict) -> None:
     assert required <= set(result["processExits"]), "missing original exit"
     for ref in result["processExits"].values():
         value = read_ref(ref)
-        assert value["exitCode"] == 0 and value.get("terminated") is False, (
-            "original process failed"
-        )
+        assert (
+            value["exitCode"] == 0 and value.get("terminated") is False
+        ), "original process failed"
 
     def refs(value):
         if isinstance(value, dict):
@@ -175,9 +175,9 @@ def verify_iceberg_append(result: dict) -> None:
             ), "loaded provider differs"
     cases = result["cases"]
     specs = {s["name"]: s for s in case_specs()}
-    assert len(cases) == len(specs) and {c["name"] for c in cases} == set(specs), (
-        "case inventory"
-    )
+    assert len(cases) == len(specs) and {c["name"] for c in cases} == set(
+        specs
+    ), "case inventory"
     states = [
         read_ref(ref)
         for ref in result["artifacts"]
@@ -196,9 +196,9 @@ def verify_iceberg_append(result: dict) -> None:
         identity = case["identity"]
         assert case["subject"] == result["subjects"][identity], "subject binding"
         assert case["target"] == case["name"], "target binding"
-        assert typed_rows(case["before"]["rows"]) == typed_rows(ORIGINAL), (
-            "original target rows"
-        )
+        assert typed_rows(case["before"]["rows"]) == typed_rows(
+            ORIGINAL
+        ), "original target rows"
         verify_audit_slice(case, case["auditSinks"])
         download = case["policyDownload"]
         events = [
@@ -214,16 +214,16 @@ def verify_iceberg_append(result: dict) -> None:
             )
             == download["event"]
         ), "download event differs"
-        assert read_ref(case["policySnapshot"]) == read_ref(download["rawPolicy"]), (
-            "snapshot differs from downloaded policy"
-        )
+        assert read_ref(case["policySnapshot"]) == read_ref(
+            download["rawPolicy"]
+        ), "snapshot differs from downloaded policy"
         requests = case["rangerRequests"]
         assert all(
             type(e["result"]) is int and e["result"] in (0, 1) for e in requests
         ), "audit decision type"
-        assert all(e["repo"] == result["service"] for e in requests), (
-            "audit service differs"
-        )
+        assert all(
+            e["repo"] == result["service"] for e in requests
+        ), "audit service differs"
         for callback in case["callbacks"]:
             if callback["failed"]:
                 assert not callback["planNodes"], "failed callback materialized a plan"
@@ -237,18 +237,18 @@ def verify_iceberg_append(result: dict) -> None:
                         node["className"].endswith("AdaptiveSparkPlanExec")
                         and node.get("isFinalPlan") is True
                     ):
-                        assert "AdaptiveSparkPlan isFinalPlan=true" in final, (
-                            "adaptive tree not final"
-                        )
+                        assert (
+                            "AdaptiveSparkPlan isFinalPlan=true" in final
+                        ), "adaptive tree not final"
                     if node["className"].endswith("ShuffleQueryStageExec"):
                         assert "ShuffleQueryStage" in final, "shuffle tree absent"
                     if "CoalescedPartitionSpec" in node.get("partitionSpecs", ""):
-                        assert "AQEShuffleRead coalesced" in final, (
-                            "coalesced tree absent"
-                        )
-        assert requests and all(e["reqUser"] == case["subject"] for e in requests), (
-            "audit subject"
-        )
+                        assert (
+                            "AQEShuffleRead coalesced" in final
+                        ), "coalesced tree absent"
+        assert requests and all(
+            e["reqUser"] == case["subject"] for e in requests
+        ), "audit subject"
 
         def demand(table, access, allowed):
             return any(
@@ -264,9 +264,9 @@ def verify_iceberg_append(result: dict) -> None:
             )
 
         if identity == "allowed":
-            assert case["outcome"] == "allowed" and not case["error"], (
-                "allowed request outcome"
-            )
+            assert (
+                case["outcome"] == "allowed" and not case["error"]
+            ), "allowed request outcome"
             assert demand("source", "select", 1) and demand(
                 case["target"], "update", 1
             ), "source SELECT / target UPDATE"
@@ -291,12 +291,12 @@ def verify_iceberg_append(result: dict) -> None:
                 else (case["target"], "update")
             )
             assert demand(table, access, 0), "actual denied access absent"
-            assert typed_rows(case["after"]["rows"]) == typed_rows(ORIGINAL), (
-                "denied write changed rows"
-            )
-            assert case["after"]["snapshot"] == case["before"]["snapshot"], (
-                "denied write changed snapshot"
-            )
+            assert typed_rows(case["after"]["rows"]) == typed_rows(
+                ORIGINAL
+            ), "denied write changed rows"
+            assert (
+                case["after"]["snapshot"] == case["before"]["snapshot"]
+            ), "denied write changed snapshot"
     if "id-only" in result["subjects"]:
         assert len(result["supplementalCases"]) == 1, "injected-column probe absent"
         probe = result["supplementalCases"][0]
@@ -362,11 +362,11 @@ def _delta_attempts(spec):
     versions = [1, 1] if spec["duplicate"] else list(range(1, spec["appendCount"] + 1))
     return [
         (
-            "first"
-            if index == 0
-            else "duplicate"
-            if spec["duplicate"]
-            else "append" + str(index + 1),
+            (
+                "first"
+                if index == 0
+                else "duplicate" if spec["duplicate"] else "append" + str(index + 1)
+            ),
             version,
         )
         for index, version in enumerate(versions)
@@ -386,17 +386,17 @@ def _delta_expected_outcome(spec, attempt):
 
 
 def _delta_bound_json(descriptor, path):
-    assert Path(descriptor["path"]).resolve() == path.resolve(), (
-        "Substituted per-case evidence"
-    )
+    assert (
+        Path(descriptor["path"]).resolve() == path.resolve()
+    ), "Substituted per-case evidence"
     return read_ref(descriptor)
 
 
 def _delta_original_exit(descriptor, path=None):
     if path is not None:
-        assert Path(descriptor["path"]).resolve() == path.resolve(), (
-            "Substituted original process receipt"
-        )
+        assert (
+            Path(descriptor["path"]).resolve() == path.resolve()
+        ), "Substituted original process receipt"
     value = read_ref(descriptor)
     assert value["exitCode"] == 0 and value["timedOut"] is False
     assert type(value["pid"]) is int and value["pid"] > 0
@@ -406,11 +406,9 @@ def _delta_original_exit(descriptor, path=None):
 
 def _verify_delta_contract(result):
     """Bind qualification to the actual finite profile, attempt and original process inventory."""
-    from append_aqe_profiles import case_specs as delta_case_specs
-
-    assert type(result.get("qualification")) is bool, (
-        "Explicit qualification mode required"
-    )
+    assert (
+        type(result.get("qualification")) is bool
+    ), "Explicit qualification mode required"
     qualifying = result["qualification"]
     if "runtime" not in result:
         assert qualifying is False, "Qualification requires runtime/package evidence"
@@ -418,9 +416,9 @@ def _verify_delta_contract(result):
             {"caseInventory", "fixturePlan", "persistenceBefore", "persistenceAfter"}
             & set(result)
         )
-        assert len(result["cases"]) == 1, (
-            "Runtime-free checks are nonqualifying single-case diagnostics"
-        )
+        assert (
+            len(result["cases"]) == 1
+        ), "Runtime-free checks are nonqualifying single-case diagnostics"
         return
     assert {
         "fixturePlan",
@@ -438,7 +436,9 @@ def _verify_delta_contract(result):
     _delta_bound_json(
         result["persistenceAfter"], root / "registrations-after-restart.private.json"
     )
-    all_specs = delta_case_specs()
+    from input_timestamp_checks import qualification_cases
+
+    all_specs = qualification_cases(result)
     inventory = result["caseInventory"]
     assert (
         isinstance(inventory, list)
@@ -446,9 +446,9 @@ def _verify_delta_contract(result):
         and len(set(inventory)) == len(inventory)
     )
     specs = [spec for spec in all_specs if spec["name"] in inventory]
-    assert inventory == [spec["name"] for spec in specs], (
-        "Unknown or substituted profile inventory"
-    )
+    assert inventory == [
+        spec["name"] for spec in specs
+    ], "Unknown or substituted profile inventory"
     if qualifying:
         assert inventory == [spec["name"] for spec in all_specs]
     assert len(result["cases"]) == sum(len(_delta_attempts(spec)) for spec in specs)
@@ -459,9 +459,9 @@ def _verify_delta_contract(result):
         for spec in specs
         for attempt, _ in _delta_attempts(spec)
     }
-    assert set(actual) == expected_names, (
-        "Missing or substituted actual required attempts"
-    )
+    assert (
+        set(actual) == expected_names
+    ), "Missing or substituted actual required attempts"
     expected_exits = {
         "fixture-command/exit.json",
         "fixture/native-seed/process/exit.json",
@@ -502,6 +502,11 @@ def _verify_delta_contract(result):
         command[index + 1] for index, value in enumerate(command) if value == "--case"
     ]
     assert (not selected) if qualifying else set(selected) == set(inventory)
+    if result.get("inputTimestampProfile"):
+        assert (
+            command[command.index("--input-timestamp-profile") + 1]
+            == result["inputTimestampProfile"]
+        )
     tables = {table["name"]: table for table in plan["tables"]}
     for spec in specs:
         directory = root / "cases" / spec["name"]
@@ -529,6 +534,12 @@ def _verify_delta_contract(result):
         assert all(
             request.get(key) == value for key, value in required_request.items()
         ), "Actual request/profile differs"
+        if result.get("inputTimestampProfile"):
+            assert request.get("inputTimestamp") is True
+            assert request.get("revokeSource") is spec["revokeSource"]
+            assert tables[spec["target"]]["schema"].endswith(
+                "__arkham_loaded_at TIMESTAMP, second_time TIMESTAMP"
+            )
         writer_command = json.loads((directory / "writer/command.json").read_text())[
             "argv"
         ]
@@ -543,19 +554,19 @@ def _verify_delta_contract(result):
             case = actual[name]
             assert case["api"] == spec["api"] and case["profile"] == spec["profile"]
             assert case["target"] == spec["target"] and case["source"] == "source"
-            assert case["outcome"] == _delta_expected_outcome(spec, attempt), (
-                "Actual attempt outcome differs"
-            )
+            assert case["outcome"] == _delta_expected_outcome(
+                spec, attempt
+            ), "Actual attempt outcome differs"
             assert case["request"] == request_ref
-            assert ("warm" in case) is (spec["warmOrder"] != "none"), (
-                "Required warm evidence missing or substituted"
-            )
+            assert ("warm" in case) is (
+                spec["warmOrder"] != "none"
+            ), "Required warm evidence missing or substituted"
             assert ("checkpoint" in case) is (
                 spec["profile"] == "checkpoint" and index == len(versions) - 1
             ), "Required final checkpoint evidence missing or substituted"
-            assert ("barrier" in case) is (spec["profile"] == "revoke"), (
-                "Required revoke barrier evidence missing"
-            )
+            assert ("barrier" in case) is (
+                spec["profile"] == "revoke"
+            ), "Required revoke barrier evidence missing"
             if "warm" in case:
                 warm = _delta_bound_json(
                     case["warm"], directory / (name + "-warm-result.json")
@@ -592,9 +603,9 @@ def _verify_delta_contract(result):
             assert case["callerBefore"] == case["callerAfter"]
             expected_app = "append-aqe-" + plan["nonce"] + "-" + spec["name"]
             assert case["callerBefore"]["transactionAppId"] == expected_app
-            assert case["callerBefore"]["transactionVersion"] == str(version), (
-                "Incorrect transaction sequence"
-            )
+            assert case["callerBefore"]["transactionVersion"] == str(
+                version
+            ), "Incorrect transaction sequence"
             observation = _delta_bound_json(
                 case["observation"], directory / ("jvm/" + name + "-append.json")
             )
@@ -640,9 +651,9 @@ def _verify_delta_append(result):
     )
     for descriptor in result["processExits"].values():
         original = read_ref(descriptor)
-        assert original["exitCode"] == 0 and original["timedOut"] is False, (
-            "Original process failed"
-        )
+        assert (
+            original["exitCode"] == 0 and original["timedOut"] is False
+        ), "Original process failed"
     assert result["cases"] and len({c["name"] for c in result["cases"]}) == len(
         result["cases"]
     )
@@ -685,19 +696,28 @@ def _verify_delta_append(result):
             return Counter(tuple(row) for row in value)
 
         committed = outcome in ("committed", "postcommit-failure")
-        assert after["version"] == before["version"] + int(committed), (
-            "Unexpected native publication"
-        )
+        assert after["version"] == before["version"] + int(
+            committed
+        ), "Unexpected native publication"
         assert after["publications"] == before["publications"] + (
             [after["version"]] if committed else []
         ), "Duplicate or denied write published"
-        assert rows(after["rows"]) == rows(
-            before["rows"] + (DELTA_APPEND_ROWS if committed else [])
-        ), "Committed row multiset differs"
-        if outcome == "duplicate":
-            assert before["version"] > 0 and before["publications"], (
-                "Duplicate lacks original commit"
+        if case.get("inputTimestamp"):
+            from input_timestamp_checks import (
+                verify_timestamp_rows,
+                verify_timestamp_outcome,
             )
+
+            verify_timestamp_rows(before, after, committed)
+            verify_timestamp_outcome(outcome, case["failure"])
+        else:
+            assert rows(after["rows"]) == rows(
+                before["rows"] + (DELTA_APPEND_ROWS if committed else [])
+            ), "Committed row multiset differs"
+        if outcome == "duplicate":
+            assert (
+                before["version"] > 0 and before["publications"]
+            ), "Duplicate lacks original commit"
         denied = outcome in (
             "source-denied",
             "target-denied",
@@ -752,9 +772,9 @@ def _verify_delta_append(result):
                 for event in case["rangerRequests"]
             )
 
-        assert decision(case["source"], "select", outcome != "source-denied"), (
-            "Missing source SELECT decision"
-        )
+        assert decision(
+            case["source"], "select", outcome != "source-denied"
+        ), "Missing source SELECT decision"
         if outcome != "source-denied":
             assert decision(
                 case["target"],
@@ -770,9 +790,9 @@ def _verify_delta_append(result):
                 checkpoint["nativeId"] == after["nativeId"]
                 and checkpoint["version"] == after["version"]
             )
-            assert rows(checkpoint["rows"]) == rows(after["rows"]), (
-                "Checkpoint reopen differs"
-            )
+            assert rows(checkpoint["rows"]) == rows(
+                after["rows"]
+            ), "Checkpoint reopen differs"
             assert checkpoint["files"]
             for descriptor in checkpoint["files"]:
                 assert file_ref(descriptor["path"]) == descriptor
@@ -796,9 +816,9 @@ def _verify_delta_public_join(result, case):
     stable = lambda value: {
         key: child for key, child in value.items() if key != "policyUpdateTime"
     }
-    assert stable(downloaded) == stable(ranger["policies"]), (
-        "Applied policy download differs"
-    )
+    assert stable(downloaded) == stable(
+        ranger["policies"]
+    ), "Applied policy download differs"
     assert applied["policy"] == downloaded["policyVersion"]
     assert applied["role"] == ranger["roles"]["roleVersion"]
     public = read_ref(applied["publicState"])
@@ -817,12 +837,14 @@ def _verify_delta_public_join(result, case):
     assert len(matching_roles) == 1
     assert matching_roles[0]["users"] == [{"name": result["subject"], "isAdmin": False}]
     assert not matching_roles[0].get("groups") and not matching_roles[0].get("roles")
-    source_allowed = case["outcome"] != "source-denied"
+    source_allowed = case["outcome"] != "source-denied" and not case.get(
+        "revokeSource", False
+    )
     target_allowed = case["outcome"] not in (
         "target-denied",
         "denied-duplicate",
         "after-helper-revoked",
-    )
+    ) or case.get("revokeSource", False)
     for table, privilege, allowed in [
         (case["source"], "SELECT_TABLE", source_allowed),
         (case["target"], "MODIFY_TABLE", target_allowed),
@@ -839,9 +861,9 @@ def _verify_delta_public_join(result, case):
             for entry in objects
             for p in entry["privileges"]
         }
-        assert ((privilege, "ALLOW") in privileges) is allowed, (
-            "Public privilege differs"
-        )
+        assert (
+            (privilege, "ALLOW") in privileges
+        ) is allowed, "Public privilege differs"
         accesses = set()
         for policy in downloaded["policies"]:
             if policy.get("policyType", 0) != 0:
@@ -939,7 +961,7 @@ def _verify_delta_barrier(result, case):
         release[key] is True
         for key in (
             "publicRevokeComplete",
-            "updateAbsent",
+            "sourceSelectAbsent" if case.get("revokeSource") else "updateAbsent",
             "roleMatchesInitialDownload",
         )
     )
@@ -1045,7 +1067,12 @@ def _verify_delta_runtime_cases(result):
     runtime = read_ref(result["runtime"])
     from cdf_read_live_package import verify_runtime
 
-    verify_runtime(runtime)
+    if result.get("revalidationSourceDelta"):
+        from cdf_read_live_package import revalidate_runtime_read_only
+
+        revalidate_runtime_read_only(runtime, result["revalidationSourceDelta"])
+    else:
+        verify_runtime(runtime)
     assert (runtime["spark"], runtime["delta"]) == (result["spark"], result["delta"])
     assert runtime["application"] == "append-aqe"
     plan = read_ref(result["fixturePlan"])
@@ -1305,9 +1332,9 @@ def _verify_delta_runtime_cases(result):
                 and markers[0]["parts"] >= 2
             )
     if result["qualification"]:
-        from append_aqe_profiles import case_specs
+        from input_timestamp_checks import qualification_cases
 
-        specs = case_specs()
+        specs = qualification_cases(result)
         assert result["caseInventory"] == [case["name"] for case in specs]
         assert len(result["cases"]) == sum(
             2 if case["duplicate"] else case["appendCount"] for case in specs
