@@ -127,3 +127,28 @@ all 42 unchanged original records; both original boundary negatives contain the
 required cause. Original runtime/package/driver bytes remain retained. This is
 read-only revalidation, not a new live execution or package qualification of the
 revised Python caller.
+
+## Milestone closure and decisions
+
+This bounded milestone closed on 2026-11-05 after independent task reviews and
+the integrated review passed without open findings. The reviewed implementation
+commits are `96ca3af14` (ordinary declarations), `5decc0494` (positive no-op and
+Python/JVM creation), and `38bddb92f` (actual-service qualification and strict
+negative validation). The branch/worktree and original evidence are retained.
+Inputs/transformation support and overwrite/full refresh remain subsequent work.
+
+Implementation decisions and their costs:
+
+- Reuse the existing engine/staging path for this three-task schema-only scope.
+  CTAS, generated columns and authentication expansion remain deferred.
+- Share one immutable partition snapshot helper instead of constructing dummy
+  intents or duplicating extraction. This adds a narrow base-connector API.
+- Preserve and disclose incomplete early per-attempt source snapshots. Final
+  source-bound verification is complete; early provenance is not reconstructed.
+- Check the same metadata lease after final CREATE reauthorization. Expiry in
+  that interval rejects the no-op; no replacement lease can supply authority.
+- Separate local transport, installed JVM and actual PySpark/service proof. A
+  bounded gateway test adds coverage without repeating live qualification.
+- Preserve the public property allowlist and verify full configuration natively.
+  Retention and primary_key remain unavailable through arbitrary REST property
+  projection, although they are preserved in Delta metadata.
