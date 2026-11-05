@@ -20,5 +20,115 @@
     "delta.enableChangeDataFeed": "true",
     "delta.logRetentionDuration": "interval 30 days",
     "primary_key": "id,region"
+  },
+  "schema": {
+    "type": "struct",
+    "fields": [
+      {
+        "name": "id",
+        "type": "long",
+        "nullable": false,
+        "metadata": {
+          "comment": "clé 'id'"
+        }
+      },
+      {
+        "name": "region",
+        "type": "string",
+        "nullable": true,
+        "metadata": {}
+      },
+      {
+        "name": "event_time",
+        "type": "timestamp",
+        "nullable": true,
+        "metadata": {}
+      },
+      {
+        "name": "amount",
+        "type": "decimal(18,4)",
+        "nullable": true,
+        "metadata": {}
+      },
+      {
+        "name": "tags",
+        "type": {
+          "type": "array",
+          "elementType": "string",
+          "containsNull": true
+        },
+        "nullable": true,
+        "metadata": {}
+      },
+      {
+        "name": "attributes",
+        "type": {
+          "type": "map",
+          "keyType": "string",
+          "valueType": "string",
+          "valueContainsNull": true
+        },
+        "nullable": true,
+        "metadata": {}
+      }
+    ]
+  },
+  "partitionColumns": [
+    "region",
+    "id"
+  ],
+  "comment": "table '雪'",
+  "sqlColumns": "id BIGINT NOT NULL COMMENT \"clé 'id'\", region STRING, event_time TIMESTAMP, amount DECIMAL(18,4), tags ARRAY<STRING>, attributes MAP<STRING,STRING>",
+  "registrationColumns": [
+    {
+      "name": "id",
+      "type": "long",
+      "nullable": false,
+      "autoIncrement": false,
+      "comment": "clé 'id'"
+    },
+    {
+      "name": "region",
+      "type": "string",
+      "nullable": true,
+      "autoIncrement": false
+    },
+    {
+      "name": "event_time",
+      "type": "timestamp_tz(6)",
+      "nullable": true,
+      "autoIncrement": false
+    },
+    {
+      "name": "amount",
+      "type": "decimal(18,4)",
+      "nullable": true,
+      "autoIncrement": false
+    },
+    {
+      "name": "tags",
+      "type": {
+        "type": "list",
+        "elementType": "string",
+        "containsNull": true
+      },
+      "nullable": true,
+      "autoIncrement": false
+    },
+    {
+      "name": "attributes",
+      "type": {
+        "type": "map",
+        "keyType": "string",
+        "valueType": "string",
+        "valueContainsNull": true
+      },
+      "nullable": true,
+      "autoIncrement": false
+    }
+  ],
+  "registrationProperties": {
+    "delta.columnMapping.mode": "none",
+    "delta.enableChangeDataFeed": "true"
   }
 }

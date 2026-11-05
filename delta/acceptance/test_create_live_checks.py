@@ -368,6 +368,34 @@ class TestCreateLiveChecks(unittest.TestCase):
                 "profile": "repeat",
             }
             validate_inputs(inputs)
+            ordinary = copy.deepcopy(inputs)
+            ordinary.update(
+                fixtureResource=FIXTURE.replace("options.json", "ordinary-schema.json"),
+                frontend="pyspark",
+                pythonRuntime=str(file),
+            )
+            ordinary["fixtureSha256"] = sha(ROOT / ordinary["fixtureResource"])
+            ordinary["targets"] = {
+                name: "table_" + name
+                for name in [
+                    "no_grant",
+                    "allowed",
+                    "revoked",
+                    "specific_deny",
+                    "invalid_nested",
+                ]
+            }
+            validate_inputs(ordinary)
+            for mutate in [
+                lambda c: c.update(frontend="builder"),
+                lambda c: c.pop("pythonRuntime"),
+                lambda c: c.update(fixtureResource=FIXTURE),
+                lambda c: c["targets"].update(extra="another"),
+            ]:
+                changed = copy.deepcopy(ordinary)
+                mutate(changed)
+                with self.assertRaises(AssertionError):
+                    validate_inputs(changed)
             for mutate in [
                 lambda c: c.update(unknown=True),
                 lambda c: c["sparkHomes"].update(unknown=str(root)),
@@ -379,6 +407,328 @@ class TestCreateLiveChecks(unittest.TestCase):
                 mutate(changed)
                 with self.assertRaises(AssertionError):
                     validate_inputs(changed)
+
+    def test_ordinary_metadata_is_bound_to_declaration_and_defaults(self):
+        actions, checksum = self.native()
+        fixture = copy.deepcopy(self.case()["fixture"])
+        fixture.update(
+            schema={
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "id",
+                        "type": "long",
+                        "nullable": False,
+                        "metadata": {"comment": "clé 'id'"},
+                    },
+                    {
+                        "name": "region",
+                        "type": "string",
+                        "nullable": True,
+                        "metadata": {},
+                    },
+                ],
+            },
+            partitionColumns=["region", "id"],
+            comment="table '雪'",
+        )
+        fixture["settings"][
+            "spark.databricks.delta.properties.defaults.dataSkippingNumIndexedCols"
+        ] = "-1"
+        metadata = actions[0]["metaData"]
+        metadata.update(
+            schemaString=json.dumps(fixture["schema"]),
+            partitionColumns=["region", "id"],
+            description="table '雪'",
+        )
+        marker = json.loads(
+            metadata["configuration"]["gravitino.registration.operation"]
+        )
+        marker["schema"] = fixture["schema"]
+        metadata["configuration"].update(
+            {
+                "gravitino.registration.operation": json.dumps(marker),
+                "delta.dataSkippingNumIndexedCols": "-1",
+            }
+        )
+        actions[2]["commitInfo"]["operationParameters"] = {
+            "partitionBy": '["region","id"]'
+        }
+        checksum["metadata"] = copy.deepcopy(metadata)
+        self.assertTrue(verify_native(actions, checksum, fixture))
+        for mutate in [
+            lambda m: m.update(partitionColumns=["id", "region"]),
+            lambda m: m.update(description="wrong"),
+            lambda m: m.update(
+                schemaString=metadata["schemaString"].replace("false", "true")
+            ),
+            lambda m: m["configuration"].pop("delta.dataSkippingNumIndexedCols"),
+            lambda m: m["configuration"].update(extra="forged"),
+        ]:
+            changed = copy.deepcopy(actions)
+            mutate(changed[0]["metaData"])
+            changed_checksum = dict(
+                checksum, metadata=copy.deepcopy(changed[0]["metaData"])
+            )
+            with self.subTest(mutate=mutate), self.assertRaises(AssertionError):
+                verify_native(changed, changed_checksum, fixture)
+
+    def noop(self):
+        case = self.case()
+        case.update(
+            expected="noop",
+            nativeOutcome="NOT_ATTEMPTED",
+            publicationOutcome="NOT_ATTEMPTED",
+            publicOperations=[],
+            publicRequests=[],
+            actorMutations=[],
+            journalEntries=[],
+        )
+        case.pop("reservation")
+        case["before"] = copy.deepcopy(case["after"])
+        case["metadataReads"] = [
+            {
+                "completed": True,
+                "status": 200,
+                "receipt": copy.deepcopy(case["receipt"]),
+            }
+        ]
+        return case
+
+    def test_noop_needs_its_own_positive_published_read_and_no_effects(self):
+        self.assertEqual("NOT_ATTEMPTED", verify_case(self.noop())["nativeOutcome"])
+        for mutate in [
+            lambda c: c.update(metadataReads=[]),
+            lambda c: c["metadataReads"][0]["receipt"].update(state="RESERVED"),
+            lambda c: c["metadataReads"][0].update(completed=False),
+            lambda c: c["after"]["objects"].append({"key": "log1"}),
+            lambda c: c["after"]["registration"].update(status=404),
+            lambda c: c.update(actorMutations=["PUT"]),
+            lambda c: c.update(journalEntries=["intent"]),
+            lambda c: c.update(publicOperations=["RESERVE"]),
+            lambda c: c["result"].update(failureClass="PythonFailure"),
+        ]:
+            case = self.noop()
+            mutate(case)
+            with (
+                self.subTest(mutate=mutate),
+                self.assertRaises((AssertionError, KeyError)),
+            ):
+                verify_case(case)
+
+    def test_frontend_proof_rejects_wrong_runtime_archive_and_unpinned_thread(self):
+        from create_live_checks import verify_frontend
+
+        expected = {
+            "frontend": "pyspark",
+            "spark": "3.5.6",
+            "delta": "3.3.2",
+            "fixtureSha256": "a" * 64,
+            "pythonZipSha256": "b" * 64,
+            "modules": {"gravitino_delta.tables": "c" * 64},
+            "pythonExecutable": "/owned/venv/bin/python",
+        }
+        actual = dict(
+            copy.deepcopy(expected),
+            pinned=True,
+            sameThread=True,
+            wheelVersions={
+                "pyspark": "3.5.6",
+                "delta-spark": "3.3.2",
+                "py4j": "0.10.9.7",
+            },
+        )
+        self.assertTrue(verify_frontend(expected, actual))
+        for field, value in [
+            ("frontend", "sql"),
+            ("spark", "3.5.4"),
+            ("delta", "3.3.0"),
+            ("fixtureSha256", "0" * 64),
+            ("pythonZipSha256", "0" * 64),
+            ("pinned", False),
+            ("sameThread", False),
+            ("pythonExecutable", "/other/python"),
+            ("wheelVersions", {"pyspark": "3.5.4"}),
+        ]:
+            changed = dict(actual, **{field: value})
+            with (
+                self.subTest(field=field),
+                self.assertRaises((AssertionError, KeyError)),
+            ):
+                verify_frontend(expected, changed)
+
+    def test_registration_projection_rejects_wrong_native_declaration(self):
+        from create_live_checks import verify_registration
+
+        fixture = {
+            "comment": "table",
+            "partitionColumns": ["region", "id"],
+            "registrationColumns": [
+                {
+                    "name": "id",
+                    "type": "long",
+                    "nullable": False,
+                    "autoIncrement": False,
+                    "comment": "key",
+                }
+            ],
+        }
+        table = {
+            "comment": "table",
+            "columns": copy.deepcopy(fixture["registrationColumns"]),
+            "partitioning": [
+                {"strategy": "identity", "fieldName": ["region"]},
+                {"strategy": "identity", "fieldName": ["id"]},
+            ],
+        }
+        fixture["registrationProperties"] = {"delta.enableChangeDataFeed": "true"}
+        table["properties"] = {
+            "delta.enableChangeDataFeed": "true",
+            "delta.registration.receipt.state": "PUBLISHED",
+        }
+        self.assertTrue(verify_registration(table, fixture))
+        for mutate in [
+            lambda t: t.update(comment="wrong"),
+            lambda t: t["columns"][0].update(nullable=True),
+            lambda t: t["columns"][0].update(type="string"),
+            lambda t: t["columns"][0].update(comment="wrong"),
+            lambda t: t["partitioning"].reverse(),
+            lambda t: t["properties"].update({"delta.enableChangeDataFeed": "false"}),
+        ]:
+            changed = copy.deepcopy(table)
+            mutate(changed)
+            with self.assertRaises(AssertionError):
+                verify_registration(changed, fixture)
+
+    def test_ordinary_profile_restores_native_snapshot_tuning_without_changing_legacy(
+        self,
+    ):
+        from create_live import fixture_settings
+
+        inherited = {
+            "spark.databricks.delta.snapshotPartitions": "2",
+            "spark.sql.shuffle.partitions": "2",
+        }
+        ordinary = {"schema": {}, "settings": {"spark.sql.adaptive.enabled": "true"}}
+        self.assertEqual(
+            {"spark.sql.shuffle.partitions": "2", "spark.sql.adaptive.enabled": "true"},
+            fixture_settings(inherited, ordinary),
+        )
+        legacy = {"settings": {"spark.sql.adaptive.enabled": "false"}}
+        self.assertEqual(
+            "2",
+            fixture_settings(inherited, legacy)[
+                "spark.databricks.delta.snapshotPartitions"
+            ],
+        )
+        self.assertEqual("2", inherited["spark.databricks.delta.snapshotPartitions"])
+
+    def test_select_deny_preserves_existing_owner_policy_and_requires_exact_literal(
+        self,
+    ):
+        from create_live import select_deny_policy
+
+        resources = {
+            "table": {"values": ["owned"], "isExcludes": False, "isRecursive": False}
+        }
+        policy = {
+            "id": 42,
+            "name": "owner",
+            "resources": resources,
+            "policyItems": [
+                {"users": ["actor"], "accesses": [{"type": "all", "isAllowed": True}]}
+            ],
+            "denyPolicyItems": [],
+        }
+        actual = select_deny_policy([policy], resources, "actor")
+        self.assertEqual(policy["policyItems"], actual["policyItems"])
+        self.assertEqual(42, actual["id"])
+        self.assertEqual(
+            [
+                {
+                    "users": ["actor"],
+                    "delegateAdmin": False,
+                    "accesses": [{"type": "select", "isAllowed": True}],
+                }
+            ],
+            actual["denyPolicyItems"],
+        )
+        self.assertEqual([], policy["denyPolicyItems"])
+        for policies in [[], [policy, policy], [dict(policy, resources={})]]:
+            with self.assertRaises(AssertionError):
+                select_deny_policy(policies, resources, "actor")
+
+    def invalid_case(self):
+        case = self.case()
+        case.update(
+            expected="invalid",
+            nativeOutcome="NOT_COMMITTED",
+            publicationOutcome="NOT_ATTEMPTED",
+            publicOperations=[],
+        )
+        case.pop("reservation")
+        case["after"] = {"registration": {"status": 404}, "objects": []}
+        case["result"].update(
+            failureClass="java.lang.SecurityException",
+            failureDetails=[
+                {
+                    "class": "java.lang.SecurityException",
+                    "message": "Schema CREATE rejected: unsupported column type",
+                    "stack": [
+                        "org.apache.gravitino.spark.connector.delta.ranger."
+                        "DeltaRangerCreateDeclaration$.denied(DeltaRangerCreateDeclaration.scala:218)"
+                    ],
+                }
+            ],
+        )
+        return case
+
+    def test_invalid_boundary_requires_the_original_validator_cause(self):
+        case = self.invalid_case()
+        self.assertEqual("NOT_COMMITTED", verify_case(case)["nativeOutcome"])
+        # A wrapper must preserve the actual original validation cause.
+        case["result"]["failureClass"] = "java.lang.RuntimeException"
+        case["result"]["failureDetails"].insert(
+            0,
+            {"class": "java.lang.RuntimeException", "message": "wrapper", "stack": []},
+        )
+        self.assertEqual("NOT_COMMITTED", verify_case(case)["nativeOutcome"])
+
+    def test_invalid_boundary_rejects_unrelated_native_and_python_failures(self):
+        for replacement in [
+            {
+                "class": "java.lang.IllegalStateException",
+                "message": "Native execution failed",
+            },
+            {
+                "class": "java.lang.RuntimeException",
+                "message": "Python-side failure: schema conversion",
+            },
+            {
+                "class": "java.lang.RuntimeException",
+                "message": "Schema CREATE rejected: unsupported column type",
+            },
+            {
+                "class": "java.lang.SecurityException",
+                "message": "Schema CREATE rejected: unsupported initial CREATE settings",
+            },
+            {"stack": ["other.Validator.denied(Validator.java:1)"]},
+            {"stack": []},
+        ]:
+            case = self.invalid_case()
+            case["result"]["failureDetails"][0].update(replacement)
+            case["result"]["failureClass"] = case["result"]["failureDetails"][0][
+                "class"
+            ]
+            with (
+                self.subTest(replacement=replacement),
+                self.assertRaises(AssertionError),
+            ):
+                verify_case(case)
+        case = self.invalid_case()
+        case["result"].pop("failureDetails")
+        with self.assertRaises(AssertionError):
+            verify_case(case)
 
     def test_accepts_complete_publication(self):
         self.assertEqual("PUBLISHED", verify_case(self.case())["publicationOutcome"])

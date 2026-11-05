@@ -52,6 +52,7 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
+import scala.Option;
 import scala.collection.JavaConverters;
 import scala.reflect.ClassTag$;
 
@@ -133,6 +134,152 @@ public final class DeltaRangerDownloadedQuery {
     }
   }
 
+  /**
+   * Opens the existing secured downloaded-policy fixture for a real classic Python caller.
+   *
+   * @param requestFile private request JSON
+   * @param outputDirectory new evidence directory
+   * @return owned session whose public API calls execute on the opening pinned thread
+   * @throws Exception if startup or downloaded-policy readiness fails
+   */
+  public static PythonSession openPythonSession(String requestFile, String outputDirectory)
+      throws Exception {
+    JsonNode input = JSON.readTree(Files.readAllBytes(Path.of(requestFile)));
+    check(!input.has("startupProbe"), "Python session cannot run a startup probe");
+    Path output = Path.of(outputDirectory);
+    Files.createDirectory(
+        output, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+    DeltaRangerDownloadedSecurity security =
+        new DeltaRangerDownloadedSecurity(
+            Path.of(input.path("sourceSecurityDirectory").asText()),
+            Path.of(input.path("driverSecurityDirectory").asText()),
+            output,
+            input.path("resourceService").asText());
+    SparkSession spark = null;
+    DeltaRangerPolicyEngine engine = null;
+    try {
+      spark = openSpark(input);
+      Map<String, Object> ready = startup(spark, input);
+      engine =
+          DeltaRangerPolicyEngine.acquire(
+              DeltaRangerConfig.fromClasspath(
+                  input.path("resourceService").asText(),
+                  input.path("resourceDefinition").asText(),
+                  input.path("metalake").asText()));
+      await(engine, input.path("minPolicy").asLong(0), input.path("minRole").asLong(0));
+      check(security.awaitDrained(), "Initial Ranger download completion is unresolved");
+      security.recordInitialDownloads(
+          engine.versions().policy(),
+          engine.versions().role(),
+          input.path("minPolicy").asLong(0),
+          input.path("minRole").asLong(0));
+      ready.put("versions", versions(engine));
+      write(output.resolve("ready.json"), ready);
+      return new PythonSession(spark, engine, security, output);
+    } catch (Throwable failure) {
+      try {
+        write(output.resolve("failure.json"), pythonOutcome(failure));
+      } catch (Throwable recording) {
+        failure.addSuppressed(recording);
+      }
+      if (engine != null) {
+        try {
+          engine.close();
+        } catch (Throwable cleanup) {
+          failure.addSuppressed(cleanup);
+        }
+      }
+      if (spark != null) {
+        stopSpark(spark, failure);
+      }
+      try {
+        security.close();
+      } catch (Throwable cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+      throw failure;
+    }
+  }
+
+  /** Owned test-only session; it records outcomes but issues no table command. */
+  public static final class PythonSession implements AutoCloseable {
+    private final SparkSession spark;
+    private final DeltaRangerPolicyEngine engine;
+    private final DeltaRangerDownloadedSecurity security;
+    private final Path output;
+    private final Thread thread = Thread.currentThread();
+    private final DeltaRangerDownloadedCommand.Ledger ledger =
+        new DeltaRangerDownloadedCommand.Ledger();
+    private boolean closed;
+
+    private PythonSession(
+        SparkSession spark,
+        DeltaRangerPolicyEngine engine,
+        DeltaRangerDownloadedSecurity security,
+        Path output) {
+      this.spark = spark;
+      this.engine = engine;
+      this.security = security;
+      this.output = output;
+    }
+
+    /**
+     * @return the actual classic session opened on this pinned thread
+     */
+    public SparkSession session() {
+      check(!closed && Thread.currentThread() == thread, "Python session thread changed or closed");
+      return spark;
+    }
+
+    /**
+     * Records one caller's original outcome, never retrying or executing a table operation.
+     *
+     * @param id unique safe evidence name
+     * @param failure native failure, or null only after a normal public API return
+     * @throws Exception if evidence cannot be retained
+     */
+    public void complete(String id, @Nullable Throwable failure) throws Exception {
+      session();
+      Map<String, Object> command = new LinkedHashMap<>();
+      command.put("id", id);
+      command.put("sql", "Python API observation");
+      command.put("minPolicy", 0);
+      command.put("minRole", 0);
+      command.put("expectedRows", List.of());
+      DeltaRangerDownloadedCommand.parse(JSON.writeValueAsString(command), ledger);
+      Map<String, Object> result = pythonOutcome(failure);
+      result.put("subject", DeltaRangerQuerySubject.current(spark).user());
+      result.put("versionsAfter", versions(engine));
+      write(output.resolve(id + ".json"), result);
+    }
+
+    /**
+     * Closes every owned resource; callers preserve their primary exception on cleanup failure.
+     *
+     * @throws Exception if cleanup fails
+     */
+    @Override
+    public void close() throws Exception {
+      if (!closed) {
+        session();
+        closed = true;
+        try (DeltaRangerDownloadedSecurity ownedSecurity = security;
+            DeltaRangerPolicyEngine ownedEngine = engine) {
+          spark.stop();
+        }
+      }
+    }
+  }
+
+  static Map<String, Object> pythonOutcome(@Nullable Throwable failure) {
+    Map<String, Object> result = new LinkedHashMap<>();
+    result.put("failureClass", failure == null ? null : failure.getClass().getName());
+    result.put("authorizationDenied", isSecurityFailure(failure));
+    result.put("failureDetails", failureDetails(failure));
+    result.put("rows", List.of());
+    return result;
+  }
+
   private static SparkSession openSpark(JsonNode input) throws Exception {
     Properties properties = new Properties();
     try (InputStream stream =
@@ -179,6 +326,17 @@ public final class DeltaRangerDownloadedQuery {
       visible.put(catalog.asText(), spark.conf().contains("spark.sql.catalog." + catalog.asText()));
     }
     result.put("visibleCatalogs", visible);
+    Map<String, String> settings = new LinkedHashMap<>();
+    for (JsonNode key : input.path("observedSettingNames")) {
+      settings.put(key.asText(), spark.conf().get(key.asText()));
+    }
+    result.put("settings", settings);
+    Map<String, String> tuning = new LinkedHashMap<>();
+    for (JsonNode key : input.path("nativeTuningNames")) {
+      Option<String> value = spark.conf().getOption(key.asText());
+      tuning.put(key.asText(), value.isDefined() ? value.get() : null);
+    }
+    result.put("nativeTuning", tuning);
     return result;
   }
 

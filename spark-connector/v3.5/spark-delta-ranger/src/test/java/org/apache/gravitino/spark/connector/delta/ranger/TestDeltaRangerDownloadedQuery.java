@@ -47,6 +47,22 @@ class TestDeltaRangerDownloadedQuery {
   @TempDir Path directory;
 
   @Test
+  void pythonOutcomeRetainsNullableSuccessAndPrimaryFailureWithoutReplay() throws Exception {
+    Method outcome =
+        DeltaRangerDownloadedQuery.class.getDeclaredMethod("pythonOutcome", Throwable.class);
+    outcome.setAccessible(true);
+    Map<?, ?> success = (Map<?, ?>) outcome.invoke(null, new Object[] {null});
+    assertEquals(null, success.get("failureClass"));
+    assertEquals(false, success.get("authorizationDenied"));
+    assertEquals(List.of(), success.get("rows"));
+    Map<?, ?> failed =
+        (Map<?, ?>) outcome.invoke(null, new IllegalArgumentException("Python-side failed"));
+    assertEquals("java.lang.IllegalArgumentException", failed.get("failureClass"));
+    assertEquals(false, failed.get("authorizationDenied"));
+    assertTrue(failed.get("failureDetails").toString().contains("Python-side failed"));
+  }
+
+  @Test
   void absentProbeEntersDefaultRouteAndPresentNullFailsBeforeSetup() throws Exception {
     Path root = directory.toRealPath();
     Path absent = Files.writeString(root.resolve("absent.json"), "{}");

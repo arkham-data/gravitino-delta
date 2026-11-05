@@ -29,6 +29,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import threading
@@ -55,9 +56,17 @@ from cdf_live import (
     RECEIPT,
 )
 from run import Rest, RestError
-from create_live_checks import verify_case, verify_hashes, verify_native
+from create_live_checks import (
+    verify_case,
+    verify_hashes,
+    verify_native,
+    verify_frontend,
+    verify_registration,
+)
 
 FIXTURE = "spark-connector/v3.5/spark-delta/src/test/resources/native-create/spark-hub-options.json"
+ORDINARY_FIXTURE = FIXTURE.replace("options.json", "ordinary-schema.json")
+ORDINARY_CASES = ["no_grant", "allowed", "revoked", "specific_deny", "invalid_nested"]
 HELPERS = {
     "DeltaRangerDownloadedQuery",
     "DeltaRangerDownloadedCommand",
@@ -98,6 +107,13 @@ def validate_inputs(inputs):
         "requiredDownloads",
         "profile",
     }
+    ordinary = inputs.get("fixtureResource") == ORDINARY_FIXTURE
+    if ordinary:
+        required.update({"frontend", "pythonRuntime"})
+        assert set(inputs) == required, "Unknown/missing ordinary fixture input"
+        assert inputs["frontend"] in ("sql", "pyspark")
+        assert Path(inputs["pythonRuntime"]).is_file()
+    cases = ORDINARY_CASES if ordinary else CASES
     assert set(inputs) == required, "Unknown/missing fixture input"
     identities = inputs["identities"]
     assert set(identities) == {
@@ -138,11 +154,11 @@ def validate_inputs(inputs):
     )
     assert identities["database"] != identities["otherDatabase"]
     assert inputs["profile"] in ("full", "repeat")
-    assert set(inputs["targets"]) == set(CASES)
+    assert set(inputs["targets"]) == set(cases)
     assert all(
         re.fullmatch("[a-z][a-z0-9_]{2,80}", v) for v in inputs["targets"].values()
     )
-    assert len(set(inputs["targets"].values())) == len(CASES)
+    assert len(set(inputs["targets"].values())) == len(cases)
     assert set(inputs["requiredDownloads"]) == {"policy", "role"}
     assert all(type(v) is int and v >= 0 for v in inputs["requiredDownloads"].values())
     assert set(inputs["sparkHomes"]) == {"3.5.4", "3.5.6"}, (
@@ -152,8 +168,8 @@ def validate_inputs(inputs):
     assert (Path(inputs["sourceSecurityDirectory"]) / "log4j2.xml").is_file()
     assert inputs["javaHome"] == JAVA
     assert (
-        inputs["fixtureResource"] == FIXTURE
-        and sha(ROOT / FIXTURE) == inputs["fixtureSha256"]
+        inputs["fixtureResource"] in (FIXTURE, ORDINARY_FIXTURE)
+        and sha(ROOT / inputs["fixtureResource"]) == inputs["fixtureSha256"]
     )
     assert set(read(inputs["endpoints"])) == {"ranger-admin", "minio"}
     assert all(
@@ -189,7 +205,9 @@ def validate_runtime(path):
         if "/src/main/" in p
         or p.endswith((".gradle", ".gradle.kts"))
         or Path(p).stem in HELPERS
-        or p.startswith(("gradle/", "buildSrc/"))
+        or p.startswith(("gradle/", "buildSrc/", "delta/acceptance/"))
+        or "/spark-delta-ranger/python/" in p
+        or p in (FIXTURE, ORDINARY_FIXTURE)
         or p in ("gradlew", "gradle.properties")
     }
     verify_hashes(sources, {p: sha(ROOT / p) for p in sources})
@@ -234,6 +252,24 @@ def validate_runtime(path):
             )
             == 1
         )
+    if "pythonZip" in runtime:
+        assert sha(runtime["pythonZip"]) == runtime["pythonZipSha256"]
+        with zipfile.ZipFile(runtime["pythonZip"]) as archive:
+            members = {
+                n: hashlib.sha256(archive.read(n)).hexdigest()
+                for n in archive.namelist()
+                if n.endswith(".py")
+            }
+        prefix = "spark-connector/v3.5/spark-delta-ranger/python/"
+        assert members == {
+            p[len(prefix) :]: digest
+            for p, digest in assembly["sourceInputs"].items()
+            if p.startswith(prefix + "gravitino_delta/") and p.endswith(".py")
+        }
+        assert runtime["pythonModules"] == {
+            n.removesuffix(".py").replace("/", ".").removesuffix(".__init__"): digest
+            for n, digest in members.items()
+        }
     runtime["manifestPath"] = str(path)
     return runtime
 
@@ -676,6 +712,15 @@ def downloaded(state, driver, wire):
     return result
 
 
+def fixture_settings(inherited, fixture):
+    """Restore the native snapshot default for the ordinary Hub profile only."""
+    settings = dict(inherited)
+    if "schema" in fixture:
+        settings.pop("spark.databricks.delta.snapshotPartitions", None)
+    settings.update(fixture["settings"])
+    return settings
+
+
 def run_phase(
     plan,
     runtime,
@@ -686,9 +731,17 @@ def run_phase(
     output,
     group=False,
     group_rest_denied=False,
+    expected=None,
+    target_name=None,
 ):
     output.mkdir(mode=0o700)
-    target = inputs["targets"][name]
+    expected = expected or (
+        "group_rest_denied"
+        if group_rest_denied
+        else ("published" if allowed else "denied")
+    )
+    existing = expected in ("noop", "duplicate", "read_denied")
+    target = inputs["targets"][target_name or name]
     state = snapshot(plan, output / "state", inputs["requiredDownloads"])
     actor = plan["groupSubject"] if group else plan["subject"]
     if group:
@@ -702,18 +755,30 @@ def run_phase(
     before = registration(
         plan, target, plan["metadataPrincipal"], output / "before-registration.json"
     )
-    assert before["status"] == 404, (
+    assert before["status"] == (200 if existing else 404), (
         "Metadata identity must distinguish absent names before mutation"
     )
     actor_before = registration(plan, target, actor, output / "before-actor-read.json")
-    assert actor_before["status"] in (403, 404)
+    assert actor_before["status"] in ((200, 403) if existing else (403, 404))
     request_plan = dict(plan, subject=actor)
     request = prepare_request(request_plan, runtime, state, output / "request")
     request["catalogs"] = [plan["catalog"]]
-    fixture = read(ROOT / FIXTURE)
+    fixture = read(ROOT / inputs["fixtureResource"])
+    request["observedSettingNames"] = sorted(fixture["settings"])
+    request["nativeTuningNames"] = [
+        "spark.databricks.delta." + key
+        for key in [
+            "snapshotPartitions",
+            "autoCompact.minNumFiles",
+            "autoCompact.maxFileSize",
+            "autoCompact.minFileSize",
+            "optimizeWrite.binSize",
+            "optimizeWrite.numShuffleBlocks",
+        ]
+    ]
     properties = Path(request["sparkConfigurationFile"])
     lines = dict(line.split("=", 1) for line in properties.read_text().splitlines())
-    lines.update(fixture["settings"])
+    lines = fixture_settings(lines, fixture)
     if group:
         lines["spark.hadoop.hadoop.user.group.static.mapping.overrides"] = (
             actor + "=" + plan["group"]
@@ -722,43 +787,138 @@ def run_phase(
     properties.write_text("".join(k + "=" + v + "\n" for k, v in sorted(lines.items())))
     save(output / "effective-settings.json", {k: lines[k] for k in fixture["settings"]})
     save(output / "request/request.private.json", request)
-    declaration = ", ".join(
-        "'" + k + "'='" + v + "'" for k, v in fixture["tableProperties"].items()
-    )
-    sql = (
-        "CREATE TABLE "
-        + plan["catalog"]
-        + "."
-        + plan["database"]
-        + "."
-        + target
-        + " (id BIGINT) USING delta TBLPROPERTIES ("
-        + declaration
+    declaration = dict(fixture)
+    if expected == "noop":
+        declaration = dict(
+            fixture,
+            schema={
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "different",
+                        "type": "string",
+                        "nullable": True,
+                        "metadata": {},
+                    }
+                ],
+            },
+            sqlColumns="different STRING",
+            partitionColumns=[],
+            comment="different declaration",
+            tableProperties=dict(
+                fixture["tableProperties"],
+                **{"delta.deletedFileRetentionDuration": "interval 2 days"},
+            ),
+        )
+    elif expected == "invalid":
+        declaration = dict(
+            fixture,
+            schema={
+                "type": "struct",
+                "fields": [
+                    {
+                        "name": "nested",
+                        "type": {
+                            "type": "struct",
+                            "fields": [
+                                {
+                                    "name": "x",
+                                    "type": "long",
+                                    "nullable": True,
+                                    "metadata": {},
+                                }
+                            ],
+                        },
+                        "nullable": True,
+                        "metadata": {},
+                    }
+                ],
+            },
+            sqlColumns="nested STRUCT<x:BIGINT>",
+            partitionColumns=[],
+        )
+    full_name = ".".join([plan["catalog"], plan["database"], target])
+    sql = "CREATE TABLE " + ("IF NOT EXISTS " if expected == "noop" else "") + full_name
+    sql += " (" + declaration.get("sqlColumns", "id BIGINT") + ") USING delta"
+    if declaration.get("partitionColumns"):
+        sql += " PARTITIONED BY (" + ", ".join(declaration["partitionColumns"]) + ")"
+    if "comment" in declaration:
+        sql += " COMMENT " + json.dumps(declaration["comment"], ensure_ascii=False)
+    sql += (
+        " TBLPROPERTIES ("
+        + ", ".join(
+            "'" + k + "'='" + v + "'" for k, v in declaration["tableProperties"].items()
+        )
         + ")"
     )
+    if expected == "read_denied":
+        sql = "SELECT * FROM " + full_name
     command = dict(id=name, sql=sql, minPolicy=state["policy"], minRole=state["role"])
-    command.update({"expectedRows": []} if allowed else {"denied": True})
+    command.update(
+        {"denied": True}
+        if expected in ("denied", "read_denied")
+        else {"expectedRows": []}
+    )
     save(output / "command.json", command)
-    argv = [
-        runtime["sparkHome"] + "/bin/spark-submit",
+    save(output / "declaration.json", declaration)
+    frontend = inputs.get("frontend", "sql")
+    request.update(
+        commandId=name,
+        expected=expected,
+        operation=dict(
+            kind="read" if expected == "read_denied" else "create",
+            name=full_name,
+            schema=declaration.get("schema"),
+            partitionColumns=declaration.get("partitionColumns", []),
+            properties=declaration["tableProperties"],
+            comment=declaration.get("comment"),
+            ifNotExists=expected == "noop",
+        ),
+        driverOutput=str(output / "driver"),
+        pythonOutput=str(output / "python"),
+        fixtureSha256=inputs["fixtureSha256"],
+    )
+    common_args = [
         "--driver-memory",
         "1536m",
         "--master",
         "local[2]",
-        "--class",
-        "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerDownloadedQuery",
         "--properties-file",
         str(properties),
         "--driver-class-path",
         request["driverSecurityDirectory"],
-        runtime["app"],
-        str(output / "request/request.private.json"),
-        str(output / "driver"),
     ]
+    argv = (
+        [runtime["sparkHome"] + "/bin/spark-submit"]
+        + common_args
+        + [
+            "--class",
+            "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerDownloadedQuery",
+            runtime["app"],
+            str(output / "request/request.private.json"),
+            str(output / "driver"),
+        ]
+    )
+    if frontend == "pyspark":
+        request["pythonZip"] = runtime["pythonZip"]
+        argv = [
+            inputs["pythonRuntime"],
+            str(ROOT / "delta/acceptance/create_pyspark.py"),
+            str(output / "request/request.private.json"),
+        ]
+    save(output / "request/request.private.json", request)
     environment = clean_environment(plan)
     environment.update(
         SPARK_HOME=runtime["sparkHome"], SPARK_USER=actor, HADOOP_USER_NAME=actor
     )
+    if frontend == "pyspark":
+        environment.update(
+            PYSPARK_PIN_THREAD="true",
+            PYSPARK_PYTHON=inputs["pythonRuntime"],
+            PYSPARK_DRIVER_PYTHON=inputs["pythonRuntime"],
+            PYTHONPATH=runtime["pythonZip"],
+            PYSPARK_SUBMIT_ARGS=shlex.join(common_args + ["pyspark-shell"]),
+        )
     save(
         output / "process-command.json",
         {"argv": argv, "JAVA_HOME": JAVA, "subject": actor, "started": time.time()},
@@ -819,12 +979,13 @@ def run_phase(
                 }
             )
     result = {
-        "expected": "group_rest_denied"
-        if group_rest_denied
-        else ("published" if allowed else "denied"),
+        "expected": expected,
         "command": command,
-        "before": {"registration": before, "objects": []},
-        "after": {"registration": after, "objects": new},
+        "before": {
+            "registration": before,
+            "objects": before_objects if existing else [],
+        },
+        "after": {"registration": after, "objects": after_objects if existing else new},
         "exitCode": process.returncode,
         "fixture": fixture,
         "settings": read(output / "effective-settings.json"),
@@ -851,12 +1012,6 @@ def run_phase(
         assert len(commit) == 1
         assert commit[0]["operation"] == "CREATE TABLE"
         assert not any("add" in a or "remove" in a or "cdc" in a for a in actions)
-        assert json.loads(metadata[0]["schemaString"]) == {
-            "type": "struct",
-            "fields": [
-                {"name": "id", "type": "long", "nullable": True, "metadata": {}}
-            ],
-        }
         result.update(
             logVersion=0,
             nativeOutcome="COMMITTED",
@@ -933,6 +1088,36 @@ def run_phase(
         )
         result["statusNeeded"] = result["status"]["state"] != "PUBLISHED"
         save(output / "status.json", status)
+    if existing:
+        result.update(
+            nativeOutcome="NOT_ATTEMPTED",
+            publicationOutcome="NOT_ATTEMPTED",
+            receipt=receipt(before["body"]["table"]["properties"]),
+            actorMutations=[e["method"] for e in wire_events if e["method"] != "GET"],
+            journalEntries=[
+                str(p.relative_to(output / "request/journal"))
+                for p in (output / "request/journal").rglob("*")
+                if p.is_file()
+            ],
+            metadataReads=[],
+        )
+        end = read(output / "exit.json")["finished"]
+        for event in wire_events:
+            if (
+                event["method"] == "GET"
+                and event["path"] == before["path"]
+                and event["started"] <= end
+                and event.get("completed")
+                and event.get("status") == 200
+            ):
+                result["metadataReads"].append(
+                    dict(
+                        completed=True,
+                        status=200,
+                        receipt=receipt(read(event["response"])["table"]["properties"]),
+                    )
+                )
+    result["frontend"] = frontend
     save(output / "outcome-before-check.json", result)
     driver = output / "driver"
     if not (driver / (name + ".json")).is_file():
@@ -942,6 +1127,7 @@ def run_phase(
     result["result"] = read(driver / (name + ".json"))
     result["downloads"] = downloaded(state, driver, handles["rangerWire"])
     ready = read(driver / "ready.json")
+    assert ready["settings"] == fixture["settings"], "Actual session settings differ"
     assert ready["spark"] == runtime["spark"] and ready["user"] == actor
     if group:
         assert ready["groups"] == [plan["group"]]
@@ -959,9 +1145,154 @@ def run_phase(
         assert str(Path(unquote(urlsplit(origin).path)).resolve()) in {
             str(Path(p).resolve()) for p in runtime["jarHashes"]
         }
+    expected_frontend = dict(
+        frontend=frontend,
+        spark=runtime["spark"],
+        delta=runtime["delta"],
+        fixtureSha256=inputs["fixtureSha256"],
+    )
+    if frontend == "pyspark":
+        expected_frontend.update(
+            pythonZipSha256=runtime["pythonZipSha256"],
+            modules=runtime["pythonModules"],
+            pythonExecutable=inputs["pythonRuntime"],
+        )
+        actual_frontend = read(output / "python/caller.json")["provenance"]
+    else:
+        actual_frontend = dict(expected_frontend, spark=ready["spark"])
+    verify_frontend(expected_frontend, actual_frontend)
+    result["frontendProof"] = actual_frontend
+    if expected == "published" and "schema" in fixture:
+        verify_registration(after["body"]["table"], fixture)
     save(output / "evidence.json", result)
     save(output / "checked.json", verify_case(result))
     return result
+
+
+def select_deny_policy(policies, resources, actor):
+    """Add SELECT denial to the unique owned literal policy without replacing its grants."""
+    matches = [policy for policy in policies if policy["resources"] == resources]
+    assert len(matches) == 1, "Expected one exact existing literal owner policy"
+    result = json.loads(json.dumps(matches[0]))
+    assert result.get("denyPolicyItems", []) == [], (
+        "Preexisting deny is not this fixture's control"
+    )
+    result["denyPolicyItems"] = [
+        dict(
+            users=[actor],
+            delegateAdmin=False,
+            accesses=[dict(type="select", isAllowed=True)],
+        )
+    ]
+    return result
+
+
+def run_ordinary(plan, runtime, inputs, handles, output, membership):
+    """Run only ordinary CREATE decisions, preserving each original target and result."""
+    outcomes = {}
+
+    def phase(name, expected, target=None):
+        outcomes[name] = run_phase(
+            plan,
+            runtime,
+            inputs,
+            handles,
+            name,
+            expected in ("published", "noop"),
+            output / name,
+            expected=expected,
+            target_name=target,
+        )
+        save(
+            output / "completed-cases.json",
+            {k: v["expected"] for k, v in outcomes.items()},
+        )
+
+    def deny(name, access, target):
+        ranger = Ranger(plan, output / (name + "-trace"))
+        resources = {
+            k: dict(values=[v], isExcludes=False, isRecursive=False)
+            for k, v in [
+                ("catalog", plan["catalog"]),
+                ("database", plan["database"]),
+                ("table", inputs["targets"][target]),
+                ("column", "*"),
+            ]
+        }
+        if access == "select":
+            downloaded = ranger.call(
+                "GET",
+                "/service/plugins/secure/policies/download/"
+                + plan["resourceService"]
+                + "?lastKnownVersion=-1&pluginId=select-deny-fixture",
+                download=True,
+            )
+            assert downloaded["serviceName"] == plan["resourceService"]
+            selected = select_deny_policy(
+                downloaded["policies"], resources, plan["subject"]
+            )
+            path = "/service/public/v2/api/policy/" + str(selected["id"])
+            before_policy = ranger.call("GET", path)
+            assert before_policy["service"] == plan["resourceService"]
+            save(output / (name + "-before.json"), before_policy)
+            updated = select_deny_policy([before_policy], resources, plan["subject"])
+            ranger.call("PUT", path, updated)
+            policy = ranger.call("GET", path)
+            for key, value in updated.items():
+                if key not in ("version", "updateTime", "updatedBy"):
+                    assert policy.get(key) == value, (
+                        "Literal policy update changed unrelated content"
+                    )
+        else:
+            policy = ranger.call(
+                "POST",
+                "/service/public/v2/api/policy",
+                dict(
+                    service=plan["resourceService"],
+                    name=name + "_" + plan["nonce"],
+                    policyType=0,
+                    isEnabled=True,
+                    isAuditEnabled=True,
+                    resources=resources,
+                    denyPolicyItems=[
+                        dict(
+                            users=[plan["subject"]],
+                            groups=[],
+                            roles=[],
+                            accesses=[dict(type=access, isAllowed=True)],
+                        )
+                    ],
+                ),
+            )
+        save(output / (name + ".json"), policy)
+
+    phase("no_grant", "denied")
+    membership("users", "subject", "appRole", True)
+    phase("allowed", "published")
+    phase("noop", "noop", "allowed")
+    if inputs["profile"] == "full":
+        phase("duplicate", "duplicate", "allowed")
+        phase("invalid_nested", "invalid")
+        deny("select_deny", "select", "allowed")
+        phase("read_denied", "read_denied", "allowed")
+        phase("noop_without_select", "noop", "allowed")
+        deny("create_deny", "create", "specific_deny")
+        phase("specific_deny", "denied")
+    membership("users", "subject", "appRole", False)
+    phase("revoked", "denied")
+    save(
+        output / "result.json",
+        dict(
+            qualified=True,
+            spark=runtime["spark"],
+            delta=runtime["delta"],
+            cases=list(outcomes),
+            profile="ordinary-schema-only",
+            frontend=inputs["frontend"],
+            groupOnlyCreate="UNSUPPORTED_SIMPLE_GROUPS",
+            liveMidOperationFaults=False,
+        ),
+    )
 
 
 def run(runtime_path, inputs_path, output):
@@ -969,7 +1300,7 @@ def run(runtime_path, inputs_path, output):
     runtime = validate_runtime(runtime_path)
     assert (
         inputs["fixtureSha256"]
-        == read(runtime["assemblyManifest"])["sourceInputs"][FIXTURE]
+        == read(runtime["assemblyManifest"])["sourceInputs"][inputs["fixtureResource"]]
     ), "Fixture changed since the source-bound build"
     output.mkdir(mode=0o700)
     save(
@@ -986,8 +1317,8 @@ def run(runtime_path, inputs_path, output):
             "sha256": sha(inputs_path),
             "runtime": str(runtime_path),
             "runtimeSha256": sha(runtime_path),
-            "fixture": FIXTURE,
-            "fixtureSha256": sha(ROOT / FIXTURE),
+            "fixture": inputs["fixtureResource"],
+            "fixtureSha256": sha(ROOT / inputs["fixtureResource"]),
         },
     )
     verify_deployed(inputs, output / "deployed-association")
@@ -1029,6 +1360,9 @@ def run(runtime_path, inputs_path, output):
                 {k: v["publicationOutcome"] for k, v in outcomes.items()},
             )
 
+        if inputs["fixtureResource"] == ORDINARY_FIXTURE:
+            run_ordinary(plan, runtime, inputs, handles, output, membership)
+            return
         phase("no_grant")
         if inputs["profile"] == "full":
             membership("users", "subject", "otherRole", True)

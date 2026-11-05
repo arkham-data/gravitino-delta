@@ -448,3 +448,12 @@ protocol guards and AQE disabled remain required.
 The stock DataFrame builder, Spark Connect, AQE and arbitrary native operations
 remain unqualified. The [parity tracker](../../../docs/delta-spark-parity.md)
 keeps all unsupported profiles and deployment evidence visibly open.
+
+
+The ordinary actual-service acceptance lane is `delta/acceptance/create_live.py`
+with `spark-hub-ordinary-schema.json` and an explicit SQL or classic PySpark frontend.
+Its test-only downloaded-query session bootstrap supplies the same secured session
+and records outcomes; Python invokes the packaged public CREATE API directly.
+No-op acceptance verifies a positive PUBLISHED read and unchanged registration,
+native objects and mutation journal, including an explicit SELECT-denied control.
+See the acceptance README for finite inputs and retained provenance.

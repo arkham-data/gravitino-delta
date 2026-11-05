@@ -766,3 +766,30 @@ See [the actual-service findings](../../docs/superpowers/specs/2026-11-04-delta-
 for all four pairs, original retained failures, group limitations and the next M2
 ordinary-schema/partition/comment/property/createIfNotExists and M5 generated-date
 gaps. Schema evolution, inputs and overwrite remain open.
+
+
+### Ordinary SQL and classic PySpark CREATE
+
+The same finite `create_live.py` runner accepts the `spark-hub-ordinary-schema.json`
+fixture and requires `frontend` (`sql` or `pyspark`) plus the pinned pair's existing
+`pythonRuntime` executable. Ordinary targets are exactly `no_grant`, `allowed`,
+`revoked`, `specific_deny`, and `invalid_nested`. `full` covers published creation,
+a differing supported declaration with IF NOT EXISTS, plain duplicate conflict,
+unsupported nested fields, literal CREATE denial, and separate denied SELECT plus
+successful no-op. `repeat` covers no-grant, success, differing no-op and revoked
+CREATE. No-op and duplicate intentionally reference the known published target;
+failed or uncertain CREATE/PUBLISH is never replayed.
+
+`create_pyspark.py` invokes `GravitinoDeltaTable.create` with a real `StructType` on
+the same classic pinned thread as the existing downloaded-query test session.
+The package manifest must include current-source Python ZIP/member hashes.
+Evidence includes installed PySpark/Delta/Py4J wheel versions, loaded module and
+archive bytes, connection/thread identity, native log0/checksum, public registration
+projection and completed Ranger downloads. Python-side failures without a Java
+cause remain failures. A no-op requires its own positive PUBLISHED metadata read,
+unchanged registration/object inventories, no public mutation and no journal entry.
+Retention/primary_key/defaults are verified in native metadata; public provider
+properties retain their existing restricted projection.
+
+This is schema-only creation under the declared Hub CREATE settings, not payload
+writes, generated partitions, schema evolution, full Hub compute or cutover.
