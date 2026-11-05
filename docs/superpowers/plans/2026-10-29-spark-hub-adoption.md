@@ -102,13 +102,21 @@ schema grants; the narrow correction and its scoped review passed, with 61
 module tests and four live/fixture methods excluded. This is not live creation
 or public propagation qualification.
 
-Next is the [installed schema-only CREATE probe](2026-11-04-delta-create-installed-probe.md):
-measure current SQL refusal and actual native staging under unchanged companion
-checks before designing reservation-bound authority. Existing native CREATE0 ->
-publication0 -> WRITE1 remains the lifecycle. The last verified remote checkpoint
+The [installed schema-only CREATE probe](2026-11-04-delta-create-installed-probe.md)
+is reviewed and closed locally at `c49f282fe`. It measured SQL refusal before
+catalog entry and a durable native CREATE0 followed by rejection of checksum
+metadata work. The native-only differential on both Delta pins does not grant
+installed authority; the [findings](../specs/2026-11-04-delta-create-installed-probe-findings.md)
+retain the exact test and version scope.
+
+The [reservation-bound creation implementation](2026-11-04-delta-governed-schema-create.md)
+is now active: typed base lifecycle checks, an issued named command with finite
+native metadata support, then actual Ranger 2.8.0/MinIO qualification across all
+four version pairs. CREATE0 -> publication0 -> WRITE1 remains the lifecycle;
+this first production slice covers schema-only creation. Ordinary creation
+profiles and initial ingestion remain open. The last verified remote checkpoint
 is additive CDF at `54b5f2359`; creation work remains local. Inputs/transformations
-and overwrite/full refresh follow; the selected schema and consolidated live
-Ranger 2.8.0/MinIO gates remain open.
+and overwrite/full refresh follow, with wider schema coverage still required.
 
 ## Immediate steps
 

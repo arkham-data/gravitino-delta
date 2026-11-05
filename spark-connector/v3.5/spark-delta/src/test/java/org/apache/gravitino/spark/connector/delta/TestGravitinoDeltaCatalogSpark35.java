@@ -68,20 +68,24 @@ import org.junit.jupiter.api.Test;
 
 @SuppressWarnings("deprecation")
 class TestGravitinoDeltaCatalogSpark35 {
-  private final Identifier id = Identifier.of(new String[] {"db"}, "t");
-  private final StructType schema = new StructType();
-  private final List<String> effects = new ArrayList<>();
-  private final List<DeltaRegistrationJournal.Entry> entries = new ArrayList<>();
+  final Identifier id = Identifier.of(new String[] {"db"}, "t");
+  final StructType schema = new StructType();
+  final List<String> effects = new ArrayList<>();
+  final List<DeltaRegistrationJournal.Entry> entries = new ArrayList<>();
   private final Catalog catalog = mock(Catalog.class);
-  private final TableCatalog tables = mock(TableCatalog.class);
-  private final DeltaCatalog nativeCatalog = mock(DeltaCatalog.class);
-  private final StagedTable nativeStage =
+  final TableCatalog tables = mock(TableCatalog.class);
+  final DeltaCatalog nativeCatalog = mock(DeltaCatalog.class);
+  final StagedTable nativeStage =
       mock(StagedTable.class, withSettings().extraInterfaces(SupportsWrite.class));
   private final SparkSession session = mock(SparkSession.class);
-  private final AtomicReference<DeltaRegistrationReceipt> receipt = new AtomicReference<>();
-  private DeltaRegistrationJournal.Phase failPhase;
+  final AtomicReference<DeltaRegistrationReceipt> receipt = new AtomicReference<>();
+  DeltaRegistrationJournal.Phase failPhase;
+  int failPhaseOccurrence = 1;
   private boolean uncertain;
-  private GravitinoDeltaCatalogSpark35 adapter;
+  GravitinoDeltaCatalogSpark35 adapter;
+  DeltaCreateLifecycle lifecycle = DeltaCreateLifecycle.noop();
+  DeltaCreateLifecycle.Intent intent;
+  int lifecycleFactories;
 
   @BeforeEach
   void setup() throws Exception {
@@ -155,13 +159,21 @@ class TestGravitinoDeltaCatalogSpark35 {
             new DeltaRegistrationClient(() -> catalog, () -> catalog),
             entry -> {
               effects.add(entry.phase.name());
-              if (entry.phase == failPhase) {
+              if (entry.phase == failPhase && --failPhaseOccurrence == 0) {
                 throw new IllegalStateException("disk unavailable");
               }
               entries.add(entry);
             },
             () -> session,
-            (location, current) -> effects.add("head"));
+            (location, current) -> effects.add("head")) {
+          @Override
+          protected DeltaCreateLifecycle newCreateLifecycle(
+              DeltaCreateLifecycle.Intent declaration) {
+            lifecycleFactories++;
+            intent = declaration;
+            return lifecycle;
+          }
+        };
     adapter.initialize("alias", new CaseInsensitiveStringMap(Map.of()));
   }
 

@@ -22,6 +22,7 @@ package org.apache.gravitino.spark.connector.delta;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -189,6 +190,54 @@ class TestDeltaPublicationStage {
         IllegalArgumentException.class,
         () -> stage.newWriteBuilder(info(schema, Map.of("delta.columnMapping.mode", "name"))));
     assertEquals(0, materializations.get());
+  }
+
+  @Test
+  void nativeReturnSurvivesJournalFailureBeforeScopeCleanup() {
+    List<String> events = new ArrayList<>();
+    IllegalStateException journalFailure = new IllegalStateException("journal unavailable");
+    IllegalStateException cleanupFailure = new IllegalStateException("scope unavailable");
+    DeltaPublicationStage stage =
+        new DeltaPublicationStage(
+            "t",
+            schema,
+            new Transform[0],
+            Map.of(),
+            DeltaPublicationStage.Requested.CREATE,
+            () -> {},
+            (mode, bound, options) -> nativeStage,
+            publications::incrementAndGet,
+            () -> {},
+            new DeltaPublicationStage.CommitLifecycle() {
+              @Override
+              public DeltaCreateLifecycle.Scope beforeNative() {
+                events.add("enter");
+                return () -> {
+                  events.add("scope-close");
+                  throw cleanupFailure;
+                };
+              }
+
+              @Override
+              public void nativeCommitted() {
+                events.add("committed");
+                throw journalFailure;
+              }
+
+              @Override
+              public void close() {
+                events.add("close");
+              }
+            });
+    assertSame(
+        journalFailure, assertThrows(IllegalStateException.class, stage::commitStagedChanges));
+    assertEquals(List.of(cleanupFailure), List.of(journalFailure.getSuppressed()));
+    IllegalStateException retry =
+        assertThrows(IllegalStateException.class, stage::commitStagedChanges);
+    assertTrue(retry.getMessage().contains("PUBLICATION"));
+    assertEquals(List.of("enter", "committed", "scope-close", "close"), events);
+    assertEquals(0, publications.get());
+    verify(nativeStage, times(1)).commitStagedChanges();
   }
 
   private LogicalWriteInfo info(StructType value, Map<String, String> options) {

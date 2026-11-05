@@ -88,4 +88,4 @@ admission to get a successful CREATE. Controller owns status docs, commits and
 independent review. This follows the reviewed local schema-grant checkpoint
 `9733e09142a959424379ae72727c082d7516396c`.
 
-Task 1 is implemented and task-reviewed (SPEC PASS, QUALITY APPROVED). The exact historical/current run distinction is retained in the findings. Whole-slice review remains the final checkpoint gate; this is not governed creation support.
+Task 1 and whole-slice review are complete (SPEC PASS, QUALITY APPROVED; no Critical/Important findings). The test-only checkpoint is closed locally at `c49f282fe`, with the exact historical/current run distinction retained in the findings. Two optional test observations remain: a recorded but unasserted zero-load counter and a deprecated schema accessor warning. Production work continues in the [reservation-bound creation plan](2026-11-04-delta-governed-schema-create.md); this characterization is not governed creation support.

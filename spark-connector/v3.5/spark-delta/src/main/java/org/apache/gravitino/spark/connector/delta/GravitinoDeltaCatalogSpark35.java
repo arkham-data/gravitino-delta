@@ -21,6 +21,7 @@ package org.apache.gravitino.spark.connector.delta;
 
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -377,6 +378,16 @@ public class GravitinoDeltaCatalogSpark35
     closed = true;
   }
 
+  /**
+   * Creates a side-effect-free lifecycle bound to one immutable CREATE declaration.
+   *
+   * @param intent immutable literal CREATE declaration
+   * @return lifecycle for this descriptor; ordinary base behavior uses an inert lifecycle
+   */
+  protected DeltaCreateLifecycle newCreateLifecycle(DeltaCreateLifecycle.Intent intent) {
+    return DeltaCreateLifecycle.noop();
+  }
+
   private Table load(Identifier id, @Nullable String version, @Nullable Long timestamp) {
     check();
     DeltaRegistrationClient.Observation observation = observation(id);
@@ -407,12 +418,25 @@ public class GravitinoDeltaCatalogSpark35
     DeltaCatalogProperties.validateSchema(schema);
     DeltaCatalogProperties.mapping(
         properties, session.get().conf().get(DeltaCatalogProperties.MAPPING_DEFAULT, "none"));
+    Identifier boundId = Identifier.of(id.namespace().clone(), id.name());
+    DeltaCreateLifecycle lifecycle =
+        requested == DeltaPublicationStage.Requested.CREATE
+            ? newCreateLifecycle(
+                new DeltaCreateLifecycle.Intent(
+                    catalogName,
+                    Arrays.asList(boundId.namespace()),
+                    boundId.name(),
+                    schema.json(),
+                    partitions.length,
+                    properties))
+            : DeltaCreateLifecycle.noop();
     Pending pending =
         new Pending(
-            id,
+            boundId,
             partitions.clone(),
             Collections.unmodifiableMap(new HashMap<>(properties)),
-            requested);
+            requested,
+            lifecycle);
     return new DeltaPublicationStage(
         catalogName + "." + id,
         schema,
@@ -422,7 +446,8 @@ public class GravitinoDeltaCatalogSpark35
         this::check,
         pending::materialize,
         pending::publish,
-        pending::abort);
+        pending::abort,
+        pending);
   }
 
   private DeltaRegistrationClient.Observation observation(Identifier id) {
@@ -476,11 +501,12 @@ public class GravitinoDeltaCatalogSpark35
     throw (E) error;
   }
 
-  private final class Pending {
+  private final class Pending implements DeltaPublicationStage.CommitLifecycle {
     private final Identifier id;
     private final Transform[] partitions;
     private final Map<String, String> properties;
     private final DeltaPublicationStage.Requested requested;
+    private final DeltaCreateLifecycle lifecycle;
     private final String key = UUID.randomUUID().toString();
     private final String token = UUID.randomUUID().toString();
     private final String run = UUID.randomUUID().toString();
@@ -492,11 +518,44 @@ public class GravitinoDeltaCatalogSpark35
         Identifier id,
         Transform[] partitions,
         Map<String, String> properties,
-        DeltaPublicationStage.Requested requested) {
+        DeltaPublicationStage.Requested requested,
+        DeltaCreateLifecycle lifecycle) {
       this.id = id;
       this.partitions = partitions;
       this.properties = properties;
       this.requested = requested;
+      this.lifecycle = lifecycle;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public DeltaCreateLifecycle.Scope beforeNative() {
+      return lifecycle.beforeNative(receipt);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void nativeCommitted() {
+      entry = entry.phase(DeltaRegistrationJournal.Phase.NATIVE_COMMITTED, receipt);
+      journal.write(entry);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public boolean publicationCompleted() {
+      return receipt != null && receipt.state() == DeltaRegistrationReceipt.State.PUBLISHED;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void published() {
+      lifecycle.published(receipt);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public void close() {
+      lifecycle.close();
     }
 
     private StagedTable materialize(
@@ -511,6 +570,7 @@ public class GravitinoDeltaCatalogSpark35
           "name".equals(mapping)
               ? DeltaSchemaContract.spark35Delta33NameMapping(mode, schema.json())
               : null;
+      lifecycle.beforeReserve(mode, schema.json(), options);
       Optional<DeltaRegistrationClient.Observation> existing = client.published(id);
       if (existing.isPresent() && requested == DeltaPublicationStage.Requested.CREATE) {
         return fail(new TableAlreadyExistsException(id));
@@ -553,6 +613,7 @@ public class GravitinoDeltaCatalogSpark35
       }
       entry = entry.phase(DeltaRegistrationJournal.Phase.RESERVED, receipt);
       journal.write(entry);
+      lifecycle.reserved(receipt);
       DeltaOperationMarker marker = receipt.marker().get();
       if (existing.isPresent()) {
         if (!existing.get().receipt.location().get().equals(marker.normalizedLocation())) {
@@ -586,8 +647,7 @@ public class GravitinoDeltaCatalogSpark35
             "DELTA_PUBLICATION_STATUS_NEEDED: automatic publication replay is disabled");
       }
       publicationAttempted = true;
-      entry = entry.phase(DeltaRegistrationJournal.Phase.NATIVE_COMMITTED, receipt);
-      journal.write(entry);
+      lifecycle.beforePublish(receipt);
       DeltaRegistrationCommand command = DeltaRegistrationCommand.publish(receipt.identity());
       DeltaRegistrationJournal.Entry publication =
           new DeltaRegistrationJournal.Entry(
@@ -610,9 +670,9 @@ public class GravitinoDeltaCatalogSpark35
       if (published.state() != DeltaRegistrationReceipt.State.PUBLISHED) {
         throw DeltaRegistrationClient.bindingError();
       }
-      journal.write(publication.phase(DeltaRegistrationJournal.Phase.PUBLISHED, published));
       receipt = published;
       entry = entry.phase(DeltaRegistrationJournal.Phase.PUBLISHED, published);
+      journal.write(publication.phase(DeltaRegistrationJournal.Phase.PUBLISHED, published));
       journal.write(entry);
     }
 

@@ -23,6 +23,7 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import javax.annotation.Nullable;
 import org.apache.gravitino.catalog.lakehouse.delta.registration.DeltaSchemaContract.OperationMode;
@@ -47,6 +48,22 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
     StagedTable materialize(OperationMode mode, StructType schema, Map<String, String> options);
   }
 
+  interface CommitLifecycle {
+    default DeltaCreateLifecycle.Scope beforeNative() {
+      return () -> {};
+    }
+
+    default void nativeCommitted() {}
+
+    default boolean publicationCompleted() {
+      return false;
+    }
+
+    default void published() {}
+
+    default void close() {}
+  }
+
   private final String name;
   private final StructType declaredSchema;
   private final Transform[] partitions;
@@ -56,6 +73,7 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
   private final Materializer materializer;
   private final Runnable publish;
   private final Runnable abort;
+  private final CommitLifecycle lifecycle;
   @Nullable private StagedTable nativeStage;
   @Nullable private WriteBuilder builder;
   @Nullable private StructType querySchema;
@@ -65,6 +83,8 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
   private boolean nativeCompleted;
   private boolean published;
   private boolean aborted;
+  private boolean failed;
+  private boolean lifecycleClosed;
 
   DeltaPublicationStage(
       String name,
@@ -76,6 +96,30 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
       Materializer materializer,
       Runnable publish,
       Runnable abort) {
+    this(
+        name,
+        schema,
+        partitions,
+        properties,
+        requested,
+        check,
+        materializer,
+        publish,
+        abort,
+        new CommitLifecycle() {});
+  }
+
+  DeltaPublicationStage(
+      String name,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties,
+      Requested requested,
+      Runnable check,
+      Materializer materializer,
+      Runnable publish,
+      Runnable abort,
+      CommitLifecycle lifecycle) {
     this.name = name;
     this.declaredSchema = (StructType) StructType.fromJson(schema.json());
     this.partitions = partitions.clone();
@@ -89,6 +133,7 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
     this.materializer = materializer;
     this.publish = publish;
     this.abort = abort;
+    this.lifecycle = lifecycle;
   }
   /** {@inheritDoc} */
   @Override
@@ -129,11 +174,17 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
       }
       return builder;
     }
-    materialize(OperationMode.QUERY, normalized, options);
-    querySchema = normalized;
-    queryOptions = options;
-    builder = ((SupportsWrite) nativeStage).newWriteBuilder(info);
-    return builder;
+    try {
+      materialize(OperationMode.QUERY, normalized, options);
+      querySchema = normalized;
+      queryOptions = options;
+      builder = ((SupportsWrite) nativeStage).newWriteBuilder(info);
+      return builder;
+    } catch (Throwable error) {
+      failed = true;
+      closeAfterFailure(error);
+      return GravitinoDeltaCatalogSpark35.fail(error);
+    }
   }
   /** {@inheritDoc} */
   @Override
@@ -144,21 +195,39 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
     if (aborted) {
       throw new IllegalStateException("Delta stage is aborted");
     }
+    if (failed) {
+      throw new IllegalStateException(
+          nativeCompleted
+              ? "DELTA_PUBLICATION_STATUS_NEEDED: native commit retained"
+              : committed
+                  ? "DELTA_NATIVE_COMMIT_STATUS_NEEDED"
+                  : "Delta materialization requires operator recovery; request is never replayed");
+    }
     check.run();
-    if (!committed) {
-      if (nativeStage == null) {
-        materialize(OperationMode.SCHEMA_ONLY, declaredSchema, Collections.emptyMap());
+    try (DeltaCreateLifecycle.Scope cleanup = this::closeLifecycle) {
+      if (!committed) {
+        if (nativeStage == null) {
+          materialize(OperationMode.SCHEMA_ONLY, declaredSchema, Collections.emptyMap());
+        }
+        try (DeltaCreateLifecycle.Scope scope = Objects.requireNonNull(lifecycle.beforeNative())) {
+          // A thrown native commit may already have committed. Never execute it a second time.
+          committed = true;
+          nativeStage.commitStagedChanges();
+          nativeCompleted = true;
+          lifecycle.nativeCommitted();
+        }
       }
-      // A thrown native commit may already have committed. Never execute it a second time.
-      committed = true;
-      nativeStage.commitStagedChanges();
-      nativeCompleted = true;
+      if (!nativeCompleted) {
+        throw new IllegalStateException("DELTA_NATIVE_COMMIT_STATUS_NEEDED");
+      }
+      try (DeltaCreateLifecycle.Scope observation = this::observePublication) {
+        publish.run();
+        published = true;
+      }
+    } catch (Throwable error) {
+      failed = true;
+      GravitinoDeltaCatalogSpark35.fail(error);
     }
-    if (!nativeCompleted) {
-      throw new IllegalStateException("DELTA_NATIVE_COMMIT_STATUS_NEEDED");
-    }
-    publish.run();
-    published = true;
   }
   /** {@inheritDoc} */
   @Override
@@ -167,13 +236,15 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
       return;
     }
     aborted = true;
-    try {
-      if (nativeStage != null && !committed) {
-        nativeStage.abortStagedChanges();
-      }
-    } finally {
-      if (attempted) {
-        abort.run();
+    try (DeltaCreateLifecycle.Scope cleanup = this::closeLifecycle) {
+      try {
+        if (nativeStage != null && !committed) {
+          nativeStage.abortStagedChanges();
+        }
+      } finally {
+        if (attempted) {
+          abort.run();
+        }
       }
     }
   }
@@ -184,11 +255,38 @@ final class DeltaPublicationStage implements StagedTable, SupportsWrite {
           "Delta materialization requires operator recovery; request is never replayed");
     }
     attempted = true;
-    nativeStage = materializer.materialize(mode, schema, options);
+    StructType boundSchema = (StructType) StructType.fromJson(schema.json());
+    Map<String, String> boundOptions = Collections.unmodifiableMap(new HashMap<>(options));
+    nativeStage = materializer.materialize(mode, boundSchema, boundOptions);
+  }
+
+  private void observePublication() {
+    if (published || lifecycle.publicationCompleted()) {
+      // A validated response is a known outcome even if recording or observing it fails.
+      published = true;
+      lifecycle.published();
+    }
+  }
+
+  private void closeLifecycle() {
+    if (!lifecycleClosed) {
+      lifecycleClosed = true;
+      lifecycle.close();
+    }
+  }
+
+  private void closeAfterFailure(Throwable error) {
+    try {
+      closeLifecycle();
+    } catch (Throwable cleanup) {
+      if (cleanup != error) {
+        error.addSuppressed(cleanup);
+      }
+    }
   }
 
   private void ensureOpen() {
-    if (aborted || committed) {
+    if (aborted || committed || failed) {
       throw new IllegalStateException("Delta stage is closed");
     }
   }
