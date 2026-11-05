@@ -92,6 +92,24 @@ The bounded ordinary CDF dependency now has reviewed product changes through `28
 
 This installed checkpoint does not close the selected schema track or actual Ranger-server 2.8.0/MinIO/S3/PySpark/Spark Hub acceptance. Nested/type-changing evolution, governed metadata-only schema commands and schema replacement still need explicit supported/unsupported decisions grounded in actual platform calls; overwriteSchema belongs to the selected overwrite/full-refresh workstream. Continue the next concrete schema requirement or governed creation only as justified by those calls, preserving the selected order. Broad CDF consumer/state changes, policy-transition reconciliation and streaming remain deferred; no full Delta support is claimed.
 
+## Current governed creation task
+
+The [schema CREATE grant dependency](2026-11-04-delta-create-schema-grants.md) is
+reviewed and closed locally at `9733e09142a959424379ae72727c082d7516396c`.
+Exact schema CREATE_TABLE/ALLOW now propagates Ranger create while USE stays
+visibility-only. Integrated review caught shared-role deletion with sibling
+schema grants; the narrow correction and its scoped review passed, with 61
+module tests and four live/fixture methods excluded. This is not live creation
+or public propagation qualification.
+
+Next is the [installed schema-only CREATE probe](2026-11-04-delta-create-installed-probe.md):
+measure current SQL refusal and actual native staging under unchanged companion
+checks before designing reservation-bound authority. Existing native CREATE0 ->
+publication0 -> WRITE1 remains the lifecycle. The last verified remote checkpoint
+is additive CDF at `54b5f2359`; creation work remains local. Inputs/transformations
+and overwrite/full refresh follow; the selected schema and consolidated live
+Ranger 2.8.0/MinIO gates remain open.
+
 ## Immediate steps
 
 - [x] Finish the existing append-AQE matrix and reviews, then push that reviewed milestone under standing authorization.
