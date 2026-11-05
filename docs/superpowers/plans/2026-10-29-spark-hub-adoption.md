@@ -110,13 +110,24 @@ installed authority; the [findings](../specs/2026-11-04-delta-create-installed-p
 retain the exact test and version scope.
 
 The [reservation-bound creation implementation](2026-11-04-delta-governed-schema-create.md)
-is now active: typed base lifecycle checks, an issued named command with finite
-native metadata support, then actual Ranger 2.8.0/MinIO qualification across all
-four version pairs. CREATE0 -> publication0 -> WRITE1 remains the lifecycle;
-this first production slice covers schema-only creation. Ordinary creation
-profiles and initial ingestion remain open. The last verified remote checkpoint
-is additive CDF at `54b5f2359`; creation work remains local. Inputs/transformations
-and overwrite/full refresh follow, with wider schema coverage still required.
+is implemented and independently reviewed at qualification checkpoint `6af60730e`
+(production `c610e4dc5`). Typed lifecycle checks, an issued named command and
+finite native metadata support now pass actual Ranger 2.8.0/MinIO qualification
+on all four version pairs: five CREATE0 -> PUBLISHED0 successes and twelve
+denials. This closes only direct-user schema-only `(id BIGINT)` creation with
+the qualified property/settings profile. Group-only CREATE remains unsupported
+under SIMPLE application authentication; production audit capacity is unmeasured.
+The [findings](../specs/2026-11-04-delta-governed-schema-create-findings.md) retain
+those limits and the original failed attempts.
+
+The next creation work must cover Spark Hub's caller-supplied StructType,
+ordinary identity partitions, comments, primary-key metadata, retention/CDF
+properties and safe `createIfNotExists` behavior through a real PySpark frontend.
+Reuse the existing native/provider route; qualify the frontend inside that
+implementation task instead of opening a standalone probe milestone. Generated
+date columns remain M5. Initial ingestion/input transformations and overwrite/full
+refresh follow, with wider schema coverage still required. CREATE0 -> publication0
+-> WRITE1 remains the lifecycle; this checkpoint does not qualify payload creation.
 
 ## Immediate steps
 
