@@ -339,3 +339,62 @@ SQL/subqueries, callbacks/options, partitioned JDBC extraction, other vendors,
 external JDBC and full shared Spark Hub ingestion remain unqualified or unsupported
 as described in the design. The external-ingestion coverage status stays
 `connector-gap` until those required integration paths are completed.
+
+
+## Final review correction and recovery contract
+
+Schema observation now reuses the stock JDBC converter: registered VARCHAR(n)
+maps to Spark StringType and both PostgreSQL timestamp forms map to TimestampType.
+Ordered type/name checks, exact native/wrapped metadata and JDBC-only nullability
+widening remain enforced. Final-review requalification records are separate from
+the historical task evidence above; see the final-fix report and evidence.
+
+Endpoint/credential changes or metadata-lease expiry require a fresh initialized
+catalog/runtime with current connection options and a new lease. Another
+`spark.table` in the existing wrapper does not hot-reload connection options or
+renew the expired metadata client. The live rotation control uses a fresh writer
+JVM for the subsequent physical-table control and proves no same-wrapper recovery.
+
+Successful build output includes inherited common Javadoc, Scala compiler, JVM
+and Gradle warnings. The environment probe can also fail while the overall
+formatting command exits 0. These logs are not pristine; explicit Docker test
+selection and passing XML are the verification evidence. Unrelated warning cleanup
+is deferred.
+
+The final-review live attempt retained a mixed-case commit whose ready marker
+arrived at 301.715 seconds, after the original 300-second supervisor cutoff. Its
+writer was terminated during timeout cleanup; it is not a passing case. The
+controller authorized a finite 450-second readiness allowance for only
+`jdbc_mixed_save_as_table`, with 300 seconds for every other case and the existing
+1,200-second writer bound. Subsequent qualification uses fresh fixtures/targets
+and explicit bound receipts; the original committed target is never retried.
+This harness allowance does not qualify performance or change production guards.
+
+
+Final correction qualification completed on all four required Spark/Delta pairs.
+The installed runs retain 112 passing tests (37 on Spark 3.5.6 / Delta 3.3.2,
+25 on each other pair), including real selected VARCHAR and both temporal reads
+and APPEND, plus id-only projection with unused typed fields. The fresh actual-service
+inventory passes 17 cases / 20 actions on the corrected companion bytes; all four
+fixture/supervisor exits are 0. Original caller rows, JVM observations, policy
+receipts, native publications/residue, runtime archives and SQL suffixes are joined
+by the full checker. The installed runs and completed lead were not repeated
+after the daemon restart; recovery reused the already completed second package
+and ran only the three unfinished live cells. The interrupted outer driver's
+exact exit is unavailable; completed child receipts and the new recovery exit 0
+are retained without reconstruction.
+
+Current insertion writers took 75.89–78.87 seconds across the four pairs, each
+with one payload and 1,778 metadata SELECTs. The fresh lead mixed writer completed
+normal verification in 373.72 seconds, with one payload and 4,186 metadata SELECTs.
+These are instrumented writer durations including startup/helper/observer work,
+not isolated production timings or evidence of acceptable performance. The earlier
+committed mixed timeout remains committed/normal-observation-unconfirmed.
+
+The current frozen-source aggregate is
+`.superpowers/sdd/2026-11-05-delta-registered-jdbc/final-fix-evidence/matrix-current.json`;
+the final-fix report records subsequent read-only documentation revalidation and
+exact commands. Owned current PostgreSQL/Gravitino fixtures are stopped with data
+and original artifacts retained; shared Ranger/MinIO readiness was checked at the
+final audit. Broader deferred scope and plan step 5 are unchanged pending the
+controller's scoped final review and closure.

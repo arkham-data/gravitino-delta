@@ -692,6 +692,113 @@ class TestDeltaRangerRegisteredJdbcNative {
     }
   }
 
+  @Test
+  def ordinarySourceTypesSupportUnusedProjectionSelectedReadAndNativeAppend(): Unit = {
+    val postgres = new RegisteredJdbcPostgresFixture
+    val policy = new TestDeltaRangerNativeSelect.Fixture
+    policy.customCatalog = "pg"
+    try
+      NativeSelectFixture.withSpark(
+        spark => {
+          val source = new RegisteredJdbcCatalogFixture(spark, postgres, policy, "source_typed")
+          try {
+            policy.denied.add("pg:secret")
+            assertEquals(
+              Seq(1L, 3L),
+              source.frame.select("id").collect().map(_.getLong(0)).sorted.toSeq
+            )
+            policy.denied.clear()
+            val selected = source.frame.select("id", "secret", "region", "plain_time", "zoned_time")
+            val rows = selected.collect().sortBy(_.getLong(0))
+            assertEquals(Seq(1L, 3L), rows.map(_.getLong(0)).toSeq)
+            assertEquals("one-masked", rows(0).getString(1))
+            assertNull(rows(1).getString(1))
+            // Stock JDBC getTimestamp interprets a zone-less value in the JVM default zone.
+            val plain = Seq("2026-01-02 03:04:05", "2026-02-03 04:05:06")
+              .map(value => java.sql.Timestamp.valueOf(value).toInstant)
+            val zoned =
+              Seq("2026-01-02T01:04:05Z", "2026-02-03T02:05:06Z").map(java.time.Instant.parse)
+            assertEquals(plain, rows.map(_.getTimestamp(3).toInstant).toSeq)
+            assertEquals(zoned, rows.map(_.getTimestamp(4).toInstant).toSeq)
+            val payload = postgres.payloadReads()
+            try
+              selected
+                .selectExpr(
+                  "id",
+                  "secret",
+                  "region",
+                  "plain_time AS first_time",
+                  "zoned_time AS second_time"
+                )
+                .write
+                .mode("append")
+                .insertInto("a.db.t")
+            finally nativeEvidence(spark, "source-typed")
+            assertEquals(payload + 1, postgres.payloadReads())
+            val target = Paths.get(NativeSelectFixture.locations("a"))
+            val log = target.resolve("_delta_log")
+            assertFalse(Files.exists(log.resolve("00000000000000000002.json")))
+            val mapper = new ObjectMapper
+            val actions = Files
+              .readAllLines(log.resolve("00000000000000000001.json"))
+              .asScala
+              .map(mapper.readTree(_))
+            assertFalse(actions.exists(_.has("remove")))
+            val actual = actions
+              .filter(_.has("add"))
+              .flatMap { action =>
+                val reader = ParquetReader
+                  .builder[Group](
+                    new GroupReadSupport,
+                    new HadoopPath(target.resolve(action.get("add").get("path").asText()).toUri)
+                  )
+                  .withConf(spark.sparkContext.hadoopConfiguration)
+                  .build()
+                try
+                  Iterator
+                    .continually(reader.read())
+                    .takeWhile(_ != null)
+                    .map { group =>
+                      (
+                        group.getLong("id", 0),
+                        group.getLong("first_time", 0),
+                        group.getLong("second_time", 0)
+                      )
+                    }
+                    .toVector
+                finally reader.close()
+              }
+              .sortBy(_._1)
+            assertEquals(
+              Seq(
+                (1L, plain(0).toEpochMilli * 1000, zoned(0).toEpochMilli * 1000),
+                (3L, plain(1).toEpochMilli * 1000, zoned(1).toEpochMilli * 1000)
+              ),
+              actual.toSeq
+            )
+          } finally source.close()
+        },
+        Some(NativeSelectFixture.extension(policy)),
+        Map(
+          "spark.gravitino.enableDeltaRangerJdbcSupport" -> "true",
+          "spark.sql.session.timeZone" -> "UTC",
+          "spark.sql.parquet.outputTimestampType" -> "TIMESTAMP_MICROS",
+          "spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false"
+        ),
+        initialData = (catalog, data) =>
+          if (catalog == "a")
+            data.selectExpr(
+              "id",
+              "secret",
+              "region",
+              "CAST(NULL AS TIMESTAMP) first_time",
+              "CAST(NULL AS TIMESTAMP) second_time"
+            )
+          else data
+      )
+    finally { policy.close(); postgres.close() }
+  }
+
   private def nativeEvidence(spark: SparkSession, scenario: String): Unit = {
     val directory = Paths
       .get(System.getProperty("gravitino.ranger.delta.registeredJdbc.evidence"))
@@ -754,6 +861,16 @@ private[ranger] final class RegisteredJdbcCatalogFixture(
       Column.of("region", Types.StringType.get())
     )
   )
+  if (tableName == "source_typed")
+    when(table.columns()).thenReturn(
+      Array[Column](
+        Column.of("id", Types.LongType.get()),
+        Column.of("secret", Types.VarCharType.of(20)),
+        Column.of("region", Types.StringType.get()),
+        Column.of("plain_time", Types.TimestampType.withoutTimeZone()),
+        Column.of("zoned_time", Types.TimestampType.withTimeZone())
+      )
+    )
   private val manager = GravitinoCatalogManager.create(
     spark.sparkContext.getConf,
     spark.sparkContext.sparkUser,

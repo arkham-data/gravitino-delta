@@ -46,6 +46,15 @@ class TestRegisteredJdbcChecks(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(AssertionError):
                 verify_inventory(bad)
 
+    def test_only_mixed_case_has_larger_finite_readiness_bound(self):
+        from registered_jdbc_live import action_readiness_seconds
+
+        for pair in PAIRS:
+            for name in case_names(pair):
+                self.assertEqual(450 if name == "jdbc_mixed_save_as_table" else 300,
+                                 action_readiness_seconds(name), name)
+        self.assertEqual(300, action_readiness_seconds("unplanned"))
+
     def test_full_identity_driver_and_physical_table(self):
         expected = dict(catalog="source_a", schema="shared", table="source",
                         database="owned_db", provider="jdbc-postgresql", driverVersion="42.7.11",
@@ -195,6 +204,17 @@ class TestRegisteredJdbcChecks(unittest.TestCase):
             case["actions"][0]["failures"][0]["stack"] = ["java.sql.Driver.connect(File.java:1)"]
             with self.assertRaises(AssertionError):
                 verify_case(case)
+
+    def test_allowed_rows_must_match_original_caller(self):
+        from registered_jdbc_checks import verify_case
+
+        with patch("cdf_merge_live_checks.read_ref", side_effect=lambda value: value):
+            for name in ("jdbc_column_composition", "jdbc_view_rejected"):
+                case = self.lead_case(name)
+                verify_case(case)
+                case["actions"][0]["caller"]["rows"] = [[1], [2], [3]]
+                with self.subTest(name=name), self.assertRaises(AssertionError):
+                    verify_case(case)
 
     def test_source_delta_cannot_relabel_helper_or_product(self):
         from registered_jdbc_checks import verify_source_delta

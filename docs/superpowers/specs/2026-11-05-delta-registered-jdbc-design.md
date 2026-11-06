@@ -111,8 +111,13 @@ Compare current provider/name, schema, canonical endpoint/database, driver,
 credential owner/material and effective extraction configuration before/after
 native load and at existing action/precommit boundaries. Re-read through the
 owned client, not only GravitinoCatalogManager's cache. A changed or expired
-source must be loaded anew; never mutate an issued table's options in place.
-Stock native schema discovery uses always-nullable JDBC fields and PostgreSQL
+source invalidates its issued binding. Endpoint/credential changes or lease
+expiry require a fresh initialized catalog/runtime and metadata lease; merely
+calling `spark.table` again in the same wrapper does not reload its frozen JDBC
+options or replace an expired client. Never mutate issued options in place.
+Observation reuses the stock `SparkJdbcTypeConverter`, including VARCHAR to
+StringType and both timestamp forms to TimestampType. Stock native schema
+discovery uses always-nullable JDBC fields and PostgreSQL
 `isSigned`/`scale` metadata; compare ordered canonical names/types and only that
 native nullability widening against registration, then retain the full original
 native schema and the exact wrapped Gravitino schema independently. Later

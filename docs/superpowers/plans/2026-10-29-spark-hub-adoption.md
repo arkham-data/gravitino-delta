@@ -138,7 +138,9 @@ APPEND writers passed the bounded four-pair actual-service profile. The retained
 77/78 broader focused result and schema-changing target-history observation
 limitation remain explicit; neither is concealed by the timestamp successes.
 
-Registered JDBC inputs through Gravitino's existing JDBC catalog are next.
+Registered PostgreSQL inputs through Gravitino's existing JDBC catalog have
+bounded installed and four-pair actual-service qualification; see the registered
+JDBC results and final-review correction evidence. Full shared ingestion remains open.
 Externally authenticated JDBC is a separate required route, followed by required
 file/constructed origins and transformations grounded in Spark Hub callers.
 Reuse native catalog/credential/scan execution; preserve source Ranger SELECT,

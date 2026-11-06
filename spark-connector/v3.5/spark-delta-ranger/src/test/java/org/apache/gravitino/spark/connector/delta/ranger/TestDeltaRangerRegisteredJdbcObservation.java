@@ -46,6 +46,7 @@ import org.apache.gravitino.credential.JdbcCredential;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
 import org.apache.gravitino.rel.TableCatalog;
+import org.apache.gravitino.rel.types.Type;
 import org.apache.gravitino.rel.types.Types;
 import org.apache.gravitino.spark.connector.SparkTransformConverter;
 import org.apache.gravitino.spark.connector.SparkTypeConverter;
@@ -303,6 +304,43 @@ class TestDeltaRangerRegisteredJdbcObservation {
         assertThrows(
             SecurityException.class,
             () -> observation.requireNative(new JDBCTable(ID, changed, jdbc)));
+      }
+    }
+  }
+
+  @Test
+  void ordinaryJdbcTypesMatchStockNativeSchemaAndRetainTypeIdentity() throws Exception {
+    for (Type type :
+        new Type[] {
+          Types.VarCharType.of(20),
+          Types.TimestampType.withoutTimeZone(),
+          Types.TimestampType.withTimeZone()
+        }) {
+      try (Fixture f = new Fixture()) {
+        when(f.table.columns()).thenReturn(new Column[] {Column.of("value", type)});
+        DeltaRangerJdbcSourceBindings.Observation observed = f.bindings.read(ID);
+        Map<String, String> options = new HashMap<>();
+        options.put("url", f.properties.get("jdbc-url"));
+        options.put("driver", "org.postgresql.Driver");
+        options.put("user", "reader");
+        options.put("password", "private-password");
+        options.put("dbtable", "\"public\".\"source\"");
+        JDBCOptions jdbc =
+            new JDBCOptions(
+                JavaConverters.mapAsScalaMapConverter(options).asScala().toMap(Predef.$conforms()));
+        StructType schema =
+            DataTypes.createStructType(
+                new StructField[] {
+                  DataTypes.createStructField(
+                      "value",
+                      type instanceof Types.VarCharType
+                          ? DataTypes.StringType
+                          : DataTypes.TimestampType,
+                      true)
+                });
+        assertDoesNotThrow(() -> observed.requireNative(new JDBCTable(ID, schema, jdbc)));
+        when(f.table.columns()).thenReturn(new Column[] {Column.of("value", Types.LongType.get())});
+        assertThrows(SecurityException.class, () -> observed.requireSame(f.bindings.read(ID)));
       }
     }
   }

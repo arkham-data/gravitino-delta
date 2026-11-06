@@ -501,7 +501,11 @@ at source load and existing action/publication checks; metadata discovery may
 occur even when payload permission is denied. Spark catalog/relation
 options, `spark.bypass.*`, query/subquery strings, connection callbacks and custom
 drivers reject. A changed endpoint, schema, credential, policy contract, subject
-or metadata lease requires a new source load. Equality of current metadata does
+or metadata lease invalidates the issued source. Endpoint/credential changes or
+an expired lease require a fresh catalog/runtime initialized with current
+connection options and a new metadata lease. A new `spark.table` in the existing
+wrapper does not hot-reload its frozen JDBC options or renew an expired client.
+Issued options are never mutated. Equality of current metadata does
 not detect every remote same-schema drop/recreate and does not establish a
 repeatable database snapshot.
 

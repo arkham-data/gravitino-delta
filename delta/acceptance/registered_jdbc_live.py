@@ -41,6 +41,11 @@ from registered_jdbc_checks import LEAD, case_names
 IMAGE = "sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20"
 
 
+def action_readiness_seconds(case_name):
+    """Keep a finite extra observation allowance only for the mixed cache case."""
+    return 450 if case_name == "jdbc_mixed_save_as_table" else 300
+
+
 def case_specs(pair):
     """Expose exactly eight lead or three remaining targets, each attempted once."""
     profiles = {"jdbc_insert_into": "plain", "jdbc_source_select_denied": "source-denied",
@@ -112,8 +117,8 @@ class OwnedPostgres:
                 break
             assert time.monotonic() < deadline, "Owned PostgreSQL readiness timed out"
             time.sleep(0.2)
-        setup = "CREATE SCHEMA source_schema; CREATE TABLE source_schema.source (id BIGINT, secret TEXT, region TEXT); "
-        setup += "INSERT INTO source_schema.source VALUES (1,'alpha','allowed'),(2,'beta','blocked'),(3,'gamma','allowed'); "
+        setup = "CREATE SCHEMA source_schema; CREATE TABLE source_schema.source (id BIGINT, secret VARCHAR(20), region TEXT, plain_time TIMESTAMP DEFAULT TIMESTAMP '2026-01-02 03:04:05', zoned_time TIMESTAMPTZ DEFAULT TIMESTAMPTZ '2026-01-02 03:04:05+02'); "
+        setup += "INSERT INTO source_schema.source (id, secret, region) VALUES (1,'alpha','allowed'),(2,'beta','blocked'),(3,'gamma','allowed'); "
         setup += "CREATE VIEW source_schema.source_view AS SELECT * FROM source_schema.source; "
         setup += "REVOKE CREATE ON SCHEMA public FROM PUBLIC; REVOKE ALL ON DATABASE " + self.database + " FROM PUBLIC; "
         for role, password in [("extractor", self.password), ("extractor_rotated", self.second_password)]:
@@ -125,7 +130,7 @@ class OwnedPostgres:
         kinds, _ = self.sql("SELECT table_name,table_type FROM information_schema.tables WHERE table_schema='source_schema' ORDER BY table_name;")
         assert kinds.splitlines() == ["source|BASE TABLE", "source_view|VIEW"]
         acl, _ = self.sql("SELECT rolname,rolsuper,rolcreatedb,rolcreaterole,rolinherit FROM pg_roles WHERE rolname LIKE 'extractor%'; SELECT has_schema_privilege('extractor','source_schema','CREATE'),has_table_privilege('extractor','source_schema.source','SELECT'),has_table_privilege('extractor','source_schema.source','INSERT'),has_database_privilege('extractor',current_database(),'CREATE');")
-        _, denied = self.sql("INSERT INTO source_schema.source VALUES (9,'forbidden','allowed');", "extractor", True)
+        _, denied = self.sql("INSERT INTO source_schema.source (id, secret, region) VALUES (9,'forbidden','allowed');", "extractor", True)
         assert denied != 0 and "f|t|f|f" in acl
         self.sql("ALTER SYSTEM SET log_line_prefix = '%m [%p] %u@%d '; ALTER SYSTEM SET log_statement = 'all'; SELECT pg_reload_conf();")
         self.descriptor = dict(catalog="jdbc_source", isolationCatalog="jdbc_isolation", schema=self.schema, table="source",
@@ -371,6 +376,7 @@ def run_case(plan, runtime, spec, postgres, output):
                    warmOrder=spec["warmOrder"], barrier=spec["profile"] in ("revoke", "config"), appendCount=1,
                    transactionVersions=[1], targetLocation=target["location"], deadlineSeconds=1200,
                    inputTimestamp=True, revokeSource=spec["revokeSource"], registeredJdbc=True,
+                   actionReadinessSeconds=action_readiness_seconds(spec["name"]),
                    configChange=spec["profile"] == "config", columnComposition=spec["profile"] == "columns",
                    mixedJdbc=spec["name"] == "jdbc_mixed_save_as_table", viewControl=spec["profile"] == "view", sourceCatalog=source["catalog"],
                    sourceSchema=source["schema"], sourceTable=source["view"] if spec["profile"] == "view" else source["table"],
@@ -398,6 +404,8 @@ def run_case(plan, runtime, spec, postgres, output):
             "--properties-file", str(properties), "--driver-class-path", request["driverSecurityDirectory"],
             str(ROOT / "delta/acceptance/append_aqe_pyspark.py"), str(output / "request/request.private.json")]
     process, log = start(argv, env, output / "writer")
+    save(output / "writer/readiness-bound.json", dict(caseName=spec["name"],
+         actionReadinessSeconds=request["actionReadinessSeconds"], writerDeadlineSeconds=request["deadlineSeconds"]))
     control = Path(request["controlDirectory"])
     records = []
     observed = None
@@ -433,7 +441,7 @@ def run_case(plan, runtime, spec, postgres, output):
         previous_pg_path = output / "postgres-before.json"
         for action in actions:
             name = spec["name"] + "-" + action
-            wait_for(control / (name + "-ready.json"), process, 300)
+            wait_for(control / (name + "-ready.json"), process, request["actionReadinessSeconds"])
             pg_after = postgres.observe(output / ("postgres-" + action + ".json"))
             observation = read(output / "jvm" / (name + "-append.json"))
             caller = read(output / "python" / (name + "-caller.json"))
@@ -461,6 +469,7 @@ def run_case(plan, runtime, spec, postgres, output):
                   request=file_ref(output / "request/request.private.json"), origins=file_ref(output / "jvm/origins.json"),
                   runtimeProfile=file_ref(output / "jvm/runtime-profile.json"), pythonRuntime=file_ref(output / "python/python-runtime.json"),
                   wrapper=file_ref(output / "jvm/jdbc-wrapper.json"), applied=file_ref(output / "jvm/initial-applied.json"),
+                  readinessBound=file_ref(output / "writer/readiness-bound.json"),
                   writerExit=file_ref(output / "writer/exit.json"), postgresBefore=file_ref(output / "postgres-before.json"),
                   postgresAfter=file_ref(output / ("postgres-" + actions[-1] + ".json")))
     if request["barrier"]:

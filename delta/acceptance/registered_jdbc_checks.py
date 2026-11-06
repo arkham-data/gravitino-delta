@@ -120,6 +120,7 @@ def verify_case(case):
                        and item["accessType"] == "select" and item["allowed"] is True
                        for item in action["requests"]), "Missing exact source SELECT decision"
             if action["action"] in ("id_only", "physical_control"):
+                assert action["rows"] == caller["rows"], "Copied allowed rows differ from original caller"
                 assert sorted(action["rows"]) == [[1], [3]]
             else:
                 assert any(callback["appendOwner"] and any(node["className"] == "org.apache.spark.sql.execution.RowDataSourceScanExec" for node in callback["planNodes"])

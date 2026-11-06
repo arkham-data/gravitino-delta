@@ -38,9 +38,9 @@ import org.apache.gravitino.credential.Credential;
 import org.apache.gravitino.credential.JdbcCredential;
 import org.apache.gravitino.rel.Column;
 import org.apache.gravitino.rel.Table;
-import org.apache.gravitino.spark.connector.SparkTypeConverter;
 import org.apache.gravitino.spark.connector.jdbc.JdbcPropertiesConverter;
 import org.apache.gravitino.spark.connector.jdbc.SparkJdbcTable;
+import org.apache.gravitino.spark.connector.jdbc.SparkJdbcTypeConverter;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -148,7 +148,7 @@ final class DeltaRangerJdbcSourceBindings {
             Column[] columns = loaded.columns();
             require(columns != null && columns.length > 0);
             StructField[] fields = new StructField[columns.length];
-            SparkTypeConverter converter = new SparkTypeConverter();
+            SparkJdbcTypeConverter converter = new SparkJdbcTypeConverter();
             Set<String> names = new HashSet<>();
             for (int i = 0; i < columns.length; i++) {
               Column column = columns[i];

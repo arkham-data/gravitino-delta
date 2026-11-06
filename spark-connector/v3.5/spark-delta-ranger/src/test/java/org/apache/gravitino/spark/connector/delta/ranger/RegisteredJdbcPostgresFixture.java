@@ -103,11 +103,16 @@ final class RegisteredJdbcPostgresFixture implements AutoCloseable {
         statement.execute("CREATE TABLE public.source (id BIGINT, secret TEXT, region TEXT)");
         statement.execute(
             "INSERT INTO public.source VALUES (1, 'one', 'keep'), (2, 'two', 'drop'), (3, NULL, 'keep')");
+        statement.execute(
+            "CREATE TABLE public.source_typed (id BIGINT, secret VARCHAR(20), region TEXT, plain_time TIMESTAMP, zoned_time TIMESTAMPTZ)");
+        statement.execute(
+            "INSERT INTO public.source_typed VALUES (1, 'one', 'keep', TIMESTAMP '2026-01-02 03:04:05', TIMESTAMPTZ '2026-01-02 03:04:05+02'), (2, 'two', 'drop', NULL, NULL), (3, NULL, 'keep', TIMESTAMP '2026-02-03 04:05:06', TIMESTAMPTZ '2026-02-03 04:05:06+02')");
         statement.execute("CREATE ROLE extractor LOGIN PASSWORD '" + password + "'");
         statement.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC");
         statement.execute("GRANT CONNECT ON DATABASE extraction TO extractor");
         statement.execute("GRANT USAGE ON SCHEMA public TO extractor");
         statement.execute("GRANT SELECT ON public.source TO extractor");
+        statement.execute("GRANT SELECT ON public.source_typed TO extractor");
         statement.execute("CREATE VIEW public.source_view AS SELECT * FROM public.source");
         statement.execute("GRANT SELECT ON public.source_view TO extractor");
         statement.execute("CREATE TABLE public.source_named AS SELECT * FROM public.source");
