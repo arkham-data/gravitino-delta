@@ -17,6 +17,6 @@
 
 """Classic PySpark APIs for governed Delta and scoped native JDBC input."""
 from gravitino_delta.inputs import GravitinoJdbcInput
-from gravitino_delta.tables import GravitinoDeltaMergeBuilder, GravitinoDeltaTable
+from gravitino_delta.tables import GravitinoDeltaMergeBuilder, GravitinoDeltaMetadata, GravitinoDeltaTable
 
-__all__ = ["GravitinoDeltaTable", "GravitinoDeltaMergeBuilder", "GravitinoJdbcInput"]
+__all__ = ["GravitinoDeltaMetadata", "GravitinoDeltaTable", "GravitinoDeltaMergeBuilder", "GravitinoJdbcInput"]

@@ -45,6 +45,7 @@ import org.apache.gravitino.spark.connector.GravitinoSparkConfig;
 import org.apache.gravitino.spark.connector.catalog.GravitinoCatalogManager;
 import org.apache.gravitino.spark.connector.delta.DeltaCreateLifecycle;
 import org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35;
+import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerMetadataClient.MetadataLeaseStamp;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkContext;
@@ -174,6 +175,49 @@ public final class DeltaRangerCatalogSpark35 extends GravitinoDeltaCatalogSpark3
   @Override
   public Table loadTable(Identifier id) {
     return registrationBindings().load(id, () -> super.loadTable(id));
+  }
+
+  // Only the normal application catalog can establish table visibility or typed absence.
+  Optional<DeltaRegistrationReceipt> visibleForMetadata(Identifier id) {
+    if (closed || id.namespace().length != 1) {
+      throw new SecurityException("Invalid metadata catalog or namespace");
+    }
+    String database = DeltaRangerResourceKey.literal(id.namespace()[0]);
+    String tableName = DeltaRangerResourceKey.literal(id.name());
+    Catalog actor = state.actor();
+    if (actor == null
+        || !name().equals(actor.name())
+        || !"lakehouse-delta".equals(actor.provider())) {
+      throw new SecurityException("Invalid application metadata catalog");
+    }
+    TableCatalog tables = actor.asTableCatalog();
+    org.apache.gravitino.rel.Table table;
+    try {
+      table = tables.loadTable(NameIdentifier.of(database, tableName));
+    } catch (NoSuchTableException absent) {
+      return Optional.empty();
+    }
+    if (table == null || !tableName.equals(table.name())) {
+      throw new SecurityException("Invalid application table metadata");
+    }
+    return Optional.of(DeltaRegistrationReceipt.fromProperties(table.properties()));
+  }
+
+  MetadataLeaseStamp metadataLease() {
+    if (closed) throw new SecurityException("Metadata catalog is closed");
+    // Start/check the owned lease only after normal visibility, including authorized absence.
+    return state.metadata.read(
+        metadata -> {
+          if (!name().equals(metadata.name()) || !"lakehouse-delta".equals(metadata.provider())) {
+            throw new SecurityException("Invalid metadata catalog");
+          }
+          return state.metadata.leaseStamp();
+        });
+  }
+
+  void requireMetadataLive(MetadataLeaseStamp lease) {
+    if (closed) throw new SecurityException("Metadata catalog is closed");
+    state.metadata.requireLive(lease);
   }
 
   Optional<DeltaRegistrationReceipt> publishedForCreate(Identifier id) {

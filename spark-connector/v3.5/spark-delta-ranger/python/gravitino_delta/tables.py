@@ -21,8 +21,11 @@ Expression strings use Spark parser semantics. Use ``lit`` or a quoted expressio
 literal strings. Builders are single-use, mutable, and not thread-safe. The JVM
 independently validates session, expression provenance, policy, and execution state.
 """
-from collections.abc import Mapping, Sequence
-from typing import Optional, Union
+from collections.abc import Sequence
+from dataclasses import dataclass
+import json
+from types import MappingProxyType
+from typing import Mapping, Optional, Tuple, Union
 
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.types import StructType
@@ -59,6 +62,48 @@ def _entry(spark: SparkSession):
     return entry
 
 
+_METADATA_PROPERTIES = frozenset((
+    "delta.enableChangeDataFeed", "primary_key", "delta.logRetentionDuration",
+    "delta.deletedFileRetentionDuration", "delta.compatibility.symlinkFormatManifest.enabled",
+))
+
+
+@dataclass(frozen=True)
+class GravitinoDeltaMetadata:
+    """Detached descriptive metadata; no read or mutation authority is retained."""
+
+    schema: StructType
+    properties: Mapping[str, str]
+    partition_columns: Tuple[str, ...]
+
+
+def _metadata_result(raw: str) -> GravitinoDeltaMetadata:
+    try:
+        if not isinstance(raw, str):
+            raise ValueError()
+        value = json.loads(raw)
+        if not isinstance(value, dict) or set(value) != {"schemaJson", "properties", "partitionColumns"}:
+            raise ValueError()
+        schema_value = json.loads(value["schemaJson"])
+        if not isinstance(schema_value, dict) or schema_value.get("type") != "struct":
+            raise ValueError()
+        schema = StructType.fromJson(schema_value)
+        properties = value["properties"]
+        if not isinstance(properties, dict) or any(
+                key not in _METADATA_PROPERTIES or not isinstance(item, str)
+                for key, item in properties.items()):
+            raise ValueError()
+        partitions = value["partitionColumns"]
+        if not isinstance(partitions, list) or any(
+                not isinstance(column, str) or column not in schema.names for column in partitions):
+            raise ValueError()
+        if len(set(partitions)) != len(partitions):
+            raise ValueError()
+        return GravitinoDeltaMetadata(schema, MappingProxyType(dict(properties)), tuple(partitions))
+    except (ValueError, TypeError, KeyError, AssertionError):
+        raise ValueError("Invalid Gravitino Delta metadata response") from None
+
+
 class GravitinoDeltaTable:
     """A named target bound to its original classic SparkSession and JVM context."""
 
@@ -74,6 +119,25 @@ class GravitinoDeltaTable:
         _name(name, "Target name")
         entry = _entry(spark)
         return cls(spark, entry.forName(spark._jsparkSession, name))
+
+    @classmethod
+    def metadata(cls, spark: SparkSession, name: str) -> Optional[GravitinoDeltaMetadata]:
+        """Read visible native schema and safe properties without selecting payload rows.
+
+        None means positively authorized table absence. Catalog/schema absence,
+        denied visibility, stale registration and unavailable metadata all raise.
+        Each call performs fresh JVM identity and lease checks.
+        """
+        _name(name, "Target name")
+        entry = _entry(spark)
+        try:
+            metadata = entry.metadataJson
+            if not callable(metadata):
+                raise TypeError("Not callable")
+        except Exception as error:
+            raise RuntimeError("Gravitino Delta JVM metadata API is missing; install the matching runtime") from error
+        raw = metadata(spark._jsparkSession, name)
+        return None if raw is None else _metadata_result(raw)
 
     @classmethod
     def create(cls, spark: SparkSession, name: str, schema: StructType, *,

@@ -39,6 +39,21 @@ object GravitinoDeltaTable {
   /** The companion API protocol version, for language bindings. */
   def apiVersion(): Int = 1
 
+  /** Return detached visible native metadata, or null only for authorized typed table absence.
+    *
+    * @param spark
+    *   the exact active classic session
+    * @param name
+    *   canonical three-part registered table name
+    * @return
+    *   JSON containing schemaJson, properties and partitionColumns, or null for absence
+    * @throws SecurityException
+    *   if visibility, registration identity, session or lease is invalid
+    */
+  @Nullable
+  def metadataJson(spark: SparkSession, name: String): String =
+    DeltaRangerTableMetadata.read(spark, name)
+
   /** Create an empty named Delta table through normal analysis and the issued CREATE command.
     *
     * The schema and collections are copied before analysis. Partition entries are literal top-level
