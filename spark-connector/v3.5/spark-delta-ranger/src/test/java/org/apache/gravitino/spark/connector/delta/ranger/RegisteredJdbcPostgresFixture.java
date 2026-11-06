@@ -182,6 +182,14 @@ final class RegisteredJdbcPostgresFixture implements AutoCloseable {
     }
   }
 
+  int authenticationFailures() throws Exception {
+    return (int)
+        command("docker", "logs", name)
+            .lines()
+            .filter(line -> line.contains("password authentication failed for user"))
+            .count();
+  }
+
   int schemaReads() throws Exception {
     return (int)
         command("docker", "logs", name)

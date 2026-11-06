@@ -20,18 +20,28 @@
 package org.apache.gravitino.spark.connector.delta.ranger
 
 import java.sql.SQLException
-import java.util.{IdentityHashMap, UUID}
+import java.util.{IdentityHashMap, Properties, UUID}
+import scala.collection.JavaConverters._
 import java.util.concurrent.{ScheduledFuture, ScheduledThreadPoolExecutor, ThreadFactory, TimeUnit}
 import scala.collection.mutable
 import scala.util.control.NonFatal
 import org.apache.gravitino.spark.connector.GravitinoSparkConfig
+import org.slf4j.LoggerFactory
 import org.apache.spark.scheduler.{SparkListener, SparkListenerApplicationEnd}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.DeltaRangerExternalJdbcNative.{Relation => JDBCRelation}
 import org.apache.spark.sql.execution.datasources.jdbc.{JDBCPartition, JdbcRelationProvider}
 
-/** Private issuance proves native source construction, never Ranger or Delta storage authority. */
+/** Private issuance proves native source construction, never Ranger or Delta storage authority.
+  *
+  * Stock BasicConnectionProvider logging must stay above DEBUG/TRACE. The trusted runtime owns
+  * logging configuration during native IO; validation cannot make concurrent reconfiguration
+  * atomic.
+  */
 private[ranger] object DeltaRangerExternalJdbcSources {
+  private val nativeProviderLog = LoggerFactory.getLogger(
+    "org.apache.spark.sql.execution.datasources.jdbc.connection.BasicConnectionProvider"
+  )
   private val lock = new Object
   private val issued = new IdentityHashMap[JDBCRelation, BoundInput]()
   private val cleanup = new ScheduledThreadPoolExecutor(
@@ -147,6 +157,7 @@ private[ranger] object DeltaRangerExternalJdbcSources {
         denied()
       }
       requireActive(spark)
+      requireSafeLogging()
       val current = DeltaRangerQuerySubject.current(spark)
       if (
         current.user() != subject.user() || current.groups() != subject.groups() ||
@@ -173,6 +184,10 @@ private[ranger] object DeltaRangerExternalJdbcSources {
   ) {
     private val schema = relation.schema.json
     private val options = relation.jdbcOptions.parameters.originalMap.toMap
+    private val properties = snapshotProperties(relation.jdbcOptions.asProperties)
+    private val connectionProperties = snapshotProperties(
+      relation.jdbcOptions.asConnectionProperties
+    )
     private val partitions = relation.parts.map {
       case part: JDBCPartition => (part.idx, part.whereClause)
       case _                   => denied()
@@ -192,12 +207,26 @@ private[ranger] object DeltaRangerExternalJdbcSources {
       if (
         (candidate ne relation) || schema != relation.schema.json ||
         options != relation.jdbcOptions.parameters.originalMap ||
+        properties != snapshotProperties(relation.jdbcOptions.asProperties) ||
+        connectionProperties != snapshotProperties(relation.jdbcOptions.asConnectionProperties) ||
         partitions != relation.parts.map {
           case part: JDBCPartition => (part.idx, part.whereClause)
           case _                   => denied()
         }.toVector
       ) denied()
     }
+  }
+
+  private def snapshotProperties(properties: Properties): Map[AnyRef, AnyRef] =
+    properties.synchronized {
+      properties.entrySet().asScala.iterator.map(entry => entry.getKey -> entry.getValue).toMap
+    }
+
+  private def requireSafeLogging(): Unit = {
+    if (nativeProviderLog.isDebugEnabled || nativeProviderLog.isTraceEnabled)
+      throw new SecurityException(
+        "External JDBC requires native connection-provider logging above DEBUG/TRACE"
+      )
   }
 
   private def requireActive(spark: SparkSession): Unit = {

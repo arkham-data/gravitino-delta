@@ -19,6 +19,13 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
+import java.util.concurrent.CopyOnWriteArrayList
+import scala.collection.JavaConverters._
+import org.apache.logging.log4j.{Level, LogManager}
+import org.apache.logging.log4j.core.{LogEvent, Logger}
+import org.apache.logging.log4j.core.appender.AbstractAppender
+import org.apache.logging.log4j.core.config.Property
+import org.apache.logging.log4j.core.layout.PatternLayout
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.{Callable, ExecutionException, Executors, TimeUnit}
 import org.apache.spark.sql.SparkSession
@@ -82,6 +89,16 @@ class TestDeltaRangerExternalJdbcConstruction {
           )
           val foreign = spark.newSession()
           assertThrows(classOf[SecurityException], () => bound.requireCurrent(foreign))
+          bound.requireCurrent(spark)
+          val originalPartition = bound.relation.parts(0)
+          try {
+            bound.relation.parts(0) = JDBCPartition("changed", 0)
+            assertThrows(classOf[SecurityException], () => bound.requireSame(bound.relation))
+            assertThrows(
+              classOf[SecurityException],
+              () => DeltaRangerExternalJdbcSources.resolve(bound.relation, spark)
+            )
+          } finally bound.relation.parts(0) = originalPartition
           bound.requireCurrent(spark)
           now += 1000000000L
           assertThrows(classOf[SecurityException], () => bound.requireCurrent(spark))
@@ -187,6 +204,122 @@ class TestDeltaRangerExternalJdbcConstruction {
           )
           assertFalse(spark.sparkContext.isStopped)
         } finally scope.close()
+      }
+    finally postgres.close()
+  }
+
+  @Test
+  def bothNativePropertiesMapsRejectIndependentMutationAndAcceptRestoration(): Unit = {
+    val postgres = new RegisteredJdbcPostgresFixture
+    try
+      ExternalJdbcTestFixture.withSpark() { spark =>
+        val scope = DeltaRangerExternalJdbcSources.open(spark, 1200)
+        try {
+          val options = ExternalJdbcTestFixture.options
+          options.put("url", postgres.url()); options.put("password", postgres.password())
+          val bound = scope.load(options)
+          Seq(
+            bound.relation.jdbcOptions.asProperties,
+            bound.relation.jdbcOptions.asConnectionProperties
+          ).foreach { properties =>
+            try {
+              properties.setProperty("external-test-added", "property-sentinel")
+              val failure =
+                assertThrows(classOf[SecurityException], () => bound.requireSame(bound.relation))
+              assertFalse(failure.toString.contains("property-sentinel"))
+              assertFalse(failure.toString.contains(postgres.password()))
+            } finally properties.remove("external-test-added")
+            bound.requireCurrent(spark)
+            val originalPassword = properties.remove("password")
+            try
+              assertThrows(
+                classOf[SecurityException],
+                () => DeltaRangerExternalJdbcSources.resolve(bound.relation, spark)
+              )
+            finally properties.put("password", originalPassword)
+            bound.requireCurrent(spark)
+            try {
+              properties.setProperty("password", "changed-property-sentinel")
+              assertThrows(classOf[SecurityException], () => bound.requireCurrent(spark))
+            } finally properties.put("password", originalPassword)
+            bound.requireCurrent(spark)
+          }
+        } finally scope.close()
+      }
+    finally postgres.close()
+  }
+
+  @Test
+  def debugAndTraceNativeLoggerRejectBeforeConnectingWithoutEmittingCredentials(): Unit = {
+    val postgres = new RegisteredJdbcPostgresFixture
+    try
+      ExternalJdbcTestFixture.withSpark() { spark =>
+        val loggerName =
+          "org.apache.spark.sql.execution.datasources.jdbc.connection.BasicConnectionProvider"
+        val providerClass = Class.forName(loggerName)
+        assertEquals(
+          loggerName,
+          providerClass
+            .getMethod("logName")
+            .invoke(providerClass.getDeclaredConstructor().newInstance())
+        )
+        val logger = LogManager.getLogger(loggerName).asInstanceOf[Logger]
+        val previousLevel = logger.getLevel
+        val previousAdditivity = logger.isAdditive
+        val captured = new CopyOnWriteArrayList[String]()
+        val appender = new AbstractAppender(
+          "external-jdbc-sensitive-capture",
+          null,
+          PatternLayout.createDefaultLayout(),
+          false,
+          Property.EMPTY_ARRAY
+        ) {
+          override def append(event: LogEvent): Unit = {
+            captured.add(event.getMessage.getFormattedMessage); ()
+          }
+        }
+        appender.start()
+        logger.addAppender(appender)
+        logger.setAdditive(false)
+        logger.setLevel(Level.INFO)
+        val scope = DeltaRangerExternalJdbcSources.open(spark, 1200)
+        try {
+          val options = ExternalJdbcTestFixture.options
+          options.put("url", postgres.url()); options.put("password", postgres.password())
+          val bound = scope.load(options)
+          options.put("password", "debug-password-sentinel")
+          val metadata = postgres.schemaReads()
+          val authentications = postgres.authenticationFailures()
+          Seq(Level.DEBUG, Level.TRACE).foreach { level =>
+            logger.setLevel(level)
+            captured.clear()
+            var failure: RuntimeException = null
+            try scope.load(options)
+            catch { case rejected: RuntimeException => failure = rejected }
+            assertFalse(
+              captured.asScala.exists(_.contains("debug-password-sentinel")),
+              "Sensitive native diagnostics must be blocked"
+            )
+            assertTrue(
+              failure.isInstanceOf[SecurityException],
+              "Unsafe native logging must reject before JDBC construction"
+            )
+            assertFalse(failure.toString.contains("debug-password-sentinel"))
+            assertEquals(metadata, postgres.schemaReads())
+            assertEquals(authentications, postgres.authenticationFailures())
+            assertThrows(classOf[SecurityException], () => bound.requireCurrent(spark))
+            assertThrows(classOf[SecurityException], () => scope.requireLive())
+            assertFalse(captured.asScala.exists(_.contains(postgres.password())))
+          }
+          logger.setLevel(Level.INFO)
+          bound.requireCurrent(spark)
+        } finally {
+          scope.close()
+          logger.removeAppender(appender)
+          appender.stop()
+          logger.setLevel(previousLevel)
+          logger.setAdditive(previousAdditivity)
+        }
       }
     finally postgres.close()
   }
