@@ -77,6 +77,8 @@ public class GravitinoDriverPlugin implements DriverPlugin {
   private static final String DELTA_PROVIDER = "lakehouse-delta";
   private static final String DELTA_RANGER_CATALOG =
       "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerCatalogSpark35";
+  private static final String DELTA_RANGER_JDBC_CATALOG =
+      "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerPostgreSqlCatalogSpark35";
   private static final String DELTA_RANGER_EXTENSION =
       "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerSparkExtension";
   private static final String STOCK_RANGER_EXTENSION =
@@ -113,6 +115,7 @@ public class GravitinoDriverPlugin implements DriverPlugin {
   private boolean enablePaimonSupport = false;
   private boolean enableDeltaSupport = false;
   private boolean enableDeltaRangerSupport = false;
+  private boolean enableDeltaRangerJdbcSupport = false;
 
   /** Creates the Spark driver plugin. */
   public GravitinoDriverPlugin() {
@@ -208,7 +211,9 @@ public class GravitinoDriverPlugin implements DriverPlugin {
     String catalogClassName =
         enableDeltaRangerSupport && DELTA_PROVIDER.equalsIgnoreCase(provider)
             ? DELTA_RANGER_CATALOG
-            : CatalogNameAdaptor.getCatalogName(provider);
+            : enableDeltaRangerJdbcSupport && "jdbc-postgresql".equals(provider)
+                ? DELTA_RANGER_JDBC_CATALOG
+                : CatalogNameAdaptor.getCatalogName(provider);
     if (StringUtils.isBlank(catalogClassName)) {
       LOG.warn("Skip registering {} because {} is not supported yet.", catalogName, provider);
       return;
@@ -252,9 +257,16 @@ public class GravitinoDriverPlugin implements DriverPlugin {
         "%s requires %s",
         GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_SUPPORT,
         GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_SUPPORT);
+    enableDeltaRangerJdbcSupport =
+        conf.getBoolean(GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_JDBC_SUPPORT, false);
+    Preconditions.checkArgument(
+        !enableDeltaRangerJdbcSupport || (enableDeltaSupport && enableDeltaRangerSupport),
+        "%s requires Delta and Delta Ranger support",
+        GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_JDBC_SUPPORT);
     if (!enableDeltaSupport) {
       return;
     }
+    if (enableDeltaRangerJdbcSupport) validateDeltaClass(DELTA_RANGER_JDBC_CATALOG);
     if (enableDeltaRangerSupport) {
       String extensions = conf.get(StaticSQLConf.SPARK_SESSION_EXTENSIONS().key(), "");
       Preconditions.checkArgument(

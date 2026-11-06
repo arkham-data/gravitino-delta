@@ -466,3 +466,62 @@ The four-pair qualification uses targets created with their timestamp schema,
 including a partitioned AQE target. See the
 [input timestamp findings](../../../docs/superpowers/specs/2026-11-05-delta-input-timestamp-findings.md)
 for the schema-changing target-history limitation and pending JDBC/input work.
+
+
+## Registered PostgreSQL source inputs
+
+The optional registered-source path uses `spark.table("catalog.schema.table")`
+with provider `jdbc-postgresql`. Enable
+`spark.gravitino.enableDeltaRangerJdbcSupport=true` at startup, together with
+`enableDeltaSupport` and `enableDeltaRangerSupport` under the same
+`spark.gravitino` prefix. The driver plugin then selects
+`DeltaRangerPostgreSqlCatalogSpark35` for application-visible PostgreSQL catalogs.
+The new flag defaults to false. Install the companion, existing Spark PostgreSQL
+connector and trusted PostgreSQL driver explicitly; the installed fixture uses
+`org.postgresql:postgresql:42.7.11`. A compile-only server dependency does not
+package that driver for Spark.
+
+Reuse the existing SIMPLE application identity, separate finite-lived metadata
+identity and Delta Ranger extension configuration. The registered source catalog
+must use `authorization-provider=ranger-delta` and the same configured
+metalake/service/type, with its own canonical catalog name. The Ranger resource
+field `database` contains the PostgreSQL **schema**, not the remote database.
+Metadata resolution uses the owned client after application visibility checks;
+SELECT decisions apply to the completed query's original demanded columns.
+Credentials continue to come from native Gravitino typed JDBC vending (or its
+existing catalog-property fallback). Use a read-only upstream extraction role.
+
+The first profile requires a database-bearing `jdbc:postgresql://host/database`
+URL matching `jdbc-database`, `jdbc-driver=org.postgresql.Driver`, a named table,
+one native JDBC partition and default read options. Each fresh observation performs
+one exact, escaped `DatabaseMetaData.getTables` lookup through Spark's stock
+PostgreSQL connection factory and requires one physical `TABLE` result. Views,
+materialized/foreign/partitioned-table kinds reject. This adds metadata connections
+at source load and existing action/publication checks; metadata discovery may
+occur even when payload permission is denied. Spark catalog/relation
+options, `spark.bypass.*`, query/subquery strings, connection callbacks and custom
+drivers reject. A changed endpoint, schema, credential, policy contract, subject
+or metadata lease requires a new source load. Equality of current metadata does
+not detect every remote same-schema drop/recreate and does not establish a
+repeatable database snapshot.
+
+Bounded Project/Filter, direct `current_timestamp()` projection and one INNER
+join with a named Delta snapshot feed ordinary collect and the existing named
+APPEND writers. Original predicate/join/unused-after-optimization demands remain
+authoritative. Masks and row filters precede user operations. The source retains
+stock V2 scan pushdown and V1 JDBC execution, including its exact JDBCRDD; JDBC
+issuance grants no Delta storage authority. Existing target publication,
+transaction settings, cache rules and postcommit outcome handling still apply.
+Caller AQE and file-skipping settings are preserved. JDBC writes, arbitrary SQL,
+partitioned reads, limits/aggregates, external credentials, raw/RDD/constructed
+sources and source views remain outside this profile.
+
+Installed characterization uses an isolated PostgreSQL fixture and real native
+Delta files; metadata and Ranger transport are test doubles. It does not close
+the four-pair actual Gravitino/Ranger/MinIO qualification or Spark Hub adoption.
+See [registered PostgreSQL results](../../../docs/superpowers/specs/2026-11-05-delta-registered-jdbc-results.md).
+Run its deliberately enabled Docker tests with
+`-PskipDockerTests=false -PrangerDeltaRegisteredJdbcEnabled=true` and
+`--tests '*TestDeltaRangerRegisteredJdbc*'` on this module's `test` task. The local
+fixture requires the readiness-pinned PostgreSQL 16 image and uses a fresh
+loopback port, private credentials and a read-only role for each scenario.

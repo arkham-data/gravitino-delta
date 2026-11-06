@@ -37,6 +37,10 @@ public class GravitinoSparkConfig {
   public static final String GRAVITINO_ENABLE_DELTA_RANGER_SUPPORT =
       "spark.gravitino.enableDeltaRangerSupport";
 
+  /** Opts into registered PostgreSQL sources; requires Delta and Delta Ranger support. */
+  public static final String GRAVITINO_ENABLE_DELTA_RANGER_JDBC_SUPPORT =
+      "spark.gravitino.enableDeltaRangerJdbcSupport";
+
   public static final String GRAVITINO_CLIENT_CONFIG_PREFIX = GRAVITINO_PREFIX + "client.";
 
   /**

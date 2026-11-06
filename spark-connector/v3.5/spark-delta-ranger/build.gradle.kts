@@ -67,6 +67,7 @@ dependencies {
   }
   // The base Delta runtime alone supplies the 33 compatible Kyuubi utility classes.
   compileOnly("org.apache.kyuubi:kyuubi-spark-connector-hive_2.12:1.11.0") { isTransitive = false }
+  compileOnly(project(":spark-connector:spark-3.5")) { isTransitive = false }
   compileOnly(project(":spark-connector:spark-delta-3.5")) { isTransitive = false }
   compileOnly("io.delta:delta-spark_2.12:$deltaVersion")
   compileOnly(project(":api"))
@@ -77,6 +78,7 @@ dependencies {
   compileOnly("org.scala-lang:scala-library:2.12.21")
   compileOnly("com.google.code.findbugs:jsr305:3.0.2")
   testCompileOnly("org.apache.kyuubi:kyuubi-spark-connector-hive_2.12:1.11.0") { isTransitive = false }
+  testImplementation(project(":spark-connector:spark-3.5")) { isTransitive = false }
   testCompileOnly(project(":spark-connector:spark-delta-3.5")) { isTransitive = false }
   testImplementation("io.delta:delta-spark_2.12:$deltaVersion")
   testImplementation(project(":api"))
@@ -86,6 +88,7 @@ dependencies {
   testImplementation(project(":spark-connector:spark-common")) { isTransitive = false }
   testImplementation("org.apache.spark:spark-sql_2.12:$deltaSparkVersion")
   testImplementation("org.scala-lang:scala-library:2.12.21")
+  testRuntimeOnly("org.postgresql:postgresql:42.7.11")
   testImplementation(libs.junit.jupiter.api)
   testImplementation(libs.junit.jupiter.params)
   testImplementation(libs.mockito.core)
@@ -141,5 +144,23 @@ tasks.test {
     rangerDeltaProductionProperties.forEach { (key, value) ->
       systemProperty("gravitino.ranger.delta.production.$key", requireNotNull(value))
     }
+  }
+}
+
+// This owned loopback fixture does not require the host-to-container connector used by other ITs.
+val registeredJdbcTests = providers.gradleProperty("rangerDeltaRegisteredJdbcEnabled").orNull == "true"
+if (registeredJdbcTests) {
+  require(providers.gradleProperty("skipDockerTests").orNull == "false") {
+    "Registered JDBC fixture requires -PskipDockerTests=false"
+  }
+}
+tasks.test {
+  if (registeredJdbcTests) {
+    extensions.extraProperties["gravitinoExternalTestEndpoints"] = true
+    systemProperty("gravitino.ranger.delta.registeredJdbc.enabled", "true")
+    systemProperty(
+      "gravitino.ranger.delta.registeredJdbc.evidence",
+      layout.buildDirectory.dir("registered-jdbc-evidence").get().asFile.absolutePath
+    )
   }
 }

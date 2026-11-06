@@ -41,15 +41,52 @@ private[ranger] object DeltaRangerMaskRules {
       engine: DeltaRangerPolicyEngine,
       subject: DeltaRangerQuerySubject,
       instant: java.time.Instant
+  ): Decisions = captureResource(
+    scan.catalog,
+    scan.database,
+    scan.table,
+    scan.owner,
+    columns,
+    engine,
+    subject,
+    instant
+  )
+
+  def capture(
+      source: DeltaRangerInputSources.Source,
+      columns: Set[String],
+      engine: DeltaRangerPolicyEngine,
+      subject: DeltaRangerQuerySubject,
+      instant: java.time.Instant
+  ): Decisions = captureResource(
+    source.catalog,
+    source.database,
+    source.table,
+    source.owner,
+    columns,
+    engine,
+    subject,
+    instant
+  )
+
+  private def captureResource(
+      catalog: String,
+      database: String,
+      table: String,
+      owner: Option[String],
+      columns: Set[String],
+      engine: DeltaRangerPolicyEngine,
+      subject: DeltaRangerQuerySubject,
+      instant: java.time.Instant
   ): Decisions = {
     def key(column: String): DeltaRangerResourceKey =
       new DeltaRangerResourceKey(
-        scan.catalog,
-        scan.database,
-        scan.table,
+        catalog,
+        database,
+        table,
         column,
         "select",
-        scan.owner.orNull
+        owner.orNull
       )
     new Decisions(
       engine.rowFilter(subject, key(null), instant),
@@ -64,15 +101,29 @@ private[ranger] object DeltaRangerMaskRules {
       columns: Set[String],
       decisions: Decisions,
       spark: SparkSession
+  ): LogicalPlan = rewriteRelation(scan.relation, columns, decisions, spark)
+
+  def rewrite(
+      source: DeltaRangerInputSources.Source,
+      columns: Set[String],
+      decisions: Decisions,
+      spark: SparkSession
+  ): LogicalPlan = rewriteRelation(source.relation, columns, decisions, spark)
+
+  private def rewriteRelation(
+      relation: LogicalPlan,
+      columns: Set[String],
+      decisions: Decisions,
+      spark: SparkSession
   ): LogicalPlan = {
     val filter = decisions.filter
     val filtered = if (filter.isPresent) {
-      val condition = resolve(filter.get(), scan.relation.output, spark)
+      val condition = resolve(filter.get(), relation.output, spark)
       if (condition.dataType != BooleanType)
         throw new SecurityException("Ranger row filter must be boolean")
-      Filter(condition, RowFilterMarker(scan.relation))
-    } else scan.relation
-    val output = scan.relation.output.map { attribute =>
+      Filter(condition, RowFilterMarker(relation))
+    } else relation
+    val output = relation.output.map { attribute =>
       if (!columns(attribute.name)) attribute
       else {
         val decision = decisions.masks(attribute.name)
@@ -91,8 +142,8 @@ private[ranger] object DeltaRangerMaskRules {
           .getOrElse(attribute)
       }
     }
-    if (output == scan.relation.output) filtered
-    else DataMaskingStage0Marker(Project(output, filtered), scan.relation)
+    if (output == relation.output) filtered
+    else DataMaskingStage0Marker(Project(output, filtered), relation)
   }
 
   private def resolve(sql: String, attributes: Seq[Attribute], spark: SparkSession): Expression = {

@@ -190,7 +190,12 @@ private[ranger] object DeltaRangerPhysicalPlanning {
         (classOf[DeltaRangerAppendInputStrategy] +: expected.strategies.map(_.getClass))
     )
       denied("unqualified planner strategies")
-    expected
+    new SparkPlanner(spark, spark.experimental) {
+      // The installed append/input strategy delegates only issued JDBC PhysicalOperations.
+      // Replay uses the same private continuation before otherwise unchanged stock strategies.
+      override def strategies: Seq[SparkStrategy] =
+        new DeltaRangerJdbcScans.Strategy(spark) +: expected.strategies
+    }
   }
 
   private final class PhysicalPrefix(spark: SparkSession, logical: LogicalPlan)

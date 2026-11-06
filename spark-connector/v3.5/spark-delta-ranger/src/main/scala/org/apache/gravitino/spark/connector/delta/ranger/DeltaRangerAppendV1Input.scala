@@ -86,11 +86,8 @@ private[ranger] object DeltaRangerAppendV1Input {
         if (!DeltaRangerOrdinaryRead.pending(command.query))
           denied("missing original pending source")
         DeltaRangerPlanAdmission.inputQuery(command.query)
-        val demand = DeltaRangerReadRule.extract(
-          DeltaRangerOrdinaryAdmission.authoredDemandPlan(command.query),
-          spark
-        )
-        if (demand.exists(_._2.isEmpty)) denied("columnless original source demand")
+        val demand = DeltaRangerOrdinaryRead.authoredDemands(command.query, spark)
+        if (demand.exists(_.isEmpty)) denied("columnless original source demand")
         // Metadata extraction above preserves the pre-operator source contract without
         // policy calls. Normalize exactly once, after that check and before native work.
         val query = DeltaRangerOrdinaryRead
@@ -219,7 +216,7 @@ private[ranger] object DeltaRangerAppendV1Input {
         optimized = false
       )
       receipt.consume(finalSource, session, optimized = false)
-      receipt.consume(command.query, session, optimized = true)
+      receipt.retainOptimized(command.query, session)
       val query = DeltaRangerReadRule.prepare(command.query, session)
       prepared = DeltaRangerNativeScans.prepared(query)
       val next = command.copy(query = query)
@@ -397,7 +394,7 @@ private[ranger] final class DeltaRangerAppendInputStrategy(spark: SparkSession)
     case cdf: DeltaRangerCdfPropertyCommand.Carrier    => Seq(cdf.owner.plan(cdf, spark))
     case raw: DeltaRangerRawMaintenance.Carrier        => Seq(raw.owner.plan(raw.child))
     case append: AppendData => Seq(DeltaRangerAppendV1Input.plan(append, spark))
-    case _                  => Nil
+    case _                  => DeltaRangerJdbcScans.plan(plan, spark)
   }
 }
 

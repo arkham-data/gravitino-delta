@@ -99,9 +99,9 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
     private val subject = DeltaRangerQuerySubject.current(spark)
     private val engine = target.engine()
     private val stamp = engine.snapshotStamp()
-    private val sources = input.receipt.obligations.map(_.binding)
+    private val sources = input.receipt.obligations.map(_.source)
     private val sourceStamps =
-      sources.map(source => source.engine() -> source.engine().snapshotStamp())
+      sources.map(source => source.engine -> source.engine.snapshotStamp())
     private val sourcePlan = DeltaRangerNativeProvenance.binding(input.analyzed)
     private var published: Snapshot = null
     private var used = false
@@ -178,42 +178,49 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
       } finally { closed = true; active.remove() }
     }
 
+    def requireParticipant(source: DeltaRangerInputSources.Source): Unit = {
+      if (!sources.exists(_ eq source)) reject("foreign source maintenance participant")
+      requireContext()
+    }
+
     def requireLive(): Unit = {
+      requireContext()
+      target.requireRetained()
+      sources.foreach { source =>
+        source.requireRetained(); source.recheckMaintenance(this); source.requireLive()
+      }
+      requireContext()
+    }
+
+    private def requireContext(): Unit = {
       if (
         closed || (active.get() ne this) || (Thread.currentThread() ne thread) ||
         !SparkSession.getActiveSession.exists(_ eq spark) ||
         (input.association ne binding)
       ) reject("expired maintenance")
-      def context(): Unit = {
-        val actualSettings = spark.sessionState.conf.getAllConfs
-        val advanced = settings.updated(
-          "spark.databricks.delta.lastCommitVersionInSession",
-          published.version.toString
-        )
-        if (actualSettings != settings && !(this.advanced && actualSettings == advanced))
-          reject("configuration changed")
-        input.requireMaintenanceLease()
-        if (DeltaRangerNativeProvenance.binding(input.analyzed) != sourcePlan)
-          reject("source changed")
-        val actual = DeltaRangerQuerySubject.current(spark)
-        if (actual.user() != subject.user() || actual.groups() != subject.groups())
-          reject("subject changed")
-        engine.requireSnapshot(stamp)
-        sourceStamps.foreach { case (sourceEngine, sourceStamp) =>
-          sourceEngine.requireSnapshot(sourceStamp)
-        }
-        val current = log.unsafeVolatileSnapshot
-        if (
-          current.version != published.version || current.metadata != head.metadata ||
-          current.protocol != head.protocol || (current.deltaLog ne log)
-        ) reject("head changed")
+
+      val actualSettings = spark.sessionState.conf.getAllConfs
+      val advanced = settings.updated(
+        "spark.databricks.delta.lastCommitVersionInSession",
+        published.version.toString
+      )
+      if (actualSettings != settings && !(this.advanced && actualSettings == advanced))
+        reject("configuration changed")
+      input.requireMaintenanceLease()
+      if (DeltaRangerNativeProvenance.binding(input.analyzed) != sourcePlan)
+        reject("source changed")
+      val actual = DeltaRangerQuerySubject.current(spark)
+      if (actual.user() != subject.user() || actual.groups() != subject.groups())
+        reject("subject changed")
+      engine.requireSnapshot(stamp)
+      sourceStamps.foreach { case (sourceEngine, sourceStamp) =>
+        sourceEngine.requireSnapshot(sourceStamp)
       }
-      context()
-      target.requireRetained()
-      sources.foreach { source =>
-        source.requireRetained(); source.recheckPublication(); source.requireLive()
-      }
-      context()
+      val current = log.unsafeVolatileSnapshot
+      if (
+        current.version != published.version || current.metadata != head.metadata ||
+        current.protocol != head.protocol || (current.deltaLog ne log)
+      ) reject("head changed")
     }
 
     def compilationSession(plan: LogicalPlan, session: SparkSession): Boolean = {

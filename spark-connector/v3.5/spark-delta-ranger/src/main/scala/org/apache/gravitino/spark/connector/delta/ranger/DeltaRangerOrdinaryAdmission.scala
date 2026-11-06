@@ -24,6 +24,7 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression,
 import org.apache.spark.sql.catalyst.plans.Inner
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, LongType}
 
@@ -36,9 +37,23 @@ private[ranger] object DeltaRangerOrdinaryAdmission {
 
   private def admit(plan: LogicalPlan, pending: Boolean): Unit = {
     if (!plan.resolved || plan.isStreaming) denied("unresolved or streaming plan")
+    if (plan.exists(_.isInstanceOf[DataSourceV2Relation])) {
+      val sources = DeltaRangerInputSources.leaves(plan)
+      if (
+        sources.count(
+          _.isInstanceOf[DataSourceV2Relation]
+        ) != 1 || sources.size > 2 || plan.collect { case _: Join => 1 }.size > 1
+      ) denied("registered JDBC source count")
+      plan.foreach {
+        case _: LogicalRelation | _: DataSourceV2Relation | _: Project | _: Filter |
+            _: SubqueryAlias | _: Join =>
+        case _ => denied("registered JDBC operator")
+      }
+    }
     plan.foreach {
-      case _: LogicalRelation =>
-      case view: View         => DeltaRangerOrdinaryViews.validateDefinition(view)
+      case _: DataSourceV2Relation =>
+      case _: LogicalRelation      =>
+      case view: View              => DeltaRangerOrdinaryViews.validateDefinition(view)
       case project: Project if displayProjection(project) =>
       case project: Project =>
         project.projectList.foreach(DeltaRangerInputProjection.expression)
@@ -143,8 +158,8 @@ private[ranger] object DeltaRangerOrdinaryAdmission {
         )
     }
     val representedIds = semanticIds(represented)
-    val originalScans = authored.collect { case relation: LogicalRelation => relation }
-    val representedScans = represented.collect { case relation: LogicalRelation => relation }
+    val originalScans = DeltaRangerInputSources.leaves(authored)
+    val representedScans = DeltaRangerInputSources.leaves(represented)
     if (
       originalScans.size != representedScans.size || !originalScans.zip(representedScans).forall {
         case (original, next) =>
@@ -159,7 +174,7 @@ private[ranger] object DeltaRangerOrdinaryAdmission {
   private def semanticIds(plan: LogicalPlan): Set[ExprId] =
     plan.output.map(_.exprId).toSet ++ plan.collect {
       case distinct: Distinct => distinct.child.output.map(_.exprId)
-      case node if !node.isInstanceOf[LogicalRelation] =>
+      case node if !DeltaRangerInputSources.leaf(node) =>
         node.expressions.flatMap(_.references.map(_.exprId))
     }.flatten
 

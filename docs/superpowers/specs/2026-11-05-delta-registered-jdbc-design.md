@@ -112,6 +112,18 @@ credential owner/material and effective extraction configuration before/after
 native load and at existing action/precommit boundaries. Re-read through the
 owned client, not only GravitinoCatalogManager's cache. A changed or expired
 source must be loaded anew; never mutate an issued table's options in place.
+Stock native schema discovery uses always-nullable JDBC fields and PostgreSQL
+`isSigned`/`scale` metadata; compare ordered canonical names/types and only that
+native nullability widening against registration, then retain the full original
+native schema and the exact wrapped Gravitino schema independently. Later
+changes to either fail. This reconciliation is JDBC-specific.
+Gravitino's existing table DTO does not retain PostgreSQL TABLE_TYPE. Therefore
+current observations also make one exact escaped DatabaseMetaData.getTables
+lookup through Spark's stock PostgreSQL JDBC connection factory and the already
+vended credential, matching database/schema/name and requiring one TABLE result.
+Connection and ResultSet close immediately. This is metadata IO only; views and
+other remote kinds reject without extending the server model or qualifying view
+dependencies. It still provides no atomic remote-incarnation fence.
 All comparisons are private; credentials must not appear in errors, receipts,
 plan strings, logs or evidence. Metadata equality is not an atomic configuration
 version and cannot detect every remote same-schema drop/recreate.
@@ -139,8 +151,11 @@ masks. Capture original demands and decisions before native scan pushdown; do
 not disable pushdowns globally to avoid implementing this boundary.
 
 Stock Spark 3.5 JDBC begins as a DataSourceV2Relation, becomes a
-DataSourceV2ScanRelation/JDBCScan, and uses V1Scan.toV1TableScan for physical
-execution. It is not a BatchScanExec-only path. Bind the finite stock scan/options,
+DataSourceV2ScanRelation/V1ScanWrapper(JDBCScan), and uses V1Scan.toV1TableScan
+for physical execution. The installed stock optimizer puts `Pre CBO Rules`
+before `Early Filter and Projection Push-Down`: retain the exact issued V2
+relation at pre-CBO, then verify the native scan through the complete stock
+suffix. Original authorization is complete before either phase. It is not a BatchScanExec-only path. Bind the finite stock scan/options,
 pushed filters, projected schema and source occurrence in receipt replay. Retain
 the exact issued native physical scan and JDBCRDD through the supported query
 continuation; do not broaden generic RDD equality or admit arbitrary callbacks.

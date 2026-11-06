@@ -133,21 +133,30 @@ private[ranger] class DeltaRangerReadRule(
   private[ranger] def authorizeComplete(plan: LogicalPlan): LogicalPlan = {
     val subject = DeltaRangerQuerySubject.current(spark)
     DeltaRangerOrdinaryAdmission.query(plan)
-    val scans = extract(DeltaRangerOrdinaryAdmission.demandPlan(plan), spark)
-    val bound = scans.map { case (scan, columns) =>
-      val binding = catalogs(scan).registrationBindings().resolve(scan.relation)
-      if (binding.index().metadata.configuration.get("delta.enableRowTracking").contains("true"))
-        throw new SecurityException(
-          "Delta decision receipt rejected: row tracking is not qualified"
-        )
-      (scan, columns, binding, binding.engine())
-    }
+    val bound = DeltaRangerInputSources
+      .extract(DeltaRangerOrdinaryAdmission.demandPlan(plan), spark, catalogs)
+      .map { case (source, columns) =>
+        source match {
+          case delta: DeltaRangerInputSources.NamedDelta
+              if delta.binding
+                .index()
+                .metadata
+                .configuration
+                .get("delta.enableRowTracking")
+                .contains("true") =>
+            throw new SecurityException(
+              "Delta decision receipt rejected: row tracking is not qualified"
+            )
+          case _ =>
+        }
+        (source, columns, source.engine)
+      }
     val configuration = spark.sessionState.conf.clone()
-    val stamps = bound.map(_._4).distinct.map(e => e -> e.snapshotStamp()).toMap
+    val stamps = bound.map(_._3).distinct.map(e => e -> e.snapshotStamp()).toMap
     val instant = Instant.now()
     // Complete original authorization for every table before asking for any rewrite.
     bound
-      .flatMap { case (scan, columns, binding, engine) =>
+      .flatMap { case (scan, columns, engine) =>
         DeltaRangerResourceKey
           .select(scan.catalog, scan.database, scan.table, columns.asJava, scan.owner.orNull)
           .asScala
@@ -155,12 +164,11 @@ private[ranger] class DeltaRangerReadRule(
       }
       .distinct
       .foreach { case (engine, key) => engine.authorize(subject, key, instant) }
-    val replacements = new IdentityHashMap[LogicalRelation, LogicalPlan]()
-    val obligations = bound.map { case (scan, columns, binding, engine) =>
+    val replacements = new IdentityHashMap[LogicalPlan, LogicalPlan]()
+    val obligations = bound.map { case (scan, columns, engine) =>
       new DeltaRangerDecisionReceipt.Obligation(
         scan,
         columns,
-        binding,
         DeltaRangerMaskRules.capture(scan, columns, engine, subject, instant)
       )
     }
@@ -168,14 +176,16 @@ private[ranger] class DeltaRangerReadRule(
       throw new SecurityException("Delta decision receipt rejected: configuration changed")
     val rewrittenWithAliases = SQLConf.withExistingConf(configuration) {
       obligations.foreach { obligation =>
-        val scan = obligation.scan
+        val scan = obligation.source
         val columns = obligation.columns
         replacements.put(
           scan.relation,
           DeltaRangerMaskRules.rewrite(scan, columns, obligation.decisions, spark)
         )
       }
-      val stage0 = plan.transformUp { case relation: LogicalRelation => replacements.get(relation) }
+      val stage0 = plan.transformUp {
+        case relation if DeltaRangerInputSources.leaf(relation) => replacements.get(relation)
+      }
       val masked = RuleEliminateMarker(RuleApplyDataMaskingStage1(spark)(stage0))
       // Full-output nonstreaming deduplication is DISTINCT. Lower only after capturing
       // all authored key demands; Spark's ReplaceDeduplicateWithAggregate drops root tags.
@@ -305,6 +315,7 @@ private[ranger] object DeltaRangerReadRule {
       .source(plan, spark)
       .orElse(DeltaRangerAppendCoordinator.source(plan, spark))
       .getOrElse(DeltaRangerNativeScans.consume(plan, spark))
+    if (owner.bindings().isEmpty) return owner.finishJdbc(plan)
     owner.run { operation =>
       val prepared = new PrepareDeltaScan(spark) {
         // Raw Delta statistics are not a governed aggregate input. Keep the stock
@@ -319,6 +330,9 @@ private[ranger] object DeltaRangerReadRule {
           val native = super.prepareDeltaScanWithoutFileSkipping(candidate)
           def replace(node: LogicalPlan): LogicalPlan = {
             val result = node match {
+              case relation: DataSourceV2Relation =>
+                DeltaRangerJdbcScans.logicalBinding(relation)
+                relation
               case relation: LogicalRelation =>
                 relation.relation match {
                   case fs: HadoopFsRelation =>

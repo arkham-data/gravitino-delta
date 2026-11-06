@@ -82,6 +82,7 @@ private[ranger] object DeltaRangerPlanAdmission {
     plan.foreach {
       case project: Project   => project.projectList.foreach(DeltaRangerInputProjection.expression)
       case _: LogicalRelation =>
+      case _: org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation =>
       case node @ (_: Filter | _: SubqueryAlias) => node.expressions.foreach(expression)
       case join: Join if join.joinType == Inner && join.condition.nonEmpty =>
         join.expressions.foreach(expression)

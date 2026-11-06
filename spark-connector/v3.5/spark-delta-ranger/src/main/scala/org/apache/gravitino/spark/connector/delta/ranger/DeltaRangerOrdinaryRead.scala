@@ -52,10 +52,7 @@ private[ranger] object DeltaRangerOrdinaryRead {
     }
     private val intent = binding(original)
     private val cleanedIntent = binding(cleanDatasetReferences(original))
-    private val registrations = plan.collect { case relation: LogicalRelation =>
-      val scan = DeltaRangerReadRule.canonical(relation)
-      catalogs(scan).registrationBindings().resolve(relation)
-    }
+    private val registrations = DeltaRangerInputSources.inventory(plan, spark, catalogs)
     if (registrations.isEmpty) denied("missing named occurrence")
 
     def validate(candidate: LogicalPlan, session: SparkSession, remap: Boolean = false): Unit = {
@@ -75,7 +72,7 @@ private[ranger] object DeltaRangerOrdinaryRead {
           denied("original intent changed")
       }
       unchanged()
-      registrations.foreach(_.recheckPublication())
+      registrations.foreach(_.recheck())
       unchanged()
     }
 
@@ -144,6 +141,18 @@ private[ranger] object DeltaRangerOrdinaryRead {
       .getOrElse(denied("missing origin"))
       .origin
       .validate(plan, spark, remap = true)
+  }
+
+  def authoredDemands(plan: LogicalPlan, spark: SparkSession): Vector[Set[String]] = {
+    check(plan, spark)
+    val origin = plan.getTagValue(tag).get.origin
+    DeltaRangerInputSources
+      .extract(
+        DeltaRangerOrdinaryAdmission.authoredDemandPlan(plan),
+        spark,
+        origin.catalogs
+      )
+      .map(_._2)
   }
 
   def normalize(plan: LogicalPlan, spark: SparkSession): Option[LogicalPlan] = {

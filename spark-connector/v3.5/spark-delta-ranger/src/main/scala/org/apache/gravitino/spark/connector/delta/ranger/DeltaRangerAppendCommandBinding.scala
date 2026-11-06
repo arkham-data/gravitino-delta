@@ -174,8 +174,8 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
     target.requireRetained()
     target.requireLive()
     sourceReceipt.obligations.foreach { obligation =>
-      obligation.binding.requireRetained()
-      obligation.binding.requireLive()
+      obligation.source.requireRetained()
+      obligation.source.requireLive()
     }
     shape.requireSame(candidate, session)
     context.requireCurrent(session)
@@ -209,7 +209,7 @@ private[ranger] object DeltaRangerAppendCommandBinding {
     val sourceReceipt =
       DeltaRangerDecisionReceipt.consumeOwned(command.query, spark, optimized = false)
     if (sourceReceipt.obligations.isEmpty) denied("missing original source obligations")
-    val engines = (Vector(target.engine()) ++ sourceReceipt.obligations.map(_.binding.engine()))
+    val engines = (Vector(target.engine()) ++ sourceReceipt.obligations.map(_.source.engine))
       .foldLeft(Vector.empty[DeltaRangerPolicyEngine]) { (all, engine) =>
         if (all.exists(_ eq engine)) all else all :+ engine
       }

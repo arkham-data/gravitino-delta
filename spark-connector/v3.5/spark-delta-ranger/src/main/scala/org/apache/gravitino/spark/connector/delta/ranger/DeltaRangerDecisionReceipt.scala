@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.execution.SparkOptimizer
 import org.apache.spark.sql.execution.columnar.InMemoryRelation
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.UTF8String
@@ -75,6 +76,12 @@ private[ranger] final class DeltaRangerDecisionReceipt private (
     })
   }
 
+  /** Retains this exact original receipt after the complete qualified prefix loses root tags. */
+  private[ranger] def retainOptimized(candidate: LogicalPlan, session: SparkSession): Unit = {
+    consume(candidate, session, optimized = true)
+    candidate.setTagValue(tag, new Reference(this))
+  }
+
   /** Derives a helper recipe while retaining every original policy obligation. */
   private[ranger] def forHelper(approved: LogicalPlan): DeltaRangerDecisionReceipt = {
     revalidate()
@@ -87,11 +94,11 @@ private[ranger] final class DeltaRangerDecisionReceipt private (
     requireConfiguration()
     requireSubjectAndEngines()
     if (binding(original) != analyzed) denied("retained logical binding changed")
-    val observations = obligations.map(_.binding.validateCurrent(session))
+    val observations = obligations.map(_.source.observe(session))
     val actionTime = Instant.now()
     // Occurrences deliberately remain distinct, including self joins and optimized-away scans.
     obligations.foreach { obligation =>
-      val scan = obligation.scan
+      val scan = obligation.source
       DeltaRangerResourceKey
         .select(
           scan.catalog,
@@ -101,13 +108,13 @@ private[ranger] final class DeltaRangerDecisionReceipt private (
           scan.owner.orNull
         )
         .asScala
-        .foreach(key => obligation.binding.engine().authorize(subject, key, actionTime))
+        .foreach(key => obligation.source.engine.authorize(subject, key, actionTime))
     }
     obligations.foreach { obligation =>
       val current = DeltaRangerMaskRules.capture(
-        obligation.scan,
+        obligation.source,
         obligation.columns,
-        obligation.binding.engine(),
+        obligation.source.engine,
         subject,
         actionTime
       )
@@ -117,16 +124,16 @@ private[ranger] final class DeltaRangerDecisionReceipt private (
         denied("action decision changed")
     }
     obligations.zip(observations).foreach { case (obligation, before) =>
-      before.requireSame(obligation.binding.validateCurrent(session))
+      before()
     }
     if (binding(original) != analyzed) denied("retained logical binding changed")
     requireSubjectAndEngines()
     requireConfiguration()
-    obligations.foreach(_.binding.requireLive())
+    obligations.foreach(_.source.requireLive())
   }
 
   def revalidate(checkCandidate: () => Unit = () => ()): Unit = {
-    obligations.foreach(_.binding.recheckPublication())
+    obligations.foreach(_.source.recheck())
     // Reader callbacks and shared mutable literal payloads cannot change already-compared trees.
     if (binding(original) != analyzed) denied("retained logical binding changed")
     checkCandidate()
@@ -149,12 +156,27 @@ private[ranger] final class DeltaRangerDecisionReceipt private (
 
 private[ranger] object DeltaRangerDecisionReceipt {
   final class Obligation(
-      val scan: DeltaRangerReadRule.Scan,
+      val source: DeltaRangerInputSources.Source,
       val columns: Set[String],
-      val binding: DeltaRangerRegistrationBindings.BoundRegistrationScan,
       val decisions: DeltaRangerMaskRules.Decisions
   ) {
-    override def toString: String = "Original Delta scan obligation"
+    def this(
+        scan: DeltaRangerReadRule.Scan,
+        columns: Set[String],
+        binding: DeltaRangerRegistrationBindings.BoundRegistrationScan,
+        decisions: DeltaRangerMaskRules.Decisions
+    ) =
+      this(new DeltaRangerInputSources.NamedDelta(scan, binding), columns, decisions)
+    // Delta-only consumers explicitly request these views; JDBC cannot manufacture either.
+    def scan: DeltaRangerReadRule.Scan = source match {
+      case delta: DeltaRangerInputSources.NamedDelta => delta.scan
+      case _                                         => denied("JDBC source has no Delta scan")
+    }
+    def binding: DeltaRangerRegistrationBindings.BoundRegistrationScan = source match {
+      case delta: DeltaRangerInputSources.NamedDelta => delta.binding
+      case _ => denied("JDBC source has no Delta storage authority")
+    }
+    override def toString: String = "Original governed source obligation"
   }
 
   final class Reference(@transient private val authority: DeltaRangerDecisionReceipt)
@@ -177,14 +199,13 @@ private[ranger] object DeltaRangerDecisionReceipt {
   // RemoveRedundantAliases rebuilds a root Join without its tags on both pinned Spark patches.
   // Only ordinary completed-query authorization calls this locator issuer. Leaves carry the
   // existing inert reference, never independent authority for their subtree.
-  def retainOrdinaryJoinReceipt(plan: LogicalPlan): Unit = plan match {
-    case _: Join =>
+  def retainOrdinaryJoinReceipt(plan: LogicalPlan): Unit = {
+    val jdbcJoin =
+      plan.exists(_.isInstanceOf[DataSourceV2Relation]) && plan.exists(_.isInstanceOf[Join])
+    if (plan.isInstanceOf[Join] || jdbcJoin) {
       val reference = plan.getTagValue(tag).getOrElse(denied("missing receipt"))
-      plan.foreach {
-        case relation: LogicalRelation => relation.setTagValue(joinLocator, reference)
-        case _                         =>
-      }
-    case _ =>
+      DeltaRangerInputSources.leaves(plan).foreach(_.setTagValue(joinLocator, reference))
+    }
   }
 
   // RemoveNoopOperators can return an existing Sort after removing its root Project.
@@ -199,7 +220,7 @@ private[ranger] object DeltaRangerDecisionReceipt {
   }
 
   def ordinaryJoin(plan: LogicalPlan, receipt: DeltaRangerDecisionReceipt): Boolean = {
-    val scans = plan.collect { case relation: LogicalRelation => relation }
+    val scans = DeltaRangerInputSources.leaves(plan)
     plan.isInstanceOf[Join] && scans.nonEmpty && scans.forall(
       _.getTagValue(joinLocator).exists(_.receipt eq receipt)
     )
@@ -247,7 +268,7 @@ private[ranger] object DeltaRangerDecisionReceipt {
   ): DeltaRangerDecisionReceipt = {
     val receipt = plan.getTagValue(tag).map(_.receipt).getOrElse {
       if (!optimized || !plan.isInstanceOf[Join]) denied("missing receipt")
-      val scans = plan.collect { case relation: LogicalRelation => relation }
+      val scans = DeltaRangerInputSources.leaves(plan)
       if (scans.isEmpty || scans.exists(_.getTagValue(joinLocator).isEmpty))
         denied("missing join receipt locator")
       val receipts = scans.map(_.getTagValue(joinLocator).get.receipt).distinct
@@ -387,6 +408,10 @@ private[ranger] object DeltaRangerDecisionReceipt {
 
   private[ranger] def binding(plan: LogicalPlan): Vector[Any] = {
     val details: Any = plan match {
+      case relation: org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation =>
+        DeltaRangerJdbcScans.logicalBinding(relation)
+      case relation: org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation =>
+        DeltaRangerJdbcScans.binding(relation)
       case relation: LogicalRelation if relation.getClass == classOf[LogicalRelation] =>
         relation.relation match {
           case fs: HadoopFsRelation =>

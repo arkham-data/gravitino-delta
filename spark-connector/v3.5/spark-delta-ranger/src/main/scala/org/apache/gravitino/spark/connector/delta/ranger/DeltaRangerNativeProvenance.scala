@@ -438,6 +438,23 @@ private[ranger] object DeltaRangerNativeProvenance {
   }
 
   private[ranger] def binding(plan: LogicalPlan): Vector[Any] = {
+    plan match {
+      case scan: org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation =>
+        return Vector(
+          plan.getClass,
+          DeltaRangerJdbcScans.binding(scan),
+          plan.output.map(value).toVector
+        )
+      case relation: org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+          if relation.table
+            .isInstanceOf[org.apache.gravitino.spark.connector.jdbc.SparkJdbcTable] =>
+        return Vector(
+          plan.getClass,
+          DeltaRangerJdbcScans.logicalBinding(relation),
+          plan.output.map(value).toVector
+        )
+      case _ =>
+    }
     val backing: Any = plan match {
       case rdd: LogicalRDD => new Identity(rdd.rdd)
       case relation: LogicalRelation =>

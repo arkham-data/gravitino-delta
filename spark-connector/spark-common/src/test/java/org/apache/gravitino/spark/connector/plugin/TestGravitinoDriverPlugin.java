@@ -52,6 +52,35 @@ public class TestGravitinoDriverPlugin {
       "org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35";
 
   @Test
+  void testRegisteredJdbcOptInRequiresDeltaRangerAndSelectsOnlyPostgresql() {
+    String jdbc = "spark.gravitino.enableDeltaRangerJdbcSupport";
+    String wrapper =
+        "org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerPostgreSqlCatalogSpark35";
+    SparkConf conf = new SparkConf(false).set(jdbc, "true");
+    List<String> loaded = new ArrayList<>();
+    GravitinoDriverPlugin plugin = new GravitinoDriverPlugin(() -> DELTA_CATALOG, loaded::add);
+    assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(conf));
+    conf.set("spark.gravitino.enableDeltaSupport", "true");
+    assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(conf));
+    conf.set("spark.gravitino.enableDeltaRangerSupport", "true");
+    plugin.configureDeltaSupport(conf);
+    assertTrue(loaded.contains(wrapper));
+    Catalog postgres = Mockito.mock(Catalog.class);
+    Mockito.when(postgres.provider()).thenReturn("jdbc-postgresql");
+    plugin.registerGravitinoCatalogs(conf, Collections.singletonMap("source", postgres));
+    assertEquals(wrapper, conf.get("spark.sql.catalog.source"));
+    Catalog mysql = Mockito.mock(Catalog.class);
+    Mockito.when(mysql.provider()).thenReturn("jdbc-mysql");
+    plugin.registerGravitinoCatalogs(conf, Collections.singletonMap("other", mysql));
+    assertFalse(wrapper.equals(conf.get("spark.sql.catalog.other")));
+    SparkConf disabled = deltaEnabledConf().set("spark.gravitino.enableDeltaRangerSupport", "true");
+    GravitinoDriverPlugin ordinary = new GravitinoDriverPlugin(() -> DELTA_CATALOG, name -> {});
+    ordinary.configureDeltaSupport(disabled);
+    ordinary.registerGravitinoCatalogs(disabled, Collections.singletonMap("source", postgres));
+    assertFalse(wrapper.equals(disabled.get("spark.sql.catalog.source")));
+  }
+
+  @Test
   void testDeltaRangerDiscoveryRegistersOnlyApplicationVisibleCatalogs() {
     SparkConf conf = deltaEnabledConf().set("spark.gravitino.enableDeltaRangerSupport", "true");
     GravitinoDriverPlugin plugin = new GravitinoDriverPlugin(() -> DELTA_CATALOG, name -> {});

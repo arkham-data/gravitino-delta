@@ -798,7 +798,7 @@
       ],
       "settings": {},
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
-      "expectedOutcome": "Preserve external/constructed inputs, input schema, primary key and native table properties; qualify owned create/publish and original commit outcomes before shared-sink adoption.",
+      "expectedOutcome": "Preserve external/constructed inputs, input schema, primary key and native table properties; qualify owned create/publish and original commit outcomes before shared-sink adoption. Registered PostgreSQL named-source execution has separate installed Task 2 characterization in docs/superpowers/specs/2026-11-05-delta-registered-jdbc-results.md; actual-service qualification, external JDBC and this create/shared-sink workload remain open.",
       "status": "connector-gap",
       "evidenceRefs": [
         "writer",
