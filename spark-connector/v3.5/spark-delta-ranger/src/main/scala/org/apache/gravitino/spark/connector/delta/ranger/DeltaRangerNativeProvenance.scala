@@ -99,6 +99,9 @@ private[ranger] object DeltaRangerNativeProvenance {
         expected: DeltaRangerNativeOperation
     ): Boolean = (operation eq expected) && cache.isEmpty
 
+    def ownedByCommit(owner: DeltaRangerNativeOperation.CommitOwner): Boolean =
+      operation.ownedBy(owner)
+
     def requireValid(plan: LogicalPlan, session: SparkSession): Unit = {
       operation.requireEvidence(session)
       if (operation.rawOwner() != null && !operation.active())

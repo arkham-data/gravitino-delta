@@ -114,6 +114,8 @@ private[ranger] object DeltaRangerPhysicalPlanning {
     private val executable = new LogicalWitness(plan, spark)
     def requireSession(session: SparkSession): Unit =
       if (!(session eq spark)) denied("native planning session changed")
+    def ownedByCommit(owner: DeltaRangerNativeOperation.CommitOwner): Boolean =
+      authority.ownedByCommit(owner)
     def requireLive(): Unit = authority.requireValid(original, spark)
     def replay(): LogicalPlan =
       executable.replay(spark, plan => authority.requireValid(plan, spark))

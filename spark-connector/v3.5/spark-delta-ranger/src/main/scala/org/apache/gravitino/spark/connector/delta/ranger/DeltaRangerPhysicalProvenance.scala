@@ -287,6 +287,8 @@ private[ranger] object DeltaRangerPhysicalProvenance {
     private val expectedBinding = binding(expected)
     private val rawBinding = binding(raw)
     private val subtrees = nodes(expected).map(binding).toSet
+    def ownedByCommit(owner: DeltaRangerNativeOperation.CommitOwner): Boolean =
+      native.ownedByCommit(owner)
     override def requireSession(session: SparkSession): Unit = native.requireSession(session)
     override def verify(plan: SparkPlan): Unit = {
       native.requireLive()
@@ -468,9 +470,11 @@ private[ranger] object DeltaRangerPhysicalProvenance {
         user.prepareInputs(plan)
         DeltaRangerCollectGuardExec(plan)(user)
       case native: NativeTicket =>
+        // Keep one guarded collection root; verified AQE stages must remain exchanges.
         if (
           spark.sessionState.conf.adaptiveExecutionEnabled &&
-          (DeltaRangerMergeCommit.current.nonEmpty || DeltaRangerAppendCommit.current.nonEmpty) &&
+          (DeltaRangerMergeCommit.current.nonEmpty || DeltaRangerAppendCommit.current.nonEmpty ||
+            DeltaRangerCdfPropertyMutation.current.exists(native.ownedByCommit)) &&
           !native.installCommitBoundary()
         ) return plan
         DeltaRangerRawMetadata.current.foreach { metadata =>

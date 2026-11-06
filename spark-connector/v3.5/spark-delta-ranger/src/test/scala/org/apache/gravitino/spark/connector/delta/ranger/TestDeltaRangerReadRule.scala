@@ -487,7 +487,8 @@ private[ranger] object NativeSelectFixture {
       beforeExtension: SparkSession => Unit = _ => (),
       clearNativeCacheBeforeExtension: Boolean = true,
       initialData: (String, DataFrame) => DataFrame = (_, data) => data,
-      initialPartitions: Map[String, Seq[String]] = Map.empty
+      initialPartitions: Map[String, Seq[String]] = Map.empty,
+      snapshotPartitions: Option[Int] = Some(2)
   ): Unit = {
     val directory = Files.createTempDirectory("delta-ranger-native")
     locations = Seq("a", "b", "q").map(c => c -> directory.resolve(c).toString).toMap
@@ -516,7 +517,6 @@ private[ranger] object NativeSelectFixture {
       // Installed user collection is qualified with AQE off. Dedicated native tests enable it.
       .config("spark.sql.adaptive.enabled", "false")
       .config("spark.sql.shuffle.partitions", "2")
-      .config("spark.databricks.delta.snapshotPartitions", "2")
       .config("spark.sql.warehouse.dir", directory.resolve("warehouse").toString)
       .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
@@ -524,6 +524,9 @@ private[ranger] object NativeSelectFixture {
       .config("spark.sql.catalog.a", classOf[NativeSelectTestCatalog].getName)
       .config("spark.sql.catalog.b", classOf[NativeSelectTestCatalog].getName)
       .config("spark.sql.catalog.q", classOf[NativeSelectTestCatalog].getName)
+    snapshotPartitions.foreach(value =>
+      builder.config("spark.databricks.delta.snapshotPartitions", value)
+    )
     startupOptions.foreach { case (key, value) => builder.config(key, value) }
     var spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel("WARN")

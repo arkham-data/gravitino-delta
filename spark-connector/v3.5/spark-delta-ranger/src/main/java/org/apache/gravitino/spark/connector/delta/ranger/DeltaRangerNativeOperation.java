@@ -483,6 +483,10 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     return scanOwner == owner;
   }
 
+  boolean ownedBy(CommitOwner owner) {
+    return owner != null && commitOwner == owner;
+  }
+
   void invalidate() {
     invalid = true;
   }
