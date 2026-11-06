@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
@@ -151,6 +152,42 @@ final class RegisteredJdbcPostgresFixture implements AutoCloseable {
 
   String password() {
     return password;
+  }
+
+  // Test-only lock lets native schema discovery overlap scope closure deterministically.
+  Connection blockTypedSchema() throws Exception {
+    String admin = Files.readAllLines(environment).get(0).substring("POSTGRES_PASSWORD=".length());
+    Connection connection = DriverManager.getConnection(url, "postgres", admin);
+    try {
+      connection.setAutoCommit(false);
+      try (Statement statement = connection.createStatement()) {
+        statement.execute("LOCK TABLE public.source_typed IN ACCESS EXCLUSIVE MODE");
+      }
+      return connection;
+    } catch (Exception failure) {
+      connection.close();
+      throw failure;
+    }
+  }
+
+  int blockedSchemaReads() throws Exception {
+    String admin = Files.readAllLines(environment).get(0).substring("POSTGRES_PASSWORD=".length());
+    try (Connection connection = DriverManager.getConnection(url, "postgres", admin);
+        Statement statement = connection.createStatement();
+        ResultSet result =
+            statement.executeQuery(
+                "SELECT count(*) FROM pg_stat_activity WHERE usename='extractor' AND wait_event_type='Lock'")) {
+      result.next();
+      return result.getInt(1);
+    }
+  }
+
+  int schemaReads() throws Exception {
+    return (int)
+        command("docker", "logs", name)
+            .lines()
+            .filter(line -> line.contains("SELECT") && line.contains("WHERE 1=0"))
+            .count();
   }
 
   int payloadReads() throws Exception {

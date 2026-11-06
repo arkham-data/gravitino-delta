@@ -164,3 +164,17 @@ tasks.test {
     )
   }
 }
+
+// Explicit opt-in for the isolated external PostgreSQL construction fixture.
+val externalJdbcTests = providers.gradleProperty("rangerDeltaExternalJdbcEnabled").orNull == "true"
+if (externalJdbcTests) {
+  require(providers.gradleProperty("skipDockerTests").orNull == "false") {
+    "External JDBC fixture requires -PskipDockerTests=false"
+  }
+}
+tasks.test {
+  if (externalJdbcTests) {
+    extensions.extraProperties["gravitinoExternalTestEndpoints"] = true
+    systemProperty("gravitino.ranger.delta.externalJdbc.enabled", "true")
+  }
+}

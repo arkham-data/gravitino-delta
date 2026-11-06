@@ -41,6 +41,10 @@ public class GravitinoSparkConfig {
   public static final String GRAVITINO_ENABLE_DELTA_RANGER_JDBC_SUPPORT =
       "spark.gravitino.enableDeltaRangerJdbcSupport";
 
+  /** Enables the finite, job-scoped native external PostgreSQL reader at Spark startup. */
+  public static final String GRAVITINO_ENABLE_DELTA_RANGER_EXTERNAL_JDBC_SUPPORT =
+      "spark.gravitino.enableDeltaRangerExternalJdbcSupport";
+
   public static final String GRAVITINO_CLIENT_CONFIG_PREFIX = GRAVITINO_PREFIX + "client.";
 
   /**
