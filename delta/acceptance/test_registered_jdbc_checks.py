@@ -228,6 +228,105 @@ class TestRegisteredJdbcChecks(unittest.TestCase):
         with self.assertRaises(AssertionError):
             verify_timestamp_bounds([[0, "seed", "seed", None, None]], "UTC", 0, 2)
 
+    def test_postgres_counts_include_lowercase_stock_probes_only_once(self):
+        from registered_jdbc_checks import postgres_counts
+
+        def record(sql, role="extractor", kind="execute <unnamed>"):
+            return "2026-11-06 00:34:24.567 UTC [206] " + role + "@owned LOG:  " + kind + ": " + sql + "\n"
+        text = record("select current_catalog") + record("select current_schema()", "extractor_rotated")
+        self.assertEqual(dict(metadataQueries=2, payloadQueries=0), postgres_counts(text))
+        text += record('SeLeCt "id" FrOm "source_schema"."source"', kind="statement")
+        text += record('select * from source_schema.source where 1 = 0', kind="statement")
+        text += record("SELECT 1", "postgres")
+        text += record("SET application_name = 'SELECT FROM source_schema.source'")
+        text += "2026-11-06 00:34:24.568 UTC [206] extractor@owned DETAIL:  SELECT FROM source_schema.source\n"
+        text += "extractor@owned LOG: statement: SELECT FROM source_schema.source\n"
+        self.assertEqual(dict(metadataQueries=3, payloadQueries=1), postgres_counts(text))
+        self.assertEqual(dict(metadataQueries=0, payloadQueries=1), postgres_counts(record(
+            'select id\nfrom source_schema.source_view', kind="statement")))
+
+    def sql_correction_fixture(self, directory):
+        import json
+        from cdf_merge_live_checks import file_ref
+
+        def save(name, value):
+            path = Path(directory) / name
+            path.write_text(json.dumps(value) if not isinstance(value, str) else value)
+            return file_ref(path)
+        prefix = "2026-11-06 00:34:24.567 UTC [206] extractor@owned LOG:  execute <unnamed>: "
+        old = prefix + "SELECT 1\n"
+        new = old + prefix + "select current_catalog\n" + prefix + "select current_schema()\n"
+        new += prefix + 'SELECT * FROM "source_schema"."source" WHERE 1=0\n'
+        new += prefix + 'SELECT "id" FROM "source_schema"."source"\n'
+        empty = save("stdout", "")
+        before = save("before.json", dict(metadataQueries=1, payloadQueries=0,
+                      logStdout=empty, logStderr=save("before.log", old)))
+        after = save("after.json", dict(metadataQueries=2, payloadQueries=1,
+                     logStdout=empty, logStderr=save("after.log", new)))
+        case = dict(name="jdbc_insert_into", postgresBefore=before, postgresAfter=after,
+                    actions=[dict(action="first", postgresBefore=before, postgresAfter=after,
+                                  metadataQueries=1, payloadQueries=1)])
+        return case, save
+
+    def test_sql_correction_requires_original_counts_and_log_suffix_hashes(self):
+        from registered_jdbc_checks import postgres_case_evidence
+
+        with tempfile.TemporaryDirectory() as directory:
+            case, save = self.sql_correction_fixture(directory)
+            with self.assertRaises(AssertionError):
+                postgres_case_evidence(case)
+            evidence = postgres_case_evidence(case, original_classifier=True)
+            self.assertEqual(dict(metadataQueries=1, payloadQueries=1), evidence["actions"][0]["recorded"])
+            self.assertEqual(dict(metadataQueries=3, payloadQueries=1), evidence["actions"][0]["derived"])
+            for key in ("metadataQueries", "payloadQueries"):
+                bad = copy.deepcopy(case)
+                bad["actions"][0][key] += 1
+                with self.subTest(key=key), self.assertRaises(AssertionError):
+                    postgres_case_evidence(bad, original_classifier=True)
+            import json
+            bad = copy.deepcopy(case)
+            altered = json.loads(Path(directory, "before.json").read_text())
+            altered["logStderr"] = save("different-prefix.log", Path(directory, "before.log").read_text().replace("SELECT 1", "SELECT 2"))
+            bad["actions"][0]["postgresBefore"] = save("different-prefix.json", altered)
+            with self.assertRaisesRegex(AssertionError, "replaced or truncated"):
+                postgres_case_evidence(bad, original_classifier=True)
+            Path(directory, "after.log").write_text("replaced")
+            with self.assertRaises(AssertionError):
+                postgres_case_evidence(case, original_classifier=True)
+
+    def test_sql_correction_cannot_relabel_original_case_or_counts(self):
+        from registered_jdbc_checks import postgres_case_evidence, verify_sql_correction
+
+        with tempfile.TemporaryDirectory() as directory:
+            case, save = self.sql_correction_fixture(directory)
+            original = dict(cases=[case], spark="3.5.6", delta="3.3.2")
+            correction = dict(scope="registered-jdbc-sql-count-correction-v1",
+                              originalResult=save("raw.json", original),
+                              cases=[postgres_case_evidence(case, original_classifier=True)])
+            result = dict(original, sqlCountCorrection=save("correction.json", correction))
+            verify_sql_correction(result)
+            mutations = []
+            for path, value in [(('scope',), 'wrong'), (('cases',), []),
+                                (('cases', 0, 'actions'), []),
+                                (('cases', 0, 'actions', 0, 'recorded', 'metadataQueries'), 3),
+                                (('cases', 0, 'actions', 0, 'derived', 'metadataQueries'), 1),
+                                (('cases', 0, 'actions', 0, 'derived', 'payloadQueries'), 0),
+                                (('cases', 0, 'actions', 0, 'suffixes', 'logStderr', 'sha256'), 'wrong')]:
+                changed = copy.deepcopy(correction)
+                target = changed
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                mutations.append(changed)
+            for index, changed in enumerate(mutations):
+                bad = dict(result, sqlCountCorrection=save('bad-' + str(index) + '.json', changed))
+                with self.subTest(index=index), self.assertRaises(AssertionError):
+                    verify_sql_correction(bad)
+            bad = copy.deepcopy(result)
+            bad['cases'][0]['actions'][0]['metadataQueries'] = 3
+            with self.assertRaises(AssertionError):
+                verify_sql_correction(bad)
+
     def test_original_artifact_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "original"

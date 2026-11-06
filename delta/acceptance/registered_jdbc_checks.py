@@ -170,12 +170,106 @@ def verify_case(case):
 
 
 def postgres_counts(text):
-    """Classify stock source-role JDBC SQL independently of observer/admin traffic."""
+    """Count timestamped source-role SQL records, including lowercase stock probes."""
+    import re
+
+    timestamp = r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)? \S+ "
+    records = re.finditer(timestamp + r"\[\d+\] (?P<role>\S+)@\S+ (?P<message>.*?)"
+                          + r"(?=" + timestamp + r"|\Z)", text, re.MULTILINE | re.DOTALL)
+    statements = []
+    for record in records:
+        if record["role"] not in ("extractor", "extractor_rotated"):
+            continue
+        message = re.match(r"LOG:\s+(?:statement:|execute [^:\n]+:)\s*(.*)",
+                           record["message"], re.DOTALL)
+        if message and re.match(r"SELECT\b", message[1], re.IGNORECASE):
+            statements.append(message[1])
+    payload = [sql for sql in statements
+               if re.search(r'\bFROM\s+(?:"source_schema"|source_schema)\s*\.\s*(?:"source(?:_view)?"|source(?:_view)?)(?=\s|;|$)', sql, re.IGNORECASE)
+               and not re.search(r"\bWHERE\s+1\s*=\s*0\b", sql, re.IGNORECASE)]
+    return dict(payloadQueries=len(payload), metadataQueries=len(statements) - len(payload))
+
+
+def _original_postgres_counts(text):
+    """Reproduce the superseded classifier only to authenticate historical counters."""
     import re
 
     lines = [line for line in text.splitlines() if (" extractor@" in line or " extractor_rotated@" in line) and "SELECT" in line]
     payload = [line for line in lines if re.search(r'FROM (?:"source_schema"|source_schema)\.(?:"source(?:_view)?"|source(?:_view)?)(?:\s|$)', line) and "WHERE 1=0" not in line]
     return dict(payloadQueries=len(payload), metadataQueries=len(lines) - len(payload))
+
+
+def postgres_case_evidence(case, original_classifier=False):
+    """Derive counts from hashed originals without replacing their recorded counters."""
+    import hashlib
+    from pathlib import Path
+    from cdf_merge_live_checks import read_ref
+
+    keys = ("metadataQueries", "payloadQueries")
+    classifier = _original_postgres_counts if original_classifier else postgres_counts
+
+    def snapshot(reference):
+        value = read_ref(reference)
+        streams = {}
+        for stream in ("logStdout", "logStderr"):
+            verify_artifact(value[stream])
+            streams[stream] = Path(value[stream]["path"]).read_bytes()
+        text = "\n".join(stream.decode() for stream in streams.values())
+        recorded = {key: value[key] for key in keys}
+        derived = postgres_counts(text)
+        assert classifier(text) == recorded, "Original snapshot counters do not match their classifier"
+        assert recorded["payloadQueries"] == derived["payloadQueries"], "Payload counts cannot be corrected"
+        return dict(original=reference, recorded=recorded, derived=derived), value, streams
+
+    snapshots = [snapshot(case[label])[0] for label in ("postgresBefore", "postgresAfter")]
+    actions = []
+    for action in case["actions"]:
+        before, old, old_streams = snapshot(action["postgresBefore"])
+        after, new, new_streams = snapshot(action["postgresAfter"])
+        suffixes = {}
+        texts = []
+        for stream in old_streams:
+            assert new_streams[stream].startswith(old_streams[stream]), "PostgreSQL log was replaced or truncated"
+            suffix = new_streams[stream][len(old_streams[stream]):]
+            suffixes[stream] = dict(before=old[stream], after=new[stream], bytes=len(suffix),
+                                    sha256=hashlib.sha256(suffix).hexdigest())
+            texts.append(suffix.decode())
+        text = "\n".join(texts)
+        recorded = {key: action[key] for key in keys}
+        derived = postgres_counts(text)
+        assert classifier(text) == recorded, "Original action counters do not match their classifier"
+        assert recorded["payloadQueries"] == derived["payloadQueries"], "Payload counts cannot be corrected"
+        for key in keys:
+            assert after["derived"][key] - before["derived"][key] == derived[key]
+            assert after["recorded"][key] - before["recorded"][key] == recorded[key]
+        if case["name"] == "jdbc_view_rejected" and action["action"] == "first":
+            assert "source\\_view" in text or "source_view" in text
+            assert "pg_catalog.pg_class" in text, "Missing actual JDBC table-kind metadata SQL"
+            assert "FATAL:" not in text and "ERROR:" not in text, "Database failure cannot prove a physical-table guard"
+        actions.append(dict(action=action["action"], before=before, after=after,
+                            recorded=recorded, derived=derived, suffixes=suffixes))
+    for key in keys:
+        for label in ("recorded", "derived"):
+            assert snapshots[1][label][key] - snapshots[0][label][key] == sum(action[label][key] for action in actions)
+    return dict(name=case["name"], snapshots=snapshots, actions=actions)
+
+
+def verify_sql_correction(result):
+    """Require explicit derived correction provenance and unchanged original case arrays."""
+    from cdf_merge_live_checks import read_ref
+
+    if "sqlCountCorrection" not in result:
+        for case in result["cases"]:
+            postgres_case_evidence(case)
+        return
+    correction = read_ref(result["sqlCountCorrection"])
+    assert set(correction) == {"scope", "originalResult", "cases"}
+    assert correction["scope"] == "registered-jdbc-sql-count-correction-v1"
+    original = read_ref(correction["originalResult"])
+    derived_fields = {"sqlCountCorrection", "revalidationSourceDelta", "supervisorExit"}
+    assert not derived_fields.intersection(original)
+    assert original == {key: value for key, value in result.items() if key not in derived_fields}, "Original result was relabeled"
+    assert correction["cases"] == [postgres_case_evidence(case, original_classifier=True) for case in original["cases"]]
 
 
 def verify_cell(result):
@@ -186,6 +280,7 @@ def verify_cell(result):
     from cdf_read_live_package import verify_runtime, _verify_runtime_artifacts, capture_sources, ROOT, sha
     from append_aqe_public import verify_public_transition
 
+    verify_sql_correction(result)
     runtime = read_ref(result["runtime"])
     if result.get("revalidationSourceDelta"):
         verify_source_delta(runtime["sourceInputs"], capture_sources(ROOT), read_ref(result["revalidationSourceDelta"]))
@@ -281,34 +376,6 @@ def verify_cell(result):
             assert observed["jar"] == runtime["providers"][name]
             assert observed["jarSha256"] == runtime["jarHashes"][observed["jar"]]
             assert observed["classSha256"] == runtime["providerClasses"][name]
-        states = []
-        for label in ("postgresBefore", "postgresAfter"):
-            value = read_ref(case[label])
-            texts = []
-            for stream in ("logStdout", "logStderr"):
-                verify_artifact(value[stream])
-                texts.append(Path(value[stream]["path"]).read_text())
-            counts = postgres_counts("\n".join(texts))
-            assert counts == {key: value[key] for key in counts}
-            states.append(counts)
-        for action in case["actions"]:
-            previous = read_ref(action["postgresBefore"])
-            current = read_ref(action["postgresAfter"])
-            delta = []
-            for stream in ("logStdout", "logStderr"):
-                verify_artifact(previous[stream]); verify_artifact(current[stream])
-                old_text = Path(previous[stream]["path"]).read_text()
-                new_text = Path(current[stream]["path"]).read_text()
-                assert new_text.startswith(old_text), "PostgreSQL log was replaced or truncated"
-                delta.append(new_text[len(old_text):])
-            observed_sql = "\n".join(delta)
-            assert postgres_counts(observed_sql) == {key: action[key] for key in ("payloadQueries", "metadataQueries")}
-            if case["name"] == "jdbc_view_rejected" and action["action"] == "first":
-                assert "source\\_view" in observed_sql or "source_view" in observed_sql
-                assert "pg_catalog.pg_class" in observed_sql, "Missing actual JDBC table-kind metadata SQL"
-                assert "FATAL:" not in observed_sql and "ERROR:" not in observed_sql, "Database failure cannot prove a physical-table guard"
-        for key in ("payloadQueries", "metadataQueries"):
-            assert states[1][key] - states[0][key] == sum(action[key] for action in case["actions"])
         images = [read_ref(case[label]) for label in ("before", "after")]
         for image in images:
             native = read_ref(image["nativeEvidence"])

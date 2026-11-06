@@ -300,16 +300,31 @@ receipts remain retained. No committed or uncertain write was replayed.
 
 This is functional qualification of the bounded registered PostgreSQL profile,
 not a performance qualification. In the instrumented lead insertion, the original
-log suffix contains one payload SELECT and 1,334 metadata SELECT statements:
+log suffix contains one payload SELECT and 1,778 metadata SELECT statements:
 444 stock getTables/TABLE_TYPE, 445 column-metadata, 222 other table-metadata,
-222 other metadata and one zero-row schema query. These are individual PostgreSQL
+222 other metadata, 222 lowercase current_catalog probes, 222 lowercase
+current_schema() probes and one zero-row schema query. These are individual PostgreSQL
 messages, not repeated cumulative snapshots. Its full writer process took
-73.44 seconds. The mixed/cache case observed one payload and 3,140 metadata
+73.44 seconds. The mixed/cache case observed one payload and 4,186 metadata
 statements and took 304.16 seconds for the full process. These measurements
 include live harness/observer/helper verification and startup; they are neither
 isolated production-only payload timings nor a causal attribution of every query
 to production. They do not establish acceptable performance. No currentness or
 policy guard was weakened to reduce the observed cost.
+
+Task 3 review found that the original classifier omitted lowercase SELECT
+statements. Corrected counts above supersede the original 1,334 insertion and
+3,140 mixed metadata counts; the process durations are unchanged. The view
+rejection has two metadata SELECTs, including its lowercase catalog probe.
+`task-3-evidence/fix-1/matrix-corrected.json` references all twenty original
+actions' explicit recorded-to-derived corrections. Original raw results,
+counters, snapshots, logs and packages remain unchanged. The corrected checker
+rehashes timestamped source-role statement/execute records from each exact log
+suffix, preserves payload counts and publication proofs, and requires both an
+explicit correction artifact bound to the original result hash and a finite
+checker/tests/docs source delta. Twelve covering checker tests pass, including
+lowercase probes and rejected omissions, misclassifications, altered log prefixes
+and correction provenance. No live action was repeated.
 
 Installed tests retain JSON commits and file inventories, while their temporary
 Parquet files were inspected before cleanup and are not retained. Actual-service
