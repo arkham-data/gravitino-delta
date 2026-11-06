@@ -174,3 +174,21 @@ editing, `lineage.json` preserves its original reference, and
 verification process and `matrix-successor.json`. The original matrix and
 projections were not rewritten. The historical private-receipt limitation and
 original producer versus later evidence-helper distinction remain unchanged.
+
+## Milestone closure
+
+All four tasks and the final independent review passed on November 6, 2026.
+The reviewed implementation ends at Gravitino `e0c3836b6` and Spark Hub
+`5feaa5d1`; the subsequent closure commit changes documentation only. Final
+review found no Critical or Important issues. Three nonblocking followups remain
+for the next affected test change: assert the exact missing-thread-context denial,
+use explicit groups for the foreign test identity, and reduce fixture warning noise.
+The broad-exception thread negative is not used as proof of an exact denial cause.
+
+Current qualification uses the separate `task-4-fix1/validation-receipt.json`
+and `matrix-successor.json`. The original evidence and historical privacy limitation
+above remain unchanged. The full independent report and controller decisions are
+retained in the local milestone workspace as `final-review.md` and `progress.md`.
+The milestone is closed for publication of `codex/spark-hub-adoption-plan` and
+`codex/gravitino-catalog-foundation`; worktrees and private evidence are retained.
+No PR, merge, deployment or full Spark Hub ingestion completion is implied.
