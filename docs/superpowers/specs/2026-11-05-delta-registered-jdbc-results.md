@@ -99,8 +99,8 @@ policy enforcement during execution and ingestion remain pending later tasks.
 
 ## Task 2: installed registered-source execution
 
-Implemented against Task 1 commit `96e6a9299`, with source changes awaiting the
-controller's independent review and commit. This evidence uses real PostgreSQL
+Implemented against Task 1 commit `96e6a9299`, independently reviewed for spec
+and quality compliance, and committed as `ad2b22987`. This evidence uses real PostgreSQL
 16, stock Spark JDBC scans, native Delta execution and native target files.
 Gravitino metadata and Ranger transport remain test doubles. It does not close
 Task 3's four-pair live Gravitino/Ranger/MinIO matrix or Spark Hub adoption.
@@ -202,3 +202,125 @@ ledger are in `.superpowers/sdd/2026-11-05-delta-registered-jdbc/task-2-evidence
 and `task-2-report.md`. The coverage register's external-ingestion status remains
 `connector-gap` pending live qualification; only its expected-outcome note changed.
 No historical qualification matrix was replayed.
+
+
+## Task 3: actual-service functional qualification
+
+The exact seventeen-case inventory passed on all four pinned pairs on
+2026-11-05, with unchanged production sources from `ad2b22987`. Task and whole
+milestone review remain with the controller; this result is not a full JDBC,
+external-JDBC, Spark Hub or M2 completion claim.
+
+| Spark | Delta | Actual-service cases | Original supervisor exit |
+| --- | --- | ---: | ---: |
+| 3.5.6 | 3.3.2 | 8 lead cases | 0 |
+| 3.5.4 | 3.3.2 | 3 | 0 |
+| 3.5.6 | 3.3.0 | 3 | 0 |
+| 3.5.4 | 3.3.0 | 3 | 0 |
+
+Each pair uses actual Gravitino registration, Ranger server and client 2.8.0,
+S3A/MinIO, classic PySpark 3.5.x with Py4J 0.10.9.7 and pinned-thread identity,
+Java 17, Scala 2.12.21, and an owned PostgreSQL 16.14 database with stock JDBC
+42.7.11. The PostgreSQL image is pinned by content ID; no Ranger or unrelated
+database was used. A fresh shared server/base package includes the current
+Task 1 authorization and Task 2 common/plugin changes, PostgreSQL provider
+closure and explicit driver. Every pair has an independently bound overlay.
+Original server class-loading records and Spark class origins join the archived
+provider, driver, helper and dependency bytes. Python ZIP containers and members
+are also rehashed. Exact shared-production source equality was not bypassed.
+
+All pairs execute `jdbc_insert_into`, `jdbc_source_select_denied` and
+`jdbc_target_update_denied`. Public Gravitino source SELECT revoke/grant reaches
+the exact Ranger catalog/schema/table resource. Native `spark.table` input,
+projection/filter, direct `current_timestamp` columns and native
+`write.mode("append").insertInto` publish exactly one new Delta version with
+rows `(1, MASKED, allowed)` and `(3, MASKED, allowed)`. Both timestamp columns
+contain the same non-null query instant within the original writer lifetime.
+Genuine source SELECT and target UPDATE denials fetch no JDBC payload and publish
+no new Delta version; metadata discovery is observed separately.
+
+The lead's additional cases are:
+
+- `jdbc_mixed_save_as_table`: named JDBC/Delta INNER join and native existing-table
+  Delta `saveAsTable` APPEND. Both sources' policies apply. Fresh native queries
+  verify the updated target cache, repeated read and dependent projection.
+- `jdbc_column_composition`: three separately retained actions. Id-only access
+  succeeds while unused columns are not granted; a hidden-column predicate and
+  an optimized-empty original secret-column demand each fail before payload.
+- `jdbc_source_revoked_before_publish`: the original writer is held after payload,
+  a public source revoke is downloaded and applied, and publication fails through
+  the existing policy snapshot boundary. Uncommitted S3 payload remains retained.
+- `jdbc_config_changed_before_publish`: public catalog properties rotate to a
+  second valid owned read-only credential after payload. Current metadata equality
+  rejects the previously issued source before publication, with retained residue.
+- `jdbc_view_rejected`: a same-shaped view has genuine metadata/SELECT grants.
+  A distinct same-credential named physical-table control succeeds first. The
+  view's subsequent original stock table-kind SQL lookup, absence of database
+  errors and guarded load rejection establish the physical-TABLE boundary, with
+  no view payload or publication. A generic sanitized exception alone is not
+  accepted as this proof.
+
+Two owned PostgreSQL catalogs expose the same remote schema/table under distinct
+mask/filter policies. Qualified public transitions preserve the other catalog,
+Delta policies, metadata authority and unrelated masks/filters byte for byte.
+The second catalog's SELECT grant cannot authorize the denied first catalog.
+Ranger's `database` field contains `source_schema`, not the remote database name.
+The upstream SELECT-only role, query subject, metadata identity and service admin
+remain distinct. No collected rows are reconstructed as writer input.
+
+### Additional checks and retained evidence
+
+The remaining Spark 3.5.6/3.3.0 and 3.5.4/3.3.0 installed cells each passed all
+23 `TestDeltaRangerRegisteredJdbc*` tests with Docker and the explicit opt-in,
+zero failures/errors/skips. Task 2's reviewed Delta 3.3.2 evidence was reused;
+no closed historical matrix was rerun. Nine registered checker tests, 32 existing
+append checker tests and 24 focused observer/request tests pass. Initial checker
+RED retained 33 meaningful negative-fixture failures before the checks existed.
+
+Original commands/PIDs/exits, source and archive receipts, policy downloads,
+public callbacks, PostgreSQL statement logs/data, native JSON and S3 payload bytes
+are retained under
+`.superpowers/sdd/2026-11-05-delta-registered-jdbc/task-3-evidence/`.
+The final inventory is seventeen cases and twenty separately recorded actions;
+the extra actions are column composition and the view's physical-table control.
+Five APPEND cases publish once. Two late controls retain unpublished payload.
+Original raw results and packages remain immutable. Later checker/docs-only
+verification uses explicit finite source deltas and never relabels package bytes.
+Owned PostgreSQL and Gravitino processes are stopped; shared Ranger/MinIO remain.
+
+The first base build succeeded, but its new archive collector initially rejected
+existing duplicate LICENSE/NOTICE entries in shaded jars. The corrected collector
+retains every ZIP entry by index/digest and still rejects other duplicates. The
+first live setup stopped before Gravitino or any writer: Unix-socket readiness
+observed PostgreSQL's temporary initialization server. TCP readiness corrected
+that fixture race on a fresh owned cluster. Both attempts and their terminal
+receipts remain retained. No committed or uncertain write was replayed.
+
+### Limits and operational observations
+
+This is functional qualification of the bounded registered PostgreSQL profile,
+not a performance qualification. In the instrumented lead insertion, the original
+log suffix contains one payload SELECT and 1,334 metadata SELECT statements:
+444 stock getTables/TABLE_TYPE, 445 column-metadata, 222 other table-metadata,
+222 other metadata and one zero-row schema query. These are individual PostgreSQL
+messages, not repeated cumulative snapshots. Its full writer process took
+73.44 seconds. The mixed/cache case observed one payload and 3,140 metadata
+statements and took 304.16 seconds for the full process. These measurements
+include live harness/observer/helper verification and startup; they are neither
+isolated production-only payload timings nor a causal attribution of every query
+to production. They do not establish acceptable performance. No currentness or
+policy guard was weakened to reduce the observed cost.
+
+Installed tests retain JSON commits and file inventories, while their temporary
+Parquet files were inspected before cleanup and are not retained. Actual-service
+runs retain original S3 payload bytes, including late-control residue. The existing
+server wrapper retains its original command, PID, terminal status, fixture
+lifecycle bounds and JVM class-load timestamps, but not a separate exact
+server-spawn timestamp; that precision is not fabricated.
+
+Remote repeatable snapshots, an atomic revocation/configuration fence and every
+same-schema drop/recreate remain outside the contract. Source views, arbitrary
+SQL/subqueries, callbacks/options, partitioned JDBC extraction, other vendors,
+external JDBC and full shared Spark Hub ingestion remain unqualified or unsupported
+as described in the design. The external-ingestion coverage status stays
+`connector-gap` until those required integration paths are completed.

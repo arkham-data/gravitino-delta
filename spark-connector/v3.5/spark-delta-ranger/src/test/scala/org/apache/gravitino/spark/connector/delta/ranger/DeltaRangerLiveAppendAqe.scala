@@ -77,6 +77,14 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
       "database"
     ) + "/tables/"
   gateway.observeTables(tablePath, text("metadataPrincipal"))
+  if (request.path("registeredJdbc").asBoolean()) {
+    gateway.observeTables(
+      "/api/metalakes/" + text("metalake") + "/catalogs/" + text(
+        "sourceCatalog"
+      ) + "/schemas/" + text("sourceSchema") + "/tables/",
+      text("metadataPrincipal")
+    )
+  }
   private var security: DeltaRangerDownloadedSecurity = null
   private var spark: SparkSession = null
   security = new DeltaRangerDownloadedSecurity(
@@ -151,6 +159,14 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
   )
   private val wrapper = spark.sessionState.catalogManager.catalog(text("catalog"))
   require(wrapper.getClass == classOf[DeltaRangerCatalogSpark35], "Discovered wrapper differs")
+  if (request.path("registeredJdbc").asBoolean()) {
+    val jdbc = spark.sessionState.catalogManager.catalog(text("sourceCatalog"))
+    require(
+      jdbc.getClass == classOf[DeltaRangerPostgreSqlCatalogSpark35],
+      "Discovered JDBC wrapper differs"
+    )
+    writeJson(output.resolve("jdbc-wrapper.json"), Map("className" -> jdbc.getClass.getName).asJava)
+  }
   private val engine = wrapper.asInstanceOf[DeltaRangerCatalogSpark35].policyEngine()
   awaitApplied(engine, request.path("minPolicy").asLong(), request.path("minRole").asLong(), 45)
   security.recordInitialDownloads(
@@ -371,24 +387,32 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
           require(Files.exists(release), "Public revoke supervisor did not release")
           val statePath =
             json.readTree(Files.readAllBytes(release)).path("stateEvidenceFile").asText()
-          applied("revoke", statePath, false)
-          val state = json.readTree(Files.readAllBytes(Paths.get(statePath)))
-          val appliedEvidence =
-            json.readTree(Files.readAllBytes(output.resolve("revoke-applied.json")))
-          val witness = json.createObjectNode()
-          witness.put("initialPolicy", initialPolicy)
-          witness.put("policy", engine.versions().policy())
-          witness.put("role", engine.versions().role())
-          witness.put("downloadVersion", engine.versions().policy())
-          witness.put("responseSha256", appliedEvidence.path("downloadSha256").asText())
-          witness.put("publicStateSha256", sha(Paths.get(state.path("publicStateFile").asText())))
-          witness.put("rangerStateSha256", sha(Paths.get(state.path("rangerStateFile").asText())))
-          witness.put("publicRevokeComplete", state.path("publicRevokeComplete").asBoolean())
-          val absence =
-            if (request.path("revokeSource").asBoolean()) "sourceSelectAbsent" else "updateAbsent"
-          witness.put(absence, state.path(absence).asBoolean())
-          witness.put("roleMatchesInitialDownload", engine.versions().role() == initialRole)
-          gateway.releaseAfter(witness, initialPolicy, initialRole)
+          if (request.path("configChange").asBoolean()) {
+            val value = json.readTree(Files.readAllBytes(Paths.get(statePath)))
+            require(
+              engine.versions().policy() == initialPolicy && engine.versions().role() == initialRole
+            )
+            gateway.releaseMetadataChange(value, initialPolicy, initialRole)
+          } else {
+            applied("revoke", statePath, false)
+            val state = json.readTree(Files.readAllBytes(Paths.get(statePath)))
+            val appliedEvidence =
+              json.readTree(Files.readAllBytes(output.resolve("revoke-applied.json")))
+            val witness = json.createObjectNode()
+            witness.put("initialPolicy", initialPolicy)
+            witness.put("policy", engine.versions().policy())
+            witness.put("role", engine.versions().role())
+            witness.put("downloadVersion", engine.versions().policy())
+            witness.put("responseSha256", appliedEvidence.path("downloadSha256").asText())
+            witness.put("publicStateSha256", sha(Paths.get(state.path("publicStateFile").asText())))
+            witness.put("rangerStateSha256", sha(Paths.get(state.path("rangerStateFile").asText())))
+            witness.put("publicRevokeComplete", state.path("publicRevokeComplete").asBoolean())
+            val absence =
+              if (request.path("revokeSource").asBoolean()) "sourceSelectAbsent" else "updateAbsent"
+            witness.put(absence, state.path(absence).asBoolean())
+            witness.put("roleMatchesInitialDownload", engine.versions().role() == initialRole)
+            gateway.releaseAfter(witness, initialPolicy, initialRole)
+          }
         } catch {
           case error: Throwable => barrierFailure = error; gateway.abort()
         }
@@ -419,7 +443,7 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
       val owned =
         !failed && DeltaRangerNativeScans.evidence(query.optimizedPlan).exists(_.owner.appendInput)
       val all = if (owned) nodes(query.executedPlan) else Vector.empty
-      if (owned) {
+      if (owned && !request.path("registeredJdbc").asBoolean()) {
         Files.writeString(
           output.resolve(name + "-payload-" + query.id + "-analyzed.txt"),
           query.analyzed.toString
@@ -452,7 +476,10 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
     while (cause != null && seen.put(cause, true) == null) {
       failures += Map[String, Any](
         "className" -> cause.getClass.getName,
-        "message" -> Option(cause.getMessage).getOrElse(""),
+        "message" -> DeltaRangerLiveAppendAqe.safeFailureMessage(
+          cause,
+          request.path("registeredJdbc").asBoolean()
+        ),
         "stack" -> cause.getStackTrace.map(_.toString).toVector.asJava
       ).asJava
       cause = cause.getCause
@@ -656,6 +683,19 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
 
 /** Admission and native observation helpers shared with the Python bridge tests. */
 private[ranger] object DeltaRangerLiveAppendAqe {
+
+  /** Credential-bearing JDBC errors expose only known sanitized product diagnostics. */
+  def safeFailureMessage(failure: Throwable, jdbc: Boolean): String = {
+    val message = Option(failure.getMessage).getOrElse("")
+    if (
+      !jdbc || (failure.isInstanceOf[SecurityException] &&
+        (message == "Delta Ranger access denied" || message == "Delta Ranger publication changed; reanalyze the query" ||
+          message.startsWith(
+            "Registered JDBC source rejected: "
+          ) || message == "Registered JDBC source load rejected"))
+    ) message
+    else "Non-policy failure details retained only by the original private process"
+  }
 
   /** Admit only the existing two native append entry points. */
   def validateFrontend(@Nullable value: String): Unit =

@@ -58,6 +58,30 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
       ).toString
     )
 
+  /** Configuration controls require healthy upstream metadata and unchanged policy versions. */
+  def validateMetadataRelease(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit = {
+    require(
+      value.fieldNames().asScala.toSet == Set(
+        "initialPolicy",
+        "policy",
+        "role",
+        "publicMetadataChanged",
+        "upstreamHealthy"
+      )
+    )
+    require(
+      value.path("initialPolicy").asLong(-1) == initialPolicy && value
+        .path("policy")
+        .asLong(-1) == initialPolicy && value.path("role").asLong(-1) == initialRole
+    )
+    require(
+      value
+        .path("publicMetadataChanged")
+        .isBoolean && value.path("publicMetadataChanged").asBoolean()
+    )
+    require(value.path("upstreamHealthy").isBoolean && value.path("upstreamHealthy").asBoolean())
+  }
+
   def validateRelease(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit = {
     val numbers = Set("initialPolicy", "policy", "role", "downloadVersion")
     val digests = Set("responseSha256", "publicStateSha256", "rangerStateSha256")
@@ -115,7 +139,7 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
     private var releasedStatus = 0
     private var metadataPrincipal: String = _
     private var metadataObserved = false
-    private var metadataPrefix: String = _
+    private var metadataPrefixes = Set.empty[String]
     private var metadataPaths = Set.empty[String]
     private var namedAttempts = Vector.empty[Map[String, Any]]
     private var witness: Vector[String] = Vector.empty
@@ -140,7 +164,8 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
         ) && principal.nonEmpty,
         "Invalid named metadata observation"
       )
-      metadataPrefix = prefix; metadataPrincipal = principal
+      require(metadataPrincipal == null || metadataPrincipal == principal)
+      metadataPrefixes += prefix; metadataPrincipal = principal
     }
 
     /** Detached snapshots of every relevant attempted request, including non-200 responses. */
@@ -189,6 +214,15 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
       json.writeValue(evidence.resolve("release-witness.json").toFile, value)
       state = "released"; notifyAll()
     }
+
+    /** Release a live held request after a verified metadata-only fixture change. */
+    def releaseMetadataChange(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit =
+      synchronized {
+        validateMetadataRelease(value, initialPolicy, initialRole)
+        require(state == "held" && live(), "Release lacks a live held phase")
+        json.writeValue(evidence.resolve("release-witness.json").toFile, value)
+        state = "released"; notifyAll()
+      }
 
     def requireSuccessfulForward(): Unit = {
       require(forwarded.await(20, TimeUnit.SECONDS), "Released metadata request did not complete")
@@ -247,7 +281,7 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
       var releasing = false
       val attempt = synchronized {
         val path = exchange.getRequestURI.getRawPath
-        if (path == target || (metadataPrefix != null && path.startsWith(metadataPrefix))) {
+        if (path == target || metadataPrefixes.exists(path.startsWith)) {
           val index = namedAttempts.size
           namedAttempts :+= Map[String, Any](
             "sequence" -> (index.toLong + 1L),
@@ -260,8 +294,8 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
       }
       try {
         val metadata = synchronized {
-          metadataPrincipal != null && exchange.getRequestMethod == "GET" && (exchange.getRequestURI.getRawPath == target || (metadataPrefix != null && exchange.getRequestURI.getRawPath
-            .startsWith(metadataPrefix)))
+          metadataPrincipal != null && exchange.getRequestMethod == "GET" && (exchange.getRequestURI.getRawPath == target || metadataPrefixes
+            .exists(exchange.getRequestURI.getRawPath.startsWith))
         }
         if (metadata) {
           val header = Option(exchange.getRequestHeaders.getFirst("Authorization")).getOrElse("")

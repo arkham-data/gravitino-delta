@@ -956,7 +956,7 @@ class TestAppendAqePublicTransitions(unittest.TestCase):
                         dict(
                             id=1,
                             policyType=0,
-                            resources=dict(table=dict(values=["source"])),
+                            resources={key: dict(values=[value], isExcludes=False, isRecursive=False) for key, value in dict(catalog="cat", database="db", table="source", column="*").items()},
                             policyItems=[
                                 dict(
                                     roles=["meta-role"]
@@ -968,7 +968,7 @@ class TestAppendAqePublicTransitions(unittest.TestCase):
                         dict(
                             id=2,
                             policyType=2,
-                            resources=dict(table=dict(values=["source"])),
+                            resources={key: dict(values=[value], isExcludes=False, isRecursive=False) for key, value in dict(catalog="cat", database="db", table="source", column="*").items()},
                             rowFilterPolicyItems=[dict(filter="region = 'allowed'")],
                         ),
                     ],

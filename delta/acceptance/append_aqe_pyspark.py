@@ -132,6 +132,45 @@ def main():
         try:
             api = request["frontend"]
             assert api in ("insertInto", "saveAsTable")
+            if request.get("columnComposition"):
+                for action in ("id_only", "hidden_predicate", "pruned_original_demand"):
+                    name = request["caseName"] + "-" + action
+                    bridge.begin(name)
+                    thread_id = bridge.bindWriter()
+                    before = connection()
+                    assert before["jvmThread"] == thread_id
+                    error, rows = None, None
+                    try:
+                        table = spark.table(request["sourceCatalog"] + "." + request["sourceSchema"] + "." + request["sourceTable"])
+                        if action == "id_only":
+                            frame = table.select("id")
+                        elif action == "hidden_predicate":
+                            frame = table.filter(F.col("secret") == "alpha").select("id")
+                        else:
+                            frame = table.select("secret").filter(F.lit(False))
+                        rows = [list(row) for row in frame.collect()]
+                    except Py4JJavaError as failure:
+                        error = failure.java_exception
+                    after = connection()
+                    assert before == after
+                    save(name + "-caller", dict(before=before, after=after, rows=rows, pinnedEnvironment=os.environ.get("PYSPARK_PIN_THREAD")))
+                    observation = bridge.finishAppend(name, error)
+                    save(name + "-observation", dict(path=observation))
+                    checkpoint(name)
+                return
+            if request.get("viewControl"):
+                name = request["caseName"] + "-physical_control"
+                bridge.begin(name)
+                thread_id = bridge.bindWriter()
+                before = connection()
+                assert before["jvmThread"] == thread_id
+                rows = [list(row) for row in spark.table(request["sourceCatalog"] + "." + request["sourceSchema"] + ".source").select("id").collect()]
+                after = connection()
+                assert before == after
+                save(name + "-caller", dict(before=before, after=after, rows=rows, pinnedEnvironment=os.environ.get("PYSPARK_PIN_THREAD")))
+                observation = bridge.finishAppend(name, None)
+                save(name + "-observation", dict(path=observation))
+                checkpoint(name)
             versions = request["transactionVersions"]
             assert versions == (
                 [1, 1]
@@ -174,11 +213,20 @@ def main():
                 )
                 error = None
                 try:
-                    left = spark.table(source_name).alias("l")
-                    right = spark.table(source_name).alias("r")
-                    source = left.join(right, left["id"] == right["id"]).select(
-                        "l.id", "l.secret", "l.region"
-                    )
+                    if request.get("registeredJdbc"):
+                        source_name = request["sourceCatalog"] + "." + request["sourceSchema"] + "." + request["sourceTable"]
+                        left = spark.table(source_name).alias("l")
+                        if request.get("mixedJdbc"):
+                            right = spark.table(request["deltaSourceName"]).alias("r")
+                            source = left.join(right, left["id"] == right["id"], "inner").select("l.id", "l.secret", "l.region")
+                        else:
+                            source = left.select("id", "secret", "region").filter(F.col("id") > 0)
+                    else:
+                        left = spark.table(source_name).alias("l")
+                        right = spark.table(source_name).alias("r")
+                        source = left.join(right, left["id"] == right["id"]).select(
+                            "l.id", "l.secret", "l.region"
+                        )
                     if request.get("inputTimestamp"):
                         source = source.withColumn(
                             "__arkham_loaded_at", F.current_timestamp()
@@ -203,7 +251,7 @@ def main():
                         name + "-python-failure",
                         dict(
                             errorClass=type(failure).__name__,
-                            trace=traceback.format_exc(),
+                            trace=("JDBC exception text omitted; exact sanitized JVM cause chain retained" if request.get("registeredJdbc") else traceback.format_exc()),
                             noReplay=True,
                         ),
                     )

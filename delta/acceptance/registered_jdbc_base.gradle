@@ -1,0 +1,132 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import java.security.MessageDigest
+// Owned isolated assembly. Never invoke shared distribution copy tasks.
+gradle.projectsEvaluated {
+  def root = gradle.rootProject
+  def outName = root.findProperty('publicAppendOutput')
+  if (!outName) throw new GradleException('Explicit new publicAppendOutput required')
+  def sourceCaptureFile = new File(root.findProperty('publicAppendSourceCapture').toString())
+  def sourceCapture = new JsonSlurper().parse(sourceCaptureFile)
+  def invocation = root.findProperty('publicAppendInvocation').toString()
+  def adapter = root.project(':spark-connector:spark-delta-ranger-3.5')
+  def base = root.project(':spark-connector:spark-delta-runtime-3.5')
+  def optional = root.project(':spark-connector:spark-delta-ranger-runtime-3.5')
+  def server = root.project(':server')
+  def provider = root.project(':catalogs:catalog-lakehouse-delta')
+  def authorization = root.project(':authorizations:authorization-ranger-delta')
+  def postgres = root.project(':catalogs:catalog-jdbc-postgresql')
+  def nativeJars = root.configurations.create('publicAppendNative')
+  ["io.delta:delta-spark_2.12:${root.findProperty('deltaVersion') ?: '3.3.0'}",
+   "io.delta:delta-storage:${root.findProperty('deltaVersion') ?: '3.3.0'}",
+   'org.apache.hadoop:hadoop-client-api:3.3.6','org.apache.hadoop:hadoop-client-runtime:3.3.6',
+   'org.apache.hadoop:hadoop-aws:3.3.6','com.amazonaws:aws-java-sdk-bundle:1.12.367',
+   'com.google.guava:guava:32.1.3-jre','com.google.guava:failureaccess:1.0.1',
+   'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava',
+   'org.wildfly.openssl:wildfly-openssl:1.1.3.Final',
+   'org.scala-lang:scala-library:2.12.21','org.scala-lang:scala-reflect:2.12.21',
+   'org.scala-lang:scala-compiler:2.12.21','org.postgresql:postgresql:42.7.11'].each { coordinate ->
+     root.dependencies.add(nativeJars.name, coordinate) { transitive = false }
+   }
+  def thin = adapter.tasks.register('publicAppendThinJar', Jar) {
+    dependsOn(adapter.tasks.named('testClasses'))
+    archiveFileName.set('public-grants-live-append.jar')
+    destinationDirectory.set(root.layout.projectDirectory.dir(outName.toString() + '/app'))
+    from(adapter.sourceSets.test.output) {
+      ['DeltaRangerLiveAppend', 'DeltaRangerLivePhasePin', 'DeltaRangerLiveMetadataBarrier',
+       'DeltaRangerDownloadedSecurity','DeltaRangerCallbackGateway','DeltaRangerStartupCache'].each { name ->
+        include("org/apache/gravitino/spark/connector/delta/ranger/${name}.class")
+        include("org/apache/gravitino/spark/connector/delta/ranger/${name}\$*.class")
+      }
+    }
+  }
+  root.tasks.register('preparePublicAppendPackage') {
+    dependsOn(thin, base.tasks.named('shadowJar'), optional.tasks.named('shadowJar'),
+      server.tasks.named('jar'), server.configurations.runtimeClasspath,
+      provider.tasks.named('jar'), provider.configurations.runtimeClasspath,
+      authorization.tasks.named('jar'), authorization.configurations.runtimeClasspath,
+      postgres.tasks.named('copyLibAndConfig'), postgres.configurations.runtimeClasspath)
+    doLast {
+      def out = new File(outName.toString())
+      if (new File(out, 'assembly.json').exists()) throw new GradleException('Assembly output already exists')
+      def sha = { File f ->
+        def digest = MessageDigest.getInstance('SHA-256')
+        f.withInputStream { stream -> byte[] buffer = new byte[1024 * 1024]; int count
+          while ((count = stream.read(buffer)) != -1) digest.update(buffer, 0, count)
+        }; digest.digest().encodeHex().toString()
+      }
+      def records = []
+      def copyFiles = { files, String target, String origin ->
+        files.each { File f ->
+          def dest = new File(out, target + '/' + f.name)
+          if (dest.exists()) throw new GradleException('Duplicate selected package destination: ' + dest.name)
+          dest.parentFile.mkdirs(); java.nio.file.Files.copy(f.toPath(), dest.toPath())
+          records << [origin: origin, source: f.absolutePath, destination: dest.absolutePath, sha256: sha(f)]
+        }
+      }
+      def thinFile=thin.get().archiveFile.get().asFile
+      records << [origin:'thin-app',source:thinFile.absolutePath,destination:thinFile.absolutePath,sha256:sha(thinFile)]
+      copyFiles(nativeJars.files, 'native', 'selected-native-coordinates')
+      [base, optional].each { m -> copyFiles([m.tasks.named('shadowJar').get().archiveFile.get().asFile], 'production', m.path) }
+      copyFiles([server.tasks.named('jar').get().archiveFile.get().asFile] + server.configurations.runtimeClasspath.files, 'server/libs', server.path)
+      [[provider,'catalogs/lakehouse-delta'],[postgres,'catalogs/jdbc-postgresql'],[authorization,'authorizations/ranger-delta']].each { pair ->
+        def m = pair[0]; def files = m.configurations.runtimeClasspath.files.findAll { f ->
+          !(f.name ==~ /(?:guava|log4j|slf4j)-.*/) && (m == authorization || !(f.name ==~ /(?:reload4j|error_prone_annotations)-.*/))
+        }
+        copyFiles([m.tasks.named('jar').get().archiveFile.get().asFile] + files, 'server/' + pair[1] + '/libs', m.path)
+      }
+      copyFiles(nativeJars.files.findAll { it.name == 'postgresql-42.7.11.jar' }, 'server/catalogs/jdbc-postgresql/libs', 'trusted-stock-driver')
+      root.copy { from(new File(postgres.projectDir,'src/main/resources/jdbc-postgresql.conf')); into(new File(out,'server/catalogs/jdbc-postgresql/conf')) }
+      root.copy { from(new File(root.rootDir,'scripts/h2')); into(new File(out,'server/scripts/h2')) }
+      root.copy { from(new File(root.rootDir,'bin')); include('gravitino.sh.template','common.sh.template'); rename { it.replace('.template','') }; into(new File(out,'server/bin')) }
+      root.copy { from(new File(root.rootDir,'conf/log4j2.properties.template')); rename { it.replace('.template','') }; into(new File(out,'server/conf')) }
+      root.copy { from(new File(provider.projectDir,'src/main/resources/lakehouse-delta.conf')); into(new File(out,'server/catalogs/lakehouse-delta/conf')) }
+      new File(out,'server/conf/gravitino-env.sh').text = "GRAVITINO_VERSION=${root.version}\n"
+      new File(out,'server/bin/gravitino.sh').setExecutable(true)
+      def runtimeInputs = [base,optional,authorization,provider,postgres,server].collectEntries { m ->
+        [(m.path): m.configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts.collect { a ->
+          def record=[coordinate: a.moduleVersion.id.toString(), classifier:a.classifier, source:a.file.absolutePath, sha256:sha(a.file)]
+          if (a.id.componentIdentifier instanceof ProjectComponentIdentifier) {
+            def captured=new File(out,'build-project-inputs/'+sha(a.file)+'-'+a.file.name)
+            captured.parentFile.mkdirs()
+            if (!captured.exists()) java.nio.file.Files.copy(a.file.toPath(),captured.toPath())
+            record.projectPath=a.id.componentIdentifier.projectPath
+            record.capturedProjectArtifact=captured.absolutePath
+            record.sourceInputDigest=sourceCapture.digest
+          }
+          record
+        }]
+      }
+      def buildInputs = sourceCapture.files.findAll { name, digest -> name.endsWith('build.gradle') || name.endsWith('build.gradle.kts') || name in ['settings.gradle','settings.gradle.kts','gradle.properties','gradlew'] || name.startsWith('gradle/') || name.startsWith('buildSrc/') || name.startsWith('build-logic/') || name.endsWith('/prepare.gradle') || name.endsWith('/test.init.gradle') || name.endsWith('/prepare.py') || name.endsWith('/package_binding.py') }
+      def sources = adapter.fileTree('src').files.sort().collectEntries { f -> [(f.absolutePath):sha(f)] }
+      def artifactFiles=root.fileTree(out).files.sort().collectEntries { f -> [(f.absolutePath):sha(f)] }
+      new File(out,'assembly.json').text = JsonOutput.prettyPrint(JsonOutput.toJson([
+        spark:root.findProperty('deltaSparkVersion') ?: '3.5.4', delta:root.findProperty('deltaVersion') ?: '3.3.0',
+        artifactFiles:artifactFiles,files:records,runtimeInputs:runtimeInputs,buildInputs:buildInputs,adapterSources:sources,
+        sourceInputs:sourceCapture.files,sourceInputDigest:sourceCapture.digest,sourceCaptureSha256:sha(sourceCaptureFile),buildInvocation:invocation,
+        selectedNative:nativeJars.resolvedConfiguration.resolvedArtifacts.collect { a -> [coordinate:a.moduleVersion.id.toString(),source:a.file.absolutePath,sha256:sha(a.file)] },
+        app:[source:thin.get().archiveFile.get().asFile.absolutePath,sha256:sha(thin.get().archiveFile.get().asFile)]
+      ])) + '\n'
+    }
+  }
+}

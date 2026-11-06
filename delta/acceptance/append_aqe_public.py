@@ -30,6 +30,33 @@ from cdf_merge_live_checks import file_ref
 from live_common import validate_policy_boundary
 
 
+def qualified(plan, table):
+    """Resolve an explicit descriptor or the existing fixture's Delta table."""
+    if isinstance(table, dict):
+        assert set(table) == {"catalog", "database", "table"}
+        assert table["catalog"] in plan["policyCatalogs"]
+        return table
+    return dict(catalog=plan["catalog"], database=plan["database"], table=table)
+
+
+def full_name(plan, table):
+    item = qualified(plan, table)
+    return ".".join(item[key] for key in ("catalog", "database", "table"))
+
+
+def qualified_projection(policies, role, descriptor, privilege):
+    """Project one exact four-level resource, preserving every other policy byte."""
+    resources = {key: dict(values=[value], isExcludes=False, isRecursive=False)
+                 for key, value in dict(descriptor, column="*").items()}
+    matched = [p for p in policies if p.get("policyType", 0) == 0 and p["resources"] == resources]
+    assert len(matched) == 1, "Missing or ambiguous qualified policy"
+    projection = project_select if privilege == "SELECT_TABLE" else project_modify
+    normalized, policy_id, present = projection(matched, role, descriptor["table"])
+    values = {p["id"]: copy.deepcopy(p) for p in policies}
+    values.update(normalized)
+    return values, policy_id, present
+
+
 def permissions(role):
     values = {}
     for resource in role["securableObjects"]:
@@ -87,7 +114,7 @@ def verify_public_transition(plan, table, privilege, grant, before, after, callb
             "Metadata/application identity or metadata authority changed"
         )
     left, right = permissions(old["appRole"]), permissions(new["appRole"])
-    full = plan["catalog"] + "." + plan["database"] + "." + table
+    full = full_name(plan, table)
     expected = copy.deepcopy(left)
     item = (privilege, "ALLOW")
     expected.setdefault(full, set())
@@ -103,12 +130,12 @@ def verify_public_transition(plan, table, privilege, grant, before, after, callb
     }
     assert before["roles"].get("rangerRoles") == after["roles"].get("rangerRoles")
     assert before["roles"]["roleVersion"] == after["roles"]["roleVersion"]
-    projection = project_select if privilege == "SELECT_TABLE" else project_modify
-    left, lid, prior = projection(
-        before["policies"]["policies"], plan["rangerAppRole"], table
+    descriptor = qualified(plan, table)
+    left, lid, prior = qualified_projection(
+        before["policies"]["policies"], plan["rangerAppRole"], descriptor, privilege
     )
-    right, rid, current = projection(
-        after["policies"]["policies"], plan["rangerAppRole"], table
+    right, rid, current = qualified_projection(
+        after["policies"]["policies"], plan["rangerAppRole"], descriptor, privilege
     )
     assert lid == rid and left == right, "Unrelated Ranger policy drift"
     assert (prior, current) == ((False, True) if grant else (True, False))
@@ -179,7 +206,12 @@ def snapshot(plan, output):
         + "?lastKnownRoleVersion=-1&pluginId=append-aqe-supervisor",
         download=True,
     )
-    validate_policy_boundary(plan, policies["policies"])
+    if plan.get("registeredJdbc"):
+        from registered_jdbc_live import validate_boundary
+
+        validate_boundary(plan, policies["policies"])
+    else:
+        validate_policy_boundary(plan, policies["policies"])
     public["appRole"]["rangerRole"] = plan["rangerAppRole"]
     save(output / "public-state.private.json", public)
     save(output / "ranger-state.private.json", dict(policies=policies, roles=roles))
@@ -212,7 +244,7 @@ def transition(plan, table, privilege, grant, output):
         ),
     )
     rest = Public(plan["gravitinoUrl"], plan["serviceAdmin"], output / "public")
-    full = plan["catalog"] + "." + plan["database"] + "." + table
+    full = full_name(plan, table)
     path = (
         "/api/metalakes/"
         + plan["metalake"]

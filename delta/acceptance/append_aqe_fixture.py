@@ -188,7 +188,14 @@ def run():
     }
     from append_aqe_profiles import fixture_tables
 
-    if inputs.get("inputTimestampProfile"):
+    if inputs.get("registeredJdbcPair"):
+        from registered_jdbc_live import case_specs
+        from input_timestamp_checks import timestamp_tables
+
+        tables = timestamp_tables(plan, case_specs(tuple(inputs["registeredJdbcPair"])))
+        plan["inputTimestampProfile"] = "registered-jdbc"
+        plan["python"] = inputs["pythonRuntime"]
+    elif inputs.get("inputTimestampProfile"):
         from input_timestamp_checks import timestamp_cases, timestamp_tables
 
         tables = timestamp_tables(
@@ -301,6 +308,10 @@ def run():
             base + "/catalogs/" + plan["catalog"] + "/schemas",
             {"name": plan["database"], "comment": "Owned", "properties": {}},
         )
+        if inputs.get("registeredJdbcPair"):
+            from registered_jdbc_live import register_sources
+
+            register_sources(plan, inputs, rest, props, out)
         native(plan, runtime, tables, "seed", out / "native-seed")
         receipts = {}
         for table in tables:
@@ -349,6 +360,10 @@ def run():
             )
             for t in tables
         ]
+        if plan.get("registeredJdbc"):
+            from registered_jdbc_live import source_objects
+
+            objects += source_objects(plan, obj)
         for user in [plan["subject"], plan["metadataPrincipal"]]:
             rest.call("POST", base + "/users", {"name": user})
         for role, user in [
@@ -451,6 +466,10 @@ def run():
             },
         )
         plan["sourcePolicyIds"] = [mask["id"], filtering["id"]]
+        if plan.get("registeredJdbc"):
+            from registered_jdbc_live import source_policies
+
+            source_policies(plan, create)
         security = out / "private/source-security"
         security.mkdir()
         (out / "private/source-cache").mkdir()

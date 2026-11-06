@@ -29,6 +29,36 @@ import org.junit.jupiter.api.Test
 class TestDeltaRangerLiveAppendAqe {
   private val json = new ObjectMapper()
 
+  /** JDBC diagnostics cannot copy connection option or driver exception messages. */
+  @Test
+  def jdbcDiagnosticsAndMetadataRelease(): Unit = {
+    assert(
+      !DeltaRangerLiveAppendAqe
+        .safeFailureMessage(new RuntimeException("password=secret"), true)
+        .contains("password")
+    )
+    assert(
+      DeltaRangerLiveAppendAqe.safeFailureMessage(
+        new SecurityException("Delta Ranger access denied"),
+        true
+      ) == "Delta Ranger access denied"
+    )
+    val witness = json.createObjectNode()
+    witness.put("initialPolicy", 2L); witness.put("policy", 2L); witness.put("role", 4L)
+    witness.put("publicMetadataChanged", true); witness.put("upstreamHealthy", true)
+    DeltaRangerLiveMetadataBarrier.validateMetadataRelease(witness, 2L, 4L)
+    witness.put("upstreamHealthy", false)
+    assertThrows(
+      classOf[IllegalArgumentException],
+      () => DeltaRangerLiveMetadataBarrier.validateMetadataRelease(witness, 2L, 4L)
+    )
+    witness.put("upstreamHealthy", true); witness.put("policy", 3L)
+    assertThrows(
+      classOf[IllegalArgumentException],
+      () => DeltaRangerLiveMetadataBarrier.validateMetadataRelease(witness, 2L, 4L)
+    )
+  }
+
   /** Only the two existing native writer frontends are admitted. */
   @Test
   def boundedFrontends(): Unit = {
