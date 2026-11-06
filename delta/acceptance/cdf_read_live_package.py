@@ -243,7 +243,7 @@ def build_package(base_path, output, spark='3.5.4', delta='3.3.0', application='
     names+= [n[:-6].replace('/','.') for n in ranger_classes if n.startswith((prefix+'DeltaRangerCdf',prefix+'DeltaRangerMerge',prefix+'GravitinoDeltaTable',prefix+'GravitinoDeltaMergeBuilder')) and '$anon' not in n and '$$' not in n]
     if application=='append-aqe':
         names += ['py4j.JavaServer','py4j.ClientServer','py4j.ClientServerConnection']
-        stems=('DeltaRangerAppend','DeltaRangerExecutionContext','DeltaRangerNativeScans','DeltaRangerNativeIdempotency','DeltaRangerPhysicalProvenance','DeltaRangerRaw','DeltaRangerCache')
+        stems=('DeltaRangerAppend','DeltaRangerExecutionContext','DeltaRangerNativeScans','DeltaRangerNativeIdempotency','DeltaRangerPhysicalProvenance','DeltaRangerRaw','DeltaRangerCache','DeltaRangerExternalJdbc','GravitinoJdbcInput')
         names += [n[:-6].replace('/','.') for n in ranger_classes if n.startswith(tuple(prefix+stem for stem in stems)) and '$anon' not in n and '$$' not in n]
     names+=[profile.get('provider',profile['class'].replace('/','.')+'$')]
     providers=provider_inventory(jars,sorted(set(names)))

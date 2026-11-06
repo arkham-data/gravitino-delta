@@ -122,6 +122,24 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
       Path target,
       Path evidence,
       String service,
+      boolean retainResponseBodies,
+      boolean recordSecurityFileDigests)
+      throws Exception {
+    this(
+        source,
+        target,
+        evidence,
+        service,
+        Optional.empty(),
+        retainResponseBodies,
+        recordSecurityFileDigests);
+  }
+
+  DeltaRangerDownloadedSecurity(
+      Path source,
+      Path target,
+      Path evidence,
+      String service,
       Optional<DeltaRangerStartupCache.Snapshot> snapshot)
       throws Exception {
     this(source, target, evidence, service, snapshot, false);
@@ -134,6 +152,18 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
       String service,
       Optional<DeltaRangerStartupCache.Snapshot> snapshot,
       boolean retainResponseBodies)
+      throws Exception {
+    this(source, target, evidence, service, snapshot, retainResponseBodies, true);
+  }
+
+  private DeltaRangerDownloadedSecurity(
+      Path source,
+      Path target,
+      Path evidence,
+      String service,
+      Optional<DeltaRangerStartupCache.Snapshot> snapshot,
+      boolean retainResponseBodies,
+      boolean recordSecurityFileDigests)
       throws Exception {
     if (Files.isSymbolicLink(target) || !Files.isDirectory(target)) {
       throw new IllegalArgumentException("Driver security directory must be a real directory");
@@ -191,16 +221,16 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
       Path logging = privateFile(target.resolve("log4j2.xml"));
       Files.write(logging, Files.readAllBytes(source.resolve("log4j2.xml")));
       Map<String, String> changed = properties(copied);
-      for (String key : original.keySet()) {
-        if (!key.equals(URL) && !key.equals(CACHE) && !original.get(key).equals(changed.get(key))) {
-          throw new IllegalStateException("Unexpected security property change");
-        }
-      }
+      requirePreservedProperties(original, changed);
       Map<String, Object> manifest = new LinkedHashMap<>();
-      manifest.put("originalSecuritySha256", digest(source.resolve("ranger-spark-security.xml")));
-      manifest.put("copiedSecuritySha256", digest(copied));
-      manifest.put("originalLoggingSha256", digest(source.resolve("log4j2.xml")));
-      manifest.put("copiedLoggingSha256", digest(logging));
+      if (recordSecurityFileDigests) {
+        manifest.put("originalSecuritySha256", digest(source.resolve("ranger-spark-security.xml")));
+        manifest.put("copiedSecuritySha256", digest(copied));
+        manifest.put("originalLoggingSha256", digest(source.resolve("log4j2.xml")));
+        manifest.put("copiedLoggingSha256", digest(logging));
+      } else {
+        manifest.put("preservedPropertyValues", true);
+      }
       manifest.put("changedPropertyNames", new String[] {URL, CACHE});
       manifest.put("freshEmptyCache", snapshot.isEmpty());
       manifest.put("mode", snapshot.isPresent() ? "snapshot" : "empty");
@@ -330,6 +360,15 @@ final class DeltaRangerDownloadedSecurity implements AutoCloseable {
     }
     return new CompletedDownload(
         event.path("attempt").asLong(), version, event.path("responseSha256").asText());
+  }
+
+  static void requirePreservedProperties(
+      Map<String, String> original, Map<String, String> changed) {
+    for (String key : original.keySet()) {
+      if (!key.equals(URL) && !key.equals(CACHE) && !original.get(key).equals(changed.get(key))) {
+        throw new IllegalStateException("Unexpected security property change");
+      }
+    }
   }
 
   static Map<String, String> properties(Path xml) throws Exception {

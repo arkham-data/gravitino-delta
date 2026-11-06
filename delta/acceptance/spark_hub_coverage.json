@@ -798,7 +798,7 @@
       ],
       "settings": {},
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
-      "expectedOutcome": "Preserve external/constructed inputs, input schema, primary key and native table properties; qualify owned create/publish and original commit outcomes before shared-sink adoption. Registered PostgreSQL named-source execution has separate bounded installed and four-pair actual-service qualification in docs/superpowers/specs/2026-11-05-delta-registered-jdbc-results.md, with final-review correction evidence retained separately; external JDBC and this create/shared-sink workload remain open.",
+      "expectedOutcome": "Preserve external/constructed inputs, input schema, primary key and native table properties; qualify owned create/publish and original commit outcomes before shared-sink adoption. Registered PostgreSQL named-source execution has separate bounded installed and four-pair actual-service qualification in docs/superpowers/specs/2026-11-05-delta-registered-jdbc-results.md, with final-review correction evidence retained separately; job-scoped external PostgreSQL source/count and existing named APPEND now have separate finite four-pair actual-service qualification in docs/superpowers/specs/2026-11-05-delta-external-jdbc-results.md (19 cases/23 actions, actual Hub tracker on the lead pair). This CREATE/shared-sink workload remains open.",
       "status": "connector-gap",
       "evidenceRefs": [
         "writer",

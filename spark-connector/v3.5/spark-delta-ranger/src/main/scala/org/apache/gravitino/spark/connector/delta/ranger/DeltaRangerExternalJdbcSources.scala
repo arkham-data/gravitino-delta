@@ -29,6 +29,7 @@ import org.apache.gravitino.spark.connector.GravitinoSparkConfig
 import org.slf4j.LoggerFactory
 import org.apache.spark.scheduler.{SparkListener, SparkListenerApplicationEnd}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.DeltaRangerExternalJdbcNative.{Relation => JDBCRelation}
 import org.apache.spark.sql.execution.datasources.jdbc.{JDBCPartition, JdbcRelationProvider}
 
@@ -77,6 +78,9 @@ private[ranger] object DeltaRangerExternalJdbcSources {
     // Stock Delta constructs its analyzer lazily and installs native Parquet field-ID settings.
     // Initialize that trusted component before freezing settings, without executing any plan.
     spark.sessionState.analyzer
+    // First Delta use also registers native SQLConf defaults lazily. Complete that registry
+    // before capturing effective settings, without setting values or touching any target.
+    DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED
     val scope = new Scope(spark, lifetimeSeconds, clock)
     scope.start()
     scope

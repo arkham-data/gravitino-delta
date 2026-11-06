@@ -810,3 +810,22 @@ Committed/unconfirmed writes cannot qualify as denials and are never replayed.
 Late revocation can retain uncommitted payload files. These runs do not qualify
 schema-changing overwritten target history, either JDBC route, full Spark Hub M2,
 or broader transform/overwrite families. See the input timestamp findings.
+
+
+External PostgreSQL qualification uses `external_jdbc_live.py --runtime <manifest>
+--inputs <private-inputs> --out <fresh-owned-directory> --hub <exact-hub-archive>`.
+The default inventory is three common cases per pinned pair and seven additional
+lead cases (19 total). An explicit `--cases` subset creates an immutable segment;
+`external_jdbc_checks.verify_matrix` must still join exactly four pairs, 19 unique
+cases and 23 declared actions, with original native outcomes and exact producing
+bytes. Never replay an attempted target. Read-only correction records preserve
+original failed supervision separately from completed, independently checked cases.
+
+The source role is read-only. Schema discovery, remote COUNT, payload protocol
+executions (including cursor continuation) and mutations are counted separately.
+Actual Hub caller/tracker, Ranger server/client 2.8.0, MinIO, process ownership,
+source/artifact/provider hashes and owned fixture cleanup are mandatory.
+`--bounded-capacity` is only the explicitly approved final-two-pair 5 GiB profile;
+the default reserve remains 8 GiB and every stage/case checks its selected reserve.
+See the [external results](../../docs/superpowers/specs/2026-11-05-delta-external-jdbc-results.md)
+for original evidence, capacity decision and remaining shared-ingestion limits.

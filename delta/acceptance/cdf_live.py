@@ -465,13 +465,28 @@ def run_cell(runtime_path,inputs_path,output):
         save(output/'lane-release.json',{'released':True,'finished':time.time(),'failed':(output/'failure.json').exists()})
 
 
-def verify_deployed(inputs,output):
+def deployment_inspect_command(container, safe_inspection=False):
+    """Select the external fixture's nonsecret container fields before collecting output."""
+    command = ['docker', 'inspect', container]
+    if safe_inspection:
+        command += ['--format', '{"Id":{{json .Id}},"Image":{{json .Image}},"State":{"Running":{{json .State.Running}},"Status":{{json .State.Status}},"ExitCode":{{json .State.ExitCode}}},"NetworkSettings":{"Ports":{{json .NetworkSettings.Ports}}}}']
+    return command
+
+
+def verify_deployed(inputs,output,safe_inspection=False):
     import hashlib
     from urllib.parse import urlsplit
     output.mkdir(mode=0o700)
     proof_path=Path(inputs['rangerRootProof']);proof=read(proof_path)
-    raw=subprocess.check_output(['docker','inspect',proof['container']]);(output/'container-inspect.private.json').write_bytes(raw)
-    container=json.loads(raw)[0]
+    raw=subprocess.check_output(deployment_inspect_command(proof['container'], safe_inspection))
+    if safe_inspection:
+        container=json.loads(raw)
+        assert set(container)=={'Id','Image','State','NetworkSettings'}
+        assert set(container['State'])=={'Running','Status','ExitCode'} and set(container['NetworkSettings'])=={'Ports'}
+        (output/'container-identity.json').write_bytes(raw)
+    else:
+        (output/'container-inspect.private.json').write_bytes(raw)
+        container=json.loads(raw)[0]
     assert container['Id']==proof['containerId'] and container['Image']==proof['imageId'] and container['State']['Running'] is True
     endpoint=read(inputs['endpoints'])['ranger-admin'];route=urlsplit(endpoint)
     assert route.scheme=='http' and route.hostname in ['127.0.0.1','localhost'] and not route.username and route.path in ['', '/']

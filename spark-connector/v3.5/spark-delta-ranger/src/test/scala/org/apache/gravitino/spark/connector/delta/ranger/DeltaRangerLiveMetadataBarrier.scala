@@ -82,6 +82,19 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
     require(value.path("upstreamHealthy").isBoolean && value.path("upstreamHealthy").asBoolean())
   }
 
+  /** A closed external scope is independent of policy changes and public metadata. */
+  def validateScopeRelease(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit = {
+    require(
+      value.fieldNames().asScala.toSet == Set("initialPolicy", "policy", "role", "scopeClosed")
+    )
+    require(
+      value.path("initialPolicy").asLong(-1) == initialPolicy && value
+        .path("policy")
+        .asLong(-1) == initialPolicy && value.path("role").asLong(-1) == initialRole
+    )
+    require(value.path("scopeClosed").isBoolean && value.path("scopeClosed").asBoolean())
+  }
+
   def validateRelease(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit = {
     val numbers = Set("initialPolicy", "policy", "role", "downloadVersion")
     val digests = Set("responseSha256", "publicStateSha256", "rangerStateSha256")
@@ -219,6 +232,15 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
     def releaseMetadataChange(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit =
       synchronized {
         validateMetadataRelease(value, initialPolicy, initialRole)
+        require(state == "held" && live(), "Release lacks a live held phase")
+        json.writeValue(evidence.resolve("release-witness.json").toFile, value)
+        state = "released"; notifyAll()
+      }
+
+    /** Release only after the caller's external scope has actually been closed. */
+    def releaseScopeClosed(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit =
+      synchronized {
+        validateScopeRelease(value, initialPolicy, initialRole)
         require(state == "held" && live(), "Release lacks a live held phase")
         json.writeValue(evidence.resolve("release-witness.json").toFile, value)
         state = "released"; notifyAll()

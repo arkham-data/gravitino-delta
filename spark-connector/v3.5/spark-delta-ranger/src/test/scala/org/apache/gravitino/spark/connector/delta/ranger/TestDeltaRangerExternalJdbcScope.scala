@@ -24,10 +24,27 @@ import java.util.HashMap
 import scala.collection.JavaConverters._
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
 
 class TestDeltaRangerExternalJdbcScope {
+
+  /** Cold-JVM scope creation completes stock Delta defaults without changing caller values. */
+  @Test
+  def scopeCapturesLazyStockDeltaDefaultsBeforeFreezing(): Unit =
+    ExternalJdbcTestFixture.withSpark() { spark =>
+      val explicit = spark.conf.getAll
+      val scope = DeltaRangerExternalJdbcSources.open(spark, 1200)
+      try {
+        val key = DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key
+        assertEquals(explicit, spark.conf.getAll)
+        scope.requireLive()
+        spark.conf.set(key, "true")
+        assertThrows(classOf[SecurityException], () => scope.requireLive())
+      } finally scope.close()
+    }
+
   @Test
   def optionsAreCanonicalDetachedAndStrict(): Unit = {
     val original = ExternalJdbcTestFixture.options

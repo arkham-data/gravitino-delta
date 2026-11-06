@@ -141,8 +141,11 @@ limitation remain explicit; neither is concealed by the timestamp successes.
 Registered PostgreSQL inputs through Gravitino's existing JDBC catalog have
 bounded installed and four-pair actual-service qualification; see the registered
 JDBC results and final-review correction evidence. Full shared ingestion remains open.
-Externally authenticated JDBC is a separate required route, followed by required
-file/constructed origins and transformations grounded in Spark Hub callers.
+[Job-scoped external PostgreSQL](../specs/2026-11-05-delta-external-jdbc-results.md)
+now has bounded four-pair actual-service qualification, including the actual Hub
+source/count/tracker and existing named APPEND. Shared sink/CREATE remains open.
+Next are required file/constructed origins and transformations grounded in Spark
+Hub callers; other vendors, broader JDBC options and deployed TLS remain separate.
 Reuse native catalog/credential/scan execution; preserve source Ranger SELECT,
 column permissions, masks and filters as well as target authorization. A schema
 match or arbitrary DataFrame is not proof of source authority.

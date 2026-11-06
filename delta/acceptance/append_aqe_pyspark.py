@@ -130,6 +130,10 @@ def main():
 
     def writer():
         try:
+            if request.get("externalJdbc"):
+                from external_jdbc_pyspark import run_external
+                run_external(spark, bridge, request, save, connection, checkpoint)
+                return
             api = request["frontend"]
             assert api in ("insertInto", "saveAsTable")
             if request.get("columnComposition"):
@@ -286,7 +290,11 @@ def main():
                 "Original Python writer failed; preserve native committed state"
             )
     finally:
-        bridge.close()
+        if request.get("externalJdbc"):
+            from external_jdbc_pyspark import close_external_bridge
+            close_external_bridge(spark, bridge, request, save)
+        else:
+            bridge.close()
 
 
 if __name__ == "__main__":

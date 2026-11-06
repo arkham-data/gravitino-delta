@@ -59,6 +59,28 @@ class TestDeltaRangerLiveAppendAqe {
     )
   }
 
+  /** Scope closure has a distinct witness and cannot masquerade as metadata or policy change. */
+  @Test
+  def externalScopeReleaseWitness(): Unit = {
+    val methods =
+      DeltaRangerLiveMetadataBarrier.getClass.getMethods.filter(_.getName == "validateScopeRelease")
+    assert(methods.length == 1, "Missing explicit external scope release validator")
+    val witness = json.createObjectNode()
+    witness.put("initialPolicy", 2L); witness.put("policy", 2L); witness.put("role", 4L)
+    witness.put("scopeClosed", true)
+    methods.head.invoke(DeltaRangerLiveMetadataBarrier, witness, Long.box(2L), Long.box(4L))
+    witness.put("scopeClosed", false)
+    assertThrows(
+      classOf[java.lang.reflect.InvocationTargetException],
+      () => methods.head.invoke(DeltaRangerLiveMetadataBarrier, witness, Long.box(2L), Long.box(4L))
+    )
+    witness.put("scopeClosed", true); witness.put("policy", 3L)
+    assertThrows(
+      classOf[java.lang.reflect.InvocationTargetException],
+      () => methods.head.invoke(DeltaRangerLiveMetadataBarrier, witness, Long.box(2L), Long.box(4L))
+    )
+  }
+
   /** Only the two existing native writer frontends are admitted. */
   @Test
   def boundedFrontends(): Unit = {

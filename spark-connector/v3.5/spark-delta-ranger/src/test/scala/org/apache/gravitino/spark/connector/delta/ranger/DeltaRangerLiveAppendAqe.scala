@@ -92,7 +92,8 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
     Paths.get(text("driverSecurityDirectory")),
     output,
     text("resourceService"),
-    true
+    true,
+    !request.path("externalJdbc").asBoolean()
   )
   private val origins = manifest
     .path("providers")
@@ -317,6 +318,17 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
     spark.sparkContext.setJobGroup(name, name)
   }
 
+  private var externalScope: GravitinoJdbcInput = null
+
+  /** Attach only the actual caller-owned scope for the explicit closure fixture. */
+  def bindExternalScope(scope: GravitinoJdbcInput): Unit = {
+    require(Thread.currentThread() eq writerThread)
+    require(
+      request.path("closeExternalScope").asBoolean() && externalScope == null && scope != null
+    )
+    externalScope = scope
+  }
+
   private var writerThread: Thread = null
   private var barrierController: Thread = null
   @volatile private var barrierFailure: Throwable = null
@@ -387,7 +399,18 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
           require(Files.exists(release), "Public revoke supervisor did not release")
           val statePath =
             json.readTree(Files.readAllBytes(release)).path("stateEvidenceFile").asText()
-          if (request.path("configChange").asBoolean()) {
+          if (request.path("closeExternalScope").asBoolean()) {
+            require(
+              externalScope != null && engine.versions().policy() == initialPolicy && engine
+                .versions()
+                .role() == initialRole
+            )
+            externalScope.close()
+            val witness = json.createObjectNode()
+            witness.put("initialPolicy", initialPolicy); witness.put("policy", initialPolicy)
+            witness.put("role", initialRole); witness.put("scopeClosed", true)
+            gateway.releaseScopeClosed(witness, initialPolicy, initialRole)
+          } else if (request.path("configChange").asBoolean()) {
             val value = json.readTree(Files.readAllBytes(Paths.get(statePath)))
             require(
               engine.versions().policy() == initialPolicy && engine.versions().role() == initialRole
@@ -443,7 +466,11 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
       val owned =
         !failed && DeltaRangerNativeScans.evidence(query.optimizedPlan).exists(_.owner.appendInput)
       val all = if (owned) nodes(query.executedPlan) else Vector.empty
-      if (owned && !request.path("registeredJdbc").asBoolean()) {
+      if (
+        owned && !request.path("registeredJdbc").asBoolean() && !request
+          .path("externalJdbc")
+          .asBoolean()
+      ) {
         Files.writeString(
           output.resolve(name + "-payload-" + query.id + "-analyzed.txt"),
           query.analyzed.toString
@@ -478,7 +505,7 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
         "className" -> cause.getClass.getName,
         "message" -> DeltaRangerLiveAppendAqe.safeFailureMessage(
           cause,
-          request.path("registeredJdbc").asBoolean()
+          request.path("registeredJdbc").asBoolean() || request.path("externalJdbc").asBoolean()
         ),
         "stack" -> cause.getStackTrace.map(_.toString).toVector.asJava
       ).asJava

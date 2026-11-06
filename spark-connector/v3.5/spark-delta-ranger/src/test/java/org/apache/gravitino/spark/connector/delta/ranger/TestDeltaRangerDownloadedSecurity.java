@@ -54,6 +54,44 @@ class TestDeltaRangerDownloadedSecurity {
   @TempDir Path directory;
 
   @Test
+  void externalEvidenceOmitsCredentialDigestsButLegacyRetainsThem() throws Exception {
+    Path original = source("http://127.0.0.1:1");
+    for (boolean external : new boolean[] {true, false}) {
+      Path target = Files.createDirectory(directory.resolve("target-" + external));
+      Path evidence = Files.createDirectory(directory.resolve("evidence-" + external));
+      try (var ignored =
+          external
+              ? new DeltaRangerDownloadedSecurity(original, target, evidence, "owned", true, false)
+              : new DeltaRangerDownloadedSecurity(original, target, evidence, "owned", true)) {
+        JsonNode manifest =
+            new ObjectMapper().readTree(evidence.resolve("security-manifest.json").toFile());
+        assertEquals(!external, manifest.has("originalSecuritySha256"));
+        assertEquals(!external, manifest.has("copiedSecuritySha256"));
+        if (external) {
+          assertTrue(manifest.path("preservedPropertyValues").asBoolean());
+          assertFalse(manifest.toString().contains("test-only-secret"));
+          assertFalse(manifest.has("originalLoggingSha256"));
+          assertFalse(manifest.has("copiedLoggingSha256"));
+        }
+      }
+    }
+  }
+
+  @Test
+  void privatePropertyEqualityStillRejectsUnexpectedChanges() {
+    Map<String, String> original = Map.of("private-key", "fixture-only-value");
+    DeltaRangerDownloadedSecurity.requirePreservedProperties(original, original);
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            DeltaRangerDownloadedSecurity.requirePreservedProperties(
+                original, Map.of("private-key", "changed")));
+    assertThrows(
+        IllegalStateException.class,
+        () -> DeltaRangerDownloadedSecurity.requirePreservedProperties(original, Map.of()));
+  }
+
+  @Test
   void optInRetainsRealResponseBytesAndLegacyDefaultDoesNot() throws Exception {
     AtomicReference<String> response =
         new AtomicReference<>("{\"serviceName\":\"service\",\"policyVersion\":1}");

@@ -559,8 +559,11 @@ native invocation errors remain distinct. The explicit Spark Hub adapter binds
 the owning reader only after constructing its actual session; it does not reroute
 legacy clients without that dependency. Its installed native lead-pair fixture
 qualifies the real source/remote COUNT and background tracker with named APPEND;
-live four-pair Ranger/MinIO qualification and the shared sink/CREATE migration
-remain separate.
+[actual-service results](../../../docs/superpowers/specs/2026-11-05-delta-external-jdbc-results.md)
+now qualify all four pairs against Ranger server/client 2.8.0 and MinIO. The
+actual-service Hub case executes remote COUNT, the background tracker and named
+APPEND with explicitly disabled auto-compaction/optimized writes before binding.
+The shared sink/CREATE migration remains open.
 
 A lifetime of 1–86400 seconds is mandatory and measured monotonically; 1200
 seconds is used by the installed fixture. The scope owns the exact active
@@ -601,5 +604,7 @@ before connection construction and action checks, without changing global logger
 configuration. The application/runtime is trusted: concurrent arbitrary logger
 reconfiguration and distributed logging/TLS deployment are separately qualified.
 Remote count, DataFrame count and later APPEND can observe different source rows;
-telemetry does not establish the rows consumed by a write. Python/Hub routing and
-the four-version live Ranger/MinIO qualification are separate follow-up work.
+telemetry does not establish the rows consumed by a write. The finite four-pair actual-service inventory covers both native writers,
+partitioning, mixed governed inputs/cache, source/target denials, late closure and
+revocation, unissued inputs and source advancement. It does not qualify full Hub
+ingestion, CREATE, overwrite, broader transforms, other vendors or deployed TLS.

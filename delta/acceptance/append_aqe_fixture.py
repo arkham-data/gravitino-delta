@@ -188,7 +188,16 @@ def run():
     }
     from append_aqe_profiles import fixture_tables
 
-    if inputs.get("registeredJdbcPair"):
+    if inputs.get("externalJdbcPair"):
+        from external_jdbc_live import case_specs
+        from input_timestamp_checks import timestamp_tables
+
+        tables = timestamp_tables(plan, case_specs(tuple(inputs["externalJdbcPair"]), inputs.get("externalJdbcCases")))
+        plan["inputTimestampProfile"] = "external-jdbc"
+        plan["externalJdbc"] = True
+        plan["jdbcConnectionFile"] = inputs["jdbcConnectionFile"]
+        plan["python"] = inputs["pythonRuntime"]
+    elif inputs.get("registeredJdbcPair"):
         from registered_jdbc_live import case_specs
         from input_timestamp_checks import timestamp_tables
 

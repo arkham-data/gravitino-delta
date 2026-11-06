@@ -61,10 +61,12 @@ def case_specs(pair):
 
 class OwnedPostgres:
     """One new cluster with retained on-disk state and a SELECT-only extraction role."""
-    def __init__(self, output):
+    def __init__(self, output, owner="registered-jdbc-task3"):
+        self.owner = owner
+        self.storage = "bind"
         self.output = Path(output)
         self.output.mkdir(mode=0o700)
-        self.name = "registered-jdbc-live-" + uuid.uuid4().hex[:12]
+        self.name = owner + "-" + uuid.uuid4().hex[:12]
         self.database = "extraction_" + uuid.uuid4().hex[:8]
         self.schema = "source_schema"
         self.password = secrets.token_hex(24)
@@ -102,11 +104,20 @@ class OwnedPostgres:
         env = self.output / "postgres.env"
         env.write_text("POSTGRES_PASSWORD=" + secrets.token_hex(24) + "\nPOSTGRES_DB=" + self.database + "\n")
         env.chmod(0o600)
-        data = self.output / "data"
-        data.mkdir(mode=0o700)
+        if self.storage == "volume":
+            self.volume = self.name + "-data"
+            volume, _ = self.command(["docker", "volume", "create", "--label", "gravitino.test.owner=" + self.owner, self.volume])
+            assert volume == self.volume
+            mount = "type=volume,source=" + self.volume + ",target=/var/lib/postgresql/data"
+            save(self.output / "data-volume.json", dict(name=self.volume, owner=self.owner, preserveData=True))
+        else:
+            assert self.storage == "bind"
+            data = self.output / "data"
+            data.mkdir(mode=0o700)
+            mount = "type=bind,source=" + str(data) + ",target=/var/lib/postgresql/data"
         container, _ = self.command(["docker", "run", "--detach", "--name", self.name,
-            "--label", "gravitino.test.owner=registered-jdbc-task3", "--publish", "127.0.0.1::5432",
-            "--env-file", str(env), "--mount", "type=bind,source=" + str(data) + ",target=/var/lib/postgresql/data", IMAGE])
+            "--label", "gravitino.test.owner=" + self.owner, "--publish", "127.0.0.1::5432",
+            "--env-file", str(env), "--mount", mount, IMAGE])
         self.started = True
         port, _ = self.command(["docker", "port", self.name, "5432/tcp"])
         assert re.fullmatch(r"127\.0\.0\.1:[0-9]+", port)
