@@ -22,11 +22,16 @@ package org.apache.gravitino.spark.connector.delta.ranger
 import javax.annotation.Nullable
 import scala.collection.JavaConverters._
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.{UnresolvedIdentifier, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{
+  UnresolvedIdentifier,
+  UnresolvedRelation,
+  UnresolvedTable
+}
 import org.apache.spark.sql.catalyst.plans.logical.{
   CreateTable,
   LogicalPlan,
   SubqueryAlias,
+  SetTableProperties,
   TableSpec
 }
 import org.apache.spark.sql.catalyst.util.QuotingUtils
@@ -67,6 +72,86 @@ object GravitinoDeltaTable {
       properties: java.util.Map[String, String],
       @Nullable comment: String,
       ifNotExists: Boolean
+  ): Unit = createOwned(spark, name, schema, partitionBy, properties, comment, ifNotExists, None)
+
+  /** Create an empty named table while retaining the exact issued JDBC source scopes. The source
+    * supplies participation only; no payload SELECT or source materialization occurs.
+    */
+  def createForInput(
+      spark: SparkSession,
+      name: String,
+      schema: StructType,
+      partitionBy: java.util.List[String],
+      properties: java.util.Map[String, String],
+      @Nullable comment: String,
+      ifNotExists: Boolean,
+      source: DataFrame
+  ): Unit = createOwned(
+    spark,
+    name,
+    schema,
+    partitionBy,
+    properties,
+    comment,
+    ifNotExists,
+    Some(DeltaRangerMetadataInput.capture(spark, source))
+  )
+
+  /** Enable CDF through the issued named ALTER, optionally retaining exact JDBC source scopes. */
+  def enableChangeDataFeed(spark: SparkSession, name: String, @Nullable source: DataFrame): Unit = {
+    require(
+      spark != null && name != null && name.trim.nonEmpty,
+      "Session and target name are required"
+    )
+    if (!SparkSession.getActiveSession.exists(_ eq spark))
+      throw new SecurityException("CDF enablement requires the active owning session")
+    val input = Option(source).map(DeltaRangerMetadataInput.capture(spark, _))
+    val parts = spark.sessionState.sqlParser.parseMultipartIdentifier(name).toVector
+    require(
+      parts.size == 3 && parts.forall(_.nonEmpty),
+      "Canonical three-part target name required"
+    )
+    val execution = spark.sessionState.executePlan(
+      SetTableProperties(
+        UnresolvedTable(parts, "ALTER TABLE", None),
+        Map("delta.enableChangeDataFeed" -> "true")
+      )
+    )
+    execution.assertAnalyzed()
+    execution.analyzed match {
+      case owned: DeltaRangerCdfPropertyCommand.Carrier =>
+        owned.owner.check(owned, spark)
+        input.foreach(owned.owner.bindInput(owned, _))
+      case _ => throw new SecurityException("CDF enablement requires an issued owned command")
+    }
+    execution.executedPlan.executeCollect()
+    ()
+  }
+
+  /** Capture a canonical three-part target name and its owning query context. */
+  def forName(spark: SparkSession, name: String): GravitinoDeltaTable = {
+    require(spark != null, "SparkSession is required")
+    require(name != null && name.trim.nonEmpty, "Target name is required")
+    val parts = spark.sessionState.sqlParser.parseMultipartIdentifier(name)
+    require(
+      parts.size == 3 && parts.forall(_.nonEmpty),
+      "Canonical three-part target name required"
+    )
+    // Delta installs its native analyzer defaults lazily. Complete that initialization before
+    // freezing the context, without resolving or reading the target.
+    spark.sessionState.analyzer
+    new GravitinoDeltaTable(new GravitinoDeltaTable.Context(spark), parts.toVector, None)
+  }
+
+  private def createOwned(
+      spark: SparkSession,
+      name: String,
+      schema: StructType,
+      partitionBy: java.util.List[String],
+      properties: java.util.Map[String, String],
+      @Nullable comment: String,
+      ifNotExists: Boolean,
+      input: Option[DeltaRangerMetadataInput]
   ): Unit = {
     require(spark != null, "SparkSession is required")
     require(name != null && name.trim.nonEmpty, "Target name is required")
@@ -101,27 +186,14 @@ object GravitinoDeltaTable {
     val execution = spark.sessionState.executePlan(command)
     execution.assertAnalyzed()
     execution.analyzed match {
-      case owned: DeltaRangerCreateCommand.Carrier => owned.owner.check(owned, spark)
+      case owned: DeltaRangerCreateCommand.Carrier =>
+        owned.owner.check(owned, spark)
+        input.foreach(owned.owner.bindInput(owned, _))
       case _ => throw new SecurityException("Schema CREATE requires an issued owned command")
     }
     // The issued CREATE carrier is a leaf, so commandExecuted alone is not an action.
     execution.executedPlan.executeCollect()
     ()
-  }
-
-  /** Capture a canonical three-part target name and its owning query context. */
-  def forName(spark: SparkSession, name: String): GravitinoDeltaTable = {
-    require(spark != null, "SparkSession is required")
-    require(name != null && name.trim.nonEmpty, "Target name is required")
-    val parts = spark.sessionState.sqlParser.parseMultipartIdentifier(name)
-    require(
-      parts.size == 3 && parts.forall(_.nonEmpty),
-      "Canonical three-part target name required"
-    )
-    // Delta installs its native analyzer defaults lazily. Complete that initialization before
-    // freezing the context, without resolving or reading the target.
-    spark.sessionState.analyzer
-    new GravitinoDeltaTable(new GravitinoDeltaTable.Context(spark), parts.toVector, None)
   }
 
   private[ranger] final class Context(val spark: SparkSession) {

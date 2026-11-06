@@ -48,6 +48,7 @@ private[ranger] final class DeltaRangerCreateMutation(
 ) extends DeltaCreateLifecycle
     with DeltaRangerNativeOperation.CommitOwner {
   import DeltaRangerCreateMutation._
+  private val input = command.externalInput
   private val engine = catalog.policyEngine()
   private val subject = DeltaRangerQuerySubject.current(spark)
   private val key = new DeltaRangerResourceKey(
@@ -82,6 +83,19 @@ private[ranger] final class DeltaRangerCreateMutation(
 
   def nativeConfirmed: Boolean = confirmed
   def publishedCreate: Boolean = published
+  def requireExternalPublication(candidate: DeltaRangerMetadataInput): Unit = {
+    context()
+    if (
+      !input.exists(_ eq candidate) || !closed || !published || !confirmed ||
+      !nativeClosed || !publicationChecked || OptimisticTransaction.getActive.nonEmpty
+    )
+      denied("unconfirmed external CREATE publication")
+    catalog.requireCreateMetadataLive()
+    observePublication()
+    val head = transaction.deltaLog.unsafeVolatileSnapshot
+    if (head.version != 0 || head.metadata != expectedMetadata || head.protocol != expectedProtocol)
+      denied("external CREATE head changed")
+  }
   override def session(): SparkSession = spark
 
   override def beforeReserve(
@@ -94,6 +108,7 @@ private[ranger] final class DeltaRangerCreateMutation(
       mapper.readTree(schemaJson) != mapper.readTree(intent.schemaJson()) || !options.isEmpty
     )
       denied("materialization differs from issued declaration")
+    input.foreach(_.requireLive())
     authorize()
     reserved = true
   }
@@ -129,6 +144,7 @@ private[ranger] final class DeltaRangerCreateMutation(
         .current() != null || OptimisticTransaction.getActive.nonEmpty
     )
       denied("native context changed during authorization")
+    input.foreach(_.requireLive())
     nativeEntered = true
     active.set(this)
     try operation = DeltaRangerNativeOperation.commit(this)

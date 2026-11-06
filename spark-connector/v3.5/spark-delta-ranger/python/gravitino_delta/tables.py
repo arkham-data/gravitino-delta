@@ -104,6 +104,13 @@ def _metadata_result(raw: str) -> GravitinoDeltaMetadata:
         raise ValueError("Invalid Gravitino Delta metadata response") from None
 
 
+def _metadata_source(spark: SparkSession, source: DataFrame) -> None:
+    if not isinstance(source, DataFrame):
+        raise TypeError("A classic PySpark DataFrame is required")
+    if source.sparkSession is not spark:
+        raise ValueError("Source must belong to the same SparkSession")
+
+
 class GravitinoDeltaTable:
     """A named target bound to its original classic SparkSession and JVM context."""
 
@@ -142,13 +149,16 @@ class GravitinoDeltaTable:
     @classmethod
     def create(cls, spark: SparkSession, name: str, schema: StructType, *,
                partition_by: Optional[Sequence] = None, properties: Optional[Mapping] = None,
-               comment: Optional[str] = None, if_not_exists: bool = False) -> None:
+               comment: Optional[str] = None, if_not_exists: bool = False,
+               source: Optional[DataFrame] = None) -> None:
         """Synchronously create an empty canonical named table from a classic StructType.
 
         Partition entries are literal top-level column names. Inputs are copied, and
         Spark's JSON schema codec preserves types, nullability, and field metadata.
         IF NOT EXISTS succeeds only on positively published metadata after CREATE
         authorization. Unsupported declarations still reject. No final SELECT is made.
+        A supplied source binds its exact live JDBC scopes to successful publication;
+        it is never materialized by CREATE.
         """
         if not isinstance(spark, SparkSession):
             raise TypeError("A classic PySpark SparkSession is required; Spark Connect is unsupported")
@@ -170,10 +180,12 @@ class GravitinoDeltaTable:
             raise TypeError("Comment must be a string or None")
         if type(if_not_exists) is not bool:
             raise TypeError("if_not_exists must be a bool")
+        if source is not None:
+            _metadata_source(spark, source)
         schema_json = schema.json()
         entry = _entry(spark)
         try:
-            create = entry.create
+            create = entry.create if source is None else entry.createForInput
             if not callable(create):
                 raise TypeError("Not callable")
         except Exception as error:
@@ -187,7 +199,31 @@ class GravitinoDeltaTable:
         java_schema = spark._jsparkSession.parseDataType(schema_json)
         # Invocation failures carry native/publication outcomes and must never be
         # reclassified as an absent API or retried by the language binding.
-        create(spark._jsparkSession, name, java_schema, java_list, java_map, comment, if_not_exists)
+        arguments = (spark._jsparkSession, name, java_schema, java_list, java_map, comment, if_not_exists)
+        if source is None:
+            create(*arguments)
+        else:
+            create(*arguments, source._jdf)
+
+    @classmethod
+    def enableChangeDataFeed(cls, spark: SparkSession, name: str, *,
+                             source: Optional[DataFrame] = None) -> None:
+        """Enable named CDF, retaining only explicitly participating live JDBC scopes.
+
+        Native failures preserve their original committed or uncertain outcome. This
+        operation never selects the source or retries ALTER.
+        """
+        _name(name, "Target name")
+        if source is not None:
+            _metadata_source(spark, source)
+        entry = _entry(spark)
+        try:
+            enable = entry.enableChangeDataFeed
+            if not callable(enable):
+                raise TypeError("Not callable")
+        except Exception as error:
+            raise RuntimeError("Gravitino Delta JVM CDF API is missing; install the matching runtime") from error
+        enable(spark._jsparkSession, name, None if source is None else source._jdf)
 
     def alias(self, name: str) -> "GravitinoDeltaTable":
         """Return a target handle with a parser-validated occurrence alias."""

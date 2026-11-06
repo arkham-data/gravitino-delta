@@ -79,11 +79,20 @@ private[ranger] object DeltaRangerCreateCommand {
     private val name = resolved.identifier.name()
     private val plugin = resolved.catalog
     private val schemaJson = declaration.schemaJson
+    private var input: Option[DeltaRangerMetadataInput] = None
     private var used = false
     private var invoking = false
     private var mutation: DeltaRangerCreateMutation = null
     private var physical: DeltaRangerCreateExec = null
     val logical: Carrier = Carrier()(this)
+
+    def bindInput(candidate: Carrier, value: DeltaRangerMetadataInput): Unit = {
+      check(candidate, spark)
+      if (input.nonEmpty) denied("input already bound")
+      value.requireLive()
+      input = Some(value)
+    }
+    def externalInput: Option[DeltaRangerMetadataInput] = input
 
     def context(): Unit = {
       if (
@@ -125,6 +134,7 @@ private[ranger] object DeltaRangerCreateCommand {
       verify(candidate, spark)
       if (DeltaRangerNativeOperation.current() != null || OptimisticTransaction.getActive.nonEmpty)
         denied("nested native operation")
+      input.foreach(_.requireLive())
       used = true
       invoking = true
       try {
@@ -149,6 +159,7 @@ private[ranger] object DeltaRangerCreateCommand {
           }
         )
         if (mutation == null || !mutation.publishedCreate) denied("publication unconfirmed")
+        input.foreach(_.complete(mutation))
       } catch {
         case failure: Throwable =>
           if (mutation == null) throw failure

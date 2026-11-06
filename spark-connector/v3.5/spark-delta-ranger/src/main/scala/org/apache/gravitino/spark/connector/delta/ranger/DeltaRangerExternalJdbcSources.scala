@@ -93,6 +93,16 @@ private[ranger] object DeltaRangerExternalJdbcSources {
     bound
   }
 
+  def advanceMetadataPublication(
+      witness: DeltaRangerMetadataInput#Publication,
+      participants: Vector[BoundInput]
+  ): Unit = lock.synchronized {
+    participants.foreach(source => source.owner.validateMetadataPublication(witness, source))
+    participants.map(_.owner).distinct.foreach { owner =>
+      owner.advanceMetadataPublication(witness)
+    }
+  }
+
   final class Scope private[DeltaRangerExternalJdbcSources] (
       private val spark: SparkSession,
       lifetimeSeconds: Long,
@@ -209,6 +219,28 @@ private[ranger] object DeltaRangerExternalJdbcSources {
       requireLive()
     }
 
+    private[DeltaRangerExternalJdbcSources] def validateMetadataPublication(
+        witness: DeltaRangerMetadataInput#Publication,
+        source: BoundInput
+    ): Unit = {
+      requireContext()
+      witness.requireParticipant(source)
+      if (!bindings.exists(_ eq source) || configuration != witness.beforeSettings) denied()
+      source.requireNative()
+      val key = "spark.databricks.delta.lastCommitVersionInSession"
+      val actualEffective = spark.sessionState.conf.getAllDefinedConfs.map(v => v._1 -> v._2).toMap
+      if (actualEffective - key != effective - key || spark.conf.getAll != witness.afterSettings)
+        denied()
+    }
+
+    private[DeltaRangerExternalJdbcSources] def advanceMetadataPublication(
+        witness: DeltaRangerMetadataInput#Publication
+    ): Unit = {
+      configuration = witness.afterSettings
+      effective = spark.sessionState.conf.getAllDefinedConfs.map(v => v._1 -> v._2).toMap
+      requireLive()
+    }
+
     override def close(): Unit = lock.synchronized {
       if (!closed) {
         closed = true
@@ -221,7 +253,7 @@ private[ranger] object DeltaRangerExternalJdbcSources {
   }
 
   final class BoundInput private[DeltaRangerExternalJdbcSources] (
-      private val owner: Scope,
+      private[DeltaRangerExternalJdbcSources] val owner: Scope,
       val relation: JDBCRelation,
       private val issue: String
   ) {

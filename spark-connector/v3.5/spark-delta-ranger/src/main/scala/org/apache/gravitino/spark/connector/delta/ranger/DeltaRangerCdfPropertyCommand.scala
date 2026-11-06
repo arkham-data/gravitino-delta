@@ -88,6 +88,8 @@ private[ranger] object DeltaRangerCdfPropertyCommand {
       "alter",
       Option(target.descriptor().owner).filter(_.nonEmpty).orNull
     )
+    private var input: Option[DeltaRangerMetadataInput] = None
+    private var mutation: DeltaRangerCdfPropertyMutation = null
     private var used = false
     private var invoking = false
     private var published = false
@@ -97,6 +99,18 @@ private[ranger] object DeltaRangerCdfPropertyCommand {
     target.validateCurrent(spark)
     engine.authorize(subject, key)
     requireCurrent()
+
+    def bindInput(candidate: Carrier, value: DeltaRangerMetadataInput): Unit = {
+      check(candidate, spark)
+      if (input.nonEmpty) denied("input already bound")
+      value.requireLive()
+      input = Some(value)
+    }
+
+    def requireCompletedMutation(candidate: DeltaRangerCdfPropertyMutation): Unit = {
+      requireCatalog()
+      if (!invoking || !published || (mutation ne candidate)) denied("foreign completed mutation")
+    }
 
     def requireCurrent(): Unit = {
       requireContext()
@@ -131,11 +145,21 @@ private[ranger] object DeltaRangerCdfPropertyCommand {
       target.validateCurrent(spark)
       engine.authorize(subject, key)
       requireCurrent()
+      input.foreach(_.requireLive())
       used = true
       invoking = true
       val change = TableChange.setProperty(property, properties(property))
-      try DeltaRangerCatalogSpark35.withCdfAlter(this, () => plugin.alterTable(identifier, change))
-      finally invoking = false
+      try {
+        DeltaRangerCatalogSpark35.withCdfAlter(this, () => plugin.alterTable(identifier, change))
+        if (mutation == null || !published) denied("publication unconfirmed")
+        input.foreach(_.complete(mutation))
+      } catch {
+        case failure: Throwable if published && input.nonEmpty =>
+          throw new IllegalStateException(
+            "CDF property change committed; completion unconfirmed; do not retry ALTER",
+            failure
+          )
+      } finally invoking = false
       Nil
     }
 
@@ -162,14 +186,15 @@ private[ranger] object DeltaRangerCdfPropertyCommand {
       target.validateCurrent(spark)
       engine.authorize(subject, key)
       requireCurrent()
-      val mutation =
-        new DeltaRangerCdfPropertyMutation(
-          target,
-          spark,
-          properties,
-          () => requireCatalog(),
-          () => published = true
-        )
+      mutation = new DeltaRangerCdfPropertyMutation(
+        target,
+        spark,
+        properties,
+        () => requireCatalog(),
+        () => published = true,
+        input,
+        this
+      )
       mutation.run()
     }
 

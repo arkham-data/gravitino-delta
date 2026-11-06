@@ -19,9 +19,12 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
+import org.apache.hadoop.fs.{Path => HadoopPath}
+
 import java.io.{PrintWriter, StringWriter}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path, Paths}
+import java.net.URI
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.{Collections, IdentityHashMap, Optional, OptionalLong}
@@ -444,6 +447,8 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
         }
         val actions = Files.readAllLines(trace.log0).asScala.map(mapper.readTree)
         val nativeId = actions.find(_.has("metaData")).get.get("metaData").get("id").asText()
+        val publishedLocation = new HadoopPath(trace.target.toUri.toString).toUri.toString
+        assertEquals(trace.target.toString, URI.create(publishedLocation).getPath)
         receipt = DeltaRegistrationReceipt.of(
           receipt.identity(),
           receipt.operation(),
@@ -452,7 +457,7 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
           DeltaRegistrationReceipt.Evidence.EXACT_NATIVE_COMMIT,
           "NONE",
           Optional.empty[DeltaOperationMarker](),
-          Optional.of(trace.target.toUri.toString),
+          Optional.of(publishedLocation),
           Optional.of(nativeId),
           OptionalLong.of(0)
         )

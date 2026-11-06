@@ -84,6 +84,33 @@ class TestTables(unittest.TestCase):
         self.assertEqual(["id"], args[3])
         self.assertEqual("id", args[4]["primary_key"])
 
+    def test_source_metadata_calls_keep_original_jdf_and_native_failures(self):
+        self.spark._jsparkSession = MagicMock()
+        self.jvm.java.util.ArrayList.side_effect = JavaList
+        schema = StructType([StructField("id", LongType())])
+        self.api.GravitinoDeltaTable.create(self.spark, "a.db.t", schema, source=self.source)
+        self.entry.create.assert_not_called()
+        self.assertIs(self.source._jdf, self.entry.createForInput.call_args.args[-1])
+        self.api.GravitinoDeltaTable.enableChangeDataFeed(self.spark, "a.db.t", source=self.source)
+        self.entry.enableChangeDataFeed.assert_called_once_with(self.spark._jsparkSession, "a.db.t", self.source._jdf)
+        error = RuntimeError("committed; do not replay")
+        self.entry.enableChangeDataFeed.side_effect = error
+        with self.assertRaises(RuntimeError) as raised:
+            self.api.GravitinoDeltaTable.enableChangeDataFeed(self.spark, "a.db.t", source=self.source)
+        self.assertIs(error, raised.exception)
+
+    def test_metadata_sources_must_be_same_session_classic_dataframes(self):
+        schema = StructType([StructField("id", LongType())])
+        for source in [object(), object.__new__(DataFrame)]:
+            if isinstance(source, DataFrame):
+                source._session = object()
+            with self.assertRaises((TypeError, ValueError)):
+                self.api.GravitinoDeltaTable.create(self.spark, "a.db.t", schema, source=source)
+            with self.assertRaises((TypeError, ValueError)):
+                self.api.GravitinoDeltaTable.enableChangeDataFeed(self.spark, "a.db.t", source=source)
+        self.entry.createForInput.assert_not_called()
+        self.entry.enableChangeDataFeed.assert_not_called()
+
     def test_create_validates_types_before_gateway_execution(self):
         schema = StructType([StructField("id", LongType())])
         invalid = [({"schema": "id BIGINT"}, TypeError), ({"spark": object()}, TypeError),

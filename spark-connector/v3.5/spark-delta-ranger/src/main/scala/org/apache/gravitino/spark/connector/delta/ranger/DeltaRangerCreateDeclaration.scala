@@ -94,6 +94,12 @@ private[ranger] object DeltaRangerCreateDeclaration {
     "spark.sql.sources.partitionOverwriteMode" -> "static"
   )
 
+  private val sharedWriterSettings = hubSettings ++ Map(
+    "spark.databricks.delta.optimizeWrite.enabled" -> "false",
+    "spark.databricks.delta.autoCompact.enabled" -> "false",
+    "spark.databricks.delta.properties.defaults.compatibility.symlinkFormatManifest.enabled" -> "false"
+  )
+
   def apply(
       command: CreateTable,
       specification: TableSpec,
@@ -107,7 +113,10 @@ private[ranger] object DeltaRangerCreateDeclaration {
     def matches(settings: Map[String, String]): Boolean = settings.forall { case (key, value) =>
       spark.conf.getOption(key).contains(value)
     }
-    if (!matches(legacySettings) && !(matches(hubSettings) && nativeHubTuning(spark)))
+    val sharedWriter = matches(sharedWriterSettings) && nativeHubTuning(spark)
+    if (
+      !matches(legacySettings) && !(matches(hubSettings) && nativeHubTuning(spark)) && !sharedWriter
+    )
       denied("unsupported initial CREATE settings")
     val schemaJson = command.tableSchema.json
     val schema = DataType.fromJson(schemaJson).asInstanceOf[StructType]
@@ -128,10 +137,19 @@ private[ranger] object DeltaRangerCreateDeclaration {
         denied("invalid or duplicate column")
       if (!ordinary(field.dataType)) denied("unsupported column type")
       val metadata = mapper.readTree(field.metadata.json)
-      if ((metadata.fieldNames().asScala.toSet -- Set("comment")).nonEmpty)
+      if ((metadata.fieldNames().asScala.toSet -- Set("comment", "isSigned", "scale")).nonEmpty)
         denied("unsupported column metadata")
       if (metadata.has("comment") && !metadata.get("comment").isTextual)
         denied("invalid column comment")
+      // Native JDBC schema descriptors are inert type metadata, not Delta feature authority.
+      if (metadata.has("isSigned") && !metadata.get("isSigned").isBoolean)
+        denied("invalid JDBC signed descriptor")
+      if (
+        metadata.has("scale") && (!metadata.get("scale").isIntegralNumber || !metadata
+          .get("scale")
+          .canConvertToLong)
+      )
+        denied("invalid JDBC scale descriptor")
     }
     val source =
       identities(command.partitioning.toArray).getOrElse(denied("unsupported partition transform"))
@@ -144,7 +162,7 @@ private[ranger] object DeltaRangerCreateDeclaration {
       denied("invalid partition columns")
     val explicit = specification.properties.toMap
     if (!explicit.keySet.subsetOf(allowed)) denied("unsupported table property")
-    validate(explicit)
+    validate(explicit, sharedWriter)
     val sessionDefaults = spark.sessionState.conf.getAllConfs.collect {
       case (key, value) if key.startsWith(defaultsPrefix) =>
         ("delta." + key.stripPrefix(defaultsPrefix)) -> value
@@ -154,7 +172,7 @@ private[ranger] object DeltaRangerCreateDeclaration {
         (allowed - "primary_key") + "delta.dataSkippingNumIndexedCols"
       )
     ) denied("unsupported session default")
-    validate(sessionDefaults)
+    validate(sessionDefaults, sharedWriter)
     if (sessionDefaults.get("delta.dataSkippingNumIndexedCols").exists(_ != "-1"))
       denied("unsupported data skipping default")
     val effective = DeltaConfigs
@@ -162,7 +180,9 @@ private[ranger] object DeltaRangerCreateDeclaration {
       .updated("delta.columnMapping.mode", "none")
     if (
       !effective.get("delta.enableChangeDataFeed").contains("true") ||
-      !effective.get("delta.compatibility.symlinkFormatManifest.enabled").contains("true")
+      !effective
+        .get("delta.compatibility.symlinkFormatManifest.enabled")
+        .contains(if (sharedWriter) "false" else "true")
     ) denied("required CREATE properties missing")
     new DeltaRangerCreateDeclaration(
       schemaJson,
@@ -201,8 +221,8 @@ private[ranger] object DeltaRangerCreateDeclaration {
     case MapType(StringType, StringType, true) => true
     case other                                 => scalar(other)
   }
-  private def validate(properties: Map[String, String]): Unit = properties.foreach {
-    case (key, value) =>
+  private def validate(properties: Map[String, String], sharedWriter: Boolean): Unit =
+    properties.foreach { case (key, value) =>
       if (value == null) denied("null property")
       if (
         retention(key) && !value.matches(
@@ -210,10 +230,13 @@ private[ranger] object DeltaRangerCreateDeclaration {
         )
       ) denied("unsupported retention")
       if (
-        (key == "delta.enableChangeDataFeed" || key == "delta.compatibility.symlinkFormatManifest.enabled") && value != "true"
+        (key == "delta.enableChangeDataFeed" && value != "true") ||
+        (key == "delta.compatibility.symlinkFormatManifest.enabled" && value != (if (sharedWriter)
+                                                                                   "false"
+                                                                                 else "true"))
       ) denied("required CREATE property disabled")
       if (key == "delta.columnMapping.mode" && value != "none") denied("unsupported column mapping")
-  }
+    }
   private def denied(reason: String): Nothing = throw new SecurityException(
     "Schema CREATE rejected: " + reason
   )

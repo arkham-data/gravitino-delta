@@ -188,7 +188,13 @@ class TestDeltaRangerOrdinaryCreate {
           new StructType().add("map", MapType(StringType, StringType, false)),
           new StructType().add("map", MapType(LongType, StringType, true)),
           new StructType()
-            .add("id", LongType, true, new MetadataBuilder().putLong("comment", 1L).build())
+            .add("id", LongType, true, new MetadataBuilder().putLong("comment", 1L).build()),
+          new StructType()
+            .add("id", LongType, true, new MetadataBuilder().putString("isSigned", "true").build()),
+          new StructType()
+            .add("id", LongType, true, new MetadataBuilder().putBoolean("scale", true).build()),
+          new StructType()
+            .add("id", LongType, true, new MetadataBuilder().putDouble("scale", 1.5).build())
         ) ++ Vector(
           "delta.generationExpression",
           "delta.identity.start",

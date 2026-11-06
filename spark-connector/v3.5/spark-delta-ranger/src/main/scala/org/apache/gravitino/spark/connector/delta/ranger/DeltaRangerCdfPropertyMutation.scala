@@ -39,7 +39,9 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
     spark: SparkSession,
     properties: Map[String, String],
     validateCatalog: () => Unit,
-    committed: () => Unit
+    committed: () => Unit,
+    input: Option[DeltaRangerMetadataInput] = None,
+    commandOwner: DeltaRangerCdfPropertyCommand.Owner = null
 ) extends DeltaRangerNativeOperation.CommitOwner {
   import DeltaRangerCdfPropertyMutation._
   private val structure = new DeltaRangerMetadataStructure("CDF property mutation rejected: ")
@@ -73,9 +75,34 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
   private var publication: Option[(Vector[Any], Vector[Byte])] = None
   private var expectedMetadata: Metadata = null
   private var expectedProtocol: Protocol = null
+  private var succeeded = false
   private var closed = false
   private var invoked = false
   if (fs.exists(path)) denied("next publication already exists")
+
+  def publishedVersion: Long = version
+
+  def requireExternalPublication(candidate: DeltaRangerMetadataInput): Unit = {
+    if (
+      !closed || !succeeded || publication.isEmpty || !input.exists(_ eq candidate) ||
+      commandOwner == null || (Thread.currentThread() ne thread) ||
+      !SparkSession.getActiveSession.exists(_ eq spark) || OptimisticTransaction.getActive.nonEmpty
+    )
+      denied("unconfirmed external CDF publication")
+    commandOwner.requireCompletedMutation(this)
+    val current = DeltaRangerQuerySubject.current(spark)
+    if (current.user() != subject.user() || current.groups() != subject.groups())
+      denied("subject changed")
+    engine.requireSnapshot(stamp)
+    requireOutcomeIdentity()
+    readPublication()
+    target.requirePublicationContext(true, version)
+    val head = log.unsafeVolatileSnapshot
+    if (
+      head.version != version || head.metadata != expectedMetadata || head.protocol != expectedProtocol
+    )
+      denied("external CDF head changed")
+  }
 
   override def session(): SparkSession = spark
   def metadata: DeltaRangerCommitMetadata = {
@@ -155,10 +182,12 @@ private[ranger] final class DeltaRangerCdfPropertyMutation(
           captured
         }
       }
+      input.foreach(_.requireLive())
       command.run(spark)
       requireLive()
       if (publication.isEmpty) denied("missing native publication")
       operation.succeed()
+      succeeded = true
     } catch {
       case failure: Throwable =>
         primary = classifyFailure(failure)
