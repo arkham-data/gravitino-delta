@@ -15,7 +15,8 @@
 # limitations under the License.
 #
 
-"""Classic PySpark API for named, governed Delta MERGE."""
+"""Classic PySpark APIs for governed Delta and scoped native JDBC input."""
+from gravitino_delta.inputs import GravitinoJdbcInput
 from gravitino_delta.tables import GravitinoDeltaMergeBuilder, GravitinoDeltaTable
 
-__all__ = ["GravitinoDeltaTable", "GravitinoDeltaMergeBuilder"]
+__all__ = ["GravitinoDeltaTable", "GravitinoDeltaMergeBuilder", "GravitinoJdbcInput"]

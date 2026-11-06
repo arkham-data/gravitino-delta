@@ -33,11 +33,11 @@ class TestPackage(unittest.TestCase):
         self.assertEqual(1,len(archives),'Run deltaPythonZip before package tests')
         archive=archives[0]
         with zipfile.ZipFile(archive) as bundle:
-            self.assertEqual(['gravitino_delta/','gravitino_delta/__init__.py','gravitino_delta/tables.py'],bundle.namelist())
-        script="import json, gravitino_delta, gravitino_delta.tables; print(json.dumps({m.__name__:m.__file__ for m in [gravitino_delta,gravitino_delta.tables]}))"
+            self.assertEqual(['gravitino_delta/','gravitino_delta/__init__.py','gravitino_delta/inputs.py','gravitino_delta/tables.py'],bundle.namelist())
+        script="import json, gravitino_delta, gravitino_delta.inputs, gravitino_delta.tables; print(json.dumps({m.__name__:m.__file__ for m in [gravitino_delta,gravitino_delta.inputs,gravitino_delta.tables]}))"
         with tempfile.TemporaryDirectory() as directory:
             result=subprocess.run([sys.executable,'-c',script],cwd=directory,env=dict(os.environ,PYTHONPATH=str(archive)),text=True,capture_output=True,check=True)
-        self.assertEqual({'gravitino_delta':str(archive)+'/gravitino_delta/__init__.py','gravitino_delta.tables':str(archive)+'/gravitino_delta/tables.py'},json.loads(result.stdout))
+        self.assertEqual({'gravitino_delta':str(archive)+'/gravitino_delta/__init__.py','gravitino_delta.inputs':str(archive)+'/gravitino_delta/inputs.py','gravitino_delta.tables':str(archive)+'/gravitino_delta/tables.py'},json.loads(result.stdout))
 
 
 if __name__=='__main__':unittest.main()

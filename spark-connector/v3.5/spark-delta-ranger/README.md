@@ -541,6 +541,27 @@ opt-ins. The trusted application opens a scope with
 The returned classic DataFrame uses Spark's stock V1 JDBC provider and native
 JDBCRDD. There is no overload accepting an existing DataFrame.
 
+The packaged classic PySpark binding exposes the same scope:
+
+```python
+from gravitino_delta import GravitinoJdbcInput
+
+with GravitinoJdbcInput.open(spark, lifetime_seconds=1200) as inputs:
+    source = inputs.read(jdbc_options)
+    source.write.mode("append").insertInto("catalog.schema.existing_target")
+```
+
+Open after session initialization, keep the scope alive through every lazy action,
+and supply a mapping of strings to strings. The binding copies options, rejects
+case-insensitive duplicates and Spark Connect, checks protocol version 1, and
+preserves native invocation failures without retrying. Missing API lookup and
+native invocation errors remain distinct. The explicit Spark Hub adapter binds
+the owning reader only after constructing its actual session; it does not reroute
+legacy clients without that dependency. Its installed native lead-pair fixture
+qualifies the real source/remote COUNT and background tracker with named APPEND;
+live four-pair Ranger/MinIO qualification and the shared sink/CREATE migration
+remain separate.
+
 A lifetime of 1–86400 seconds is mandatory and measured monotonically; 1200
 seconds is used by the installed fixture. The scope owns the exact active
 SparkSession, authenticated subject/groups, complete configuration and issued
