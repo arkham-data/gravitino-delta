@@ -222,7 +222,7 @@ class TestDeltaRangerActionValidation {
   def eliminatedScanStillRequiresItsOriginalAccessAndRegistration(): Unit =
     NativeSelectFixture.withBoundSpark { (spark, policy) =>
       val frame = spark.sql("SELECT secret FROM a.db.t WHERE false")
-      val receipt = frame.queryExecution.analyzed.getTagValue(tag).get.receipt
+      val receipt = frame.queryExecution.normalized.getTagValue(tag).get.receipt
       assertTrue(
         DeltaRangerNativeScans.prepared(frame.queryExecution.optimizedPlan).occurrences.isEmpty
       )
@@ -451,7 +451,7 @@ class TestDeltaRangerActionValidation {
       spark: SparkSession,
       sql: String = "SELECT secret FROM a.db.t"
   ): DeltaRangerDecisionReceipt =
-    spark.sql(sql).queryExecution.analyzed.getTagValue(tag).get.receipt
+    spark.sql(sql).queryExecution.normalized.getTagValue(tag).get.receipt
 
   private def validate(receipt: DeltaRangerDecisionReceipt, spark: SparkSession): Unit =
     receipt.validateAction(spark)

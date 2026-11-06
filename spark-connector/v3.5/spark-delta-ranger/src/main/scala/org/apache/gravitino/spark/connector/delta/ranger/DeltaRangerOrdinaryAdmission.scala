@@ -50,6 +50,21 @@ private[ranger] object DeltaRangerOrdinaryAdmission {
         case _ => denied("registered JDBC operator")
       }
     }
+    if (plan.exists(DeltaRangerInputSources.isExternal)) {
+      val sources = DeltaRangerInputSources.leaves(plan)
+      if (
+        sources.count(DeltaRangerInputSources.isExternal) != 1 || sources.size > 2 ||
+        sources.exists(_.isInstanceOf[DataSourceV2Relation]) || plan.collect { case _: Join =>
+          1
+        }.size > 1
+      )
+        denied("external JDBC source count")
+      plan.foreach {
+        case _: LogicalRelation | _: Project | _: Filter | _: SubqueryAlias | _: Join |
+            _: Aggregate =>
+        case _ => denied("external JDBC operator")
+      }
+    }
     plan.foreach {
       case _: DataSourceV2Relation =>
       case _: LogicalRelation      =>

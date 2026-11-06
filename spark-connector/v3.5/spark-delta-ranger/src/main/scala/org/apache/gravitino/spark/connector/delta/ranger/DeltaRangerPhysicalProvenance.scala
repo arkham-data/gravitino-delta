@@ -25,6 +25,7 @@ import scala.collection.mutable
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.DeltaRangerExternalJdbcNative.{Relation => JDBCRelation}
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.expressions.{
   Alias,
@@ -611,7 +612,17 @@ private[ranger] object DeltaRangerPhysicalProvenance {
       case _ =>
         val fields = Vector(
           node.getClass,
-          node.productIterator.map(value).toVector,
+          node match {
+            case scan: RowDataSourceScanExec if scan.getClass == classOf[RowDataSourceScanExec] =>
+              // Stock copies rebuild these immutable sets. Bind the finite filter values while
+              // retaining exact identity for the RDD and every other constructor field.
+              scan.productIterator.zipWithIndex.map {
+                case (_, 2)    => scan.filters.map(DeltaRangerJdbcScans.filterBinding)
+                case (_, 3)    => scan.handledFilters.map(DeltaRangerJdbcScans.filterBinding)
+                case (item, _) => value(item)
+              }.toVector
+            case _ => node.productIterator.map(value).toVector
+          },
           node.output.map(value).toVector,
           node.children.map(physical).toVector
         )
@@ -656,15 +667,16 @@ private[ranger] object DeltaRangerPhysicalProvenance {
           fs.partitionSchema.json,
           fs.options
         )
-      case rdd: RDD[_]         => new Identity(rdd)
-      case data: DataType      => data.json
-      case metadata: Metadata  => metadata.json
-      case text: UTF8String    => text.getBytes.toVector
-      case id: ExprId          => expressionId(id)
-      case values: Seq[_]      => values.map(value).toVector
-      case optional: Option[_] => optional.map(value)
-      case array: Array[_]     => array.map(value).toVector
-      case text: String        => text
+      case relation: JDBCRelation => new Identity(relation)
+      case rdd: RDD[_]            => new Identity(rdd)
+      case data: DataType         => data.json
+      case metadata: Metadata     => metadata.json
+      case text: UTF8String       => text.getBytes.toVector
+      case id: ExprId             => expressionId(id)
+      case values: Seq[_]         => values.map(value).toVector
+      case optional: Option[_]    => optional.map(value)
+      case array: Array[_]        => array.map(value).toVector
+      case text: String           => text
       case number: java.lang.Double =>
         (classOf[java.lang.Double], java.lang.Double.doubleToRawLongBits(number))
       case number: java.lang.Float =>

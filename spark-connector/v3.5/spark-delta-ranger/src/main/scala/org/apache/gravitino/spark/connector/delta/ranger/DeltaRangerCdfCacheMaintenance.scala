@@ -101,7 +101,9 @@ private[ranger] object DeltaRangerCdfCacheMaintenance {
     private val stamp = engine.snapshotStamp()
     private val sources = input.receipt.obligations.map(_.source)
     private val sourceStamps =
-      sources.map(source => source.engine -> source.engine.snapshotStamp())
+      sources
+        .flatMap(DeltaRangerInputSources.named)
+        .map(source => source.engine -> source.engine.snapshotStamp())
     private val sourcePlan = DeltaRangerNativeProvenance.binding(input.analyzed)
     private var published: Snapshot = null
     private var used = false

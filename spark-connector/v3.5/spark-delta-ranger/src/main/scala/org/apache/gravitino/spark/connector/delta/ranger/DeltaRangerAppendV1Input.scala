@@ -394,7 +394,9 @@ private[ranger] final class DeltaRangerAppendInputStrategy(spark: SparkSession)
     case cdf: DeltaRangerCdfPropertyCommand.Carrier    => Seq(cdf.owner.plan(cdf, spark))
     case raw: DeltaRangerRawMaintenance.Carrier        => Seq(raw.owner.plan(raw.child))
     case append: AppendData => Seq(DeltaRangerAppendV1Input.plan(append, spark))
-    case _                  => DeltaRangerJdbcScans.plan(plan, spark)
+    case _ =>
+      val external = DeltaRangerExternalJdbcScans.plan(plan, spark)
+      if (external.nonEmpty) external else DeltaRangerJdbcScans.plan(plan, spark)
   }
 }
 

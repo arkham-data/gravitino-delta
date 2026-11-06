@@ -74,6 +74,9 @@ private[ranger] object DeltaRangerExternalJdbcSources {
       GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_SUPPORT,
       GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_EXTERNAL_JDBC_SUPPORT
     ).foreach { key => if (startup.get(key, "false") != "true") denied() }
+    // Stock Delta constructs its analyzer lazily and installs native Parquet field-ID settings.
+    // Initialize that trusted component before freezing settings, without executing any plan.
+    spark.sessionState.analyzer
     val scope = new Scope(spark, lifetimeSeconds, clock)
     scope.start()
     scope
@@ -94,8 +97,8 @@ private[ranger] object DeltaRangerExternalJdbcSources {
     private val started = clock()
     private val lifetime = TimeUnit.SECONDS.toNanos(lifetimeSeconds)
     private val subject = DeltaRangerQuerySubject.current(spark)
-    private val configuration = spark.conf.getAll
-    private val effective = spark.sessionState.conf.getAllDefinedConfs.map(v => v._1 -> v._2).toMap
+    private var configuration = spark.conf.getAll
+    private var effective = spark.sessionState.conf.getAllDefinedConfs.map(v => v._1 -> v._2).toMap
     private val bindings = mutable.ArrayBuffer.empty[BoundInput]
     private var closed = false
     private var timer: ScheduledFuture[_] = _
@@ -150,7 +153,7 @@ private[ranger] object DeltaRangerExternalJdbcSources {
       }
     }
 
-    def requireLive(): Unit = lock.synchronized {
+    private def requireContext(): Unit = {
       if (closed) denied()
       if (spark.sparkContext.isStopped || clock() - started >= lifetime) {
         close()
@@ -159,11 +162,47 @@ private[ranger] object DeltaRangerExternalJdbcSources {
       requireActive(spark)
       requireSafeLogging()
       val current = DeltaRangerQuerySubject.current(spark)
+      if (current.user() != subject.user() || current.groups() != subject.groups()) denied()
+    }
+
+    def requireLive(): Unit = lock.synchronized {
+      requireContext()
       if (
-        current.user() != subject.user() || current.groups() != subject.groups() ||
         configuration != spark.conf.getAll ||
         effective != spark.sessionState.conf.getAllDefinedConfs.map(v => v._1 -> v._2).toMap
       ) denied()
+    }
+
+    private[DeltaRangerExternalJdbcSources] def captureConfiguration(
+        expected: Map[String, String]
+    ): CapturedConfiguration = lock.synchronized {
+      requireLive()
+      if (expected != configuration) denied()
+      new CapturedConfiguration(this)
+    }
+
+    private[DeltaRangerExternalJdbcSources] def matchesConfiguration(
+        actual: Map[String, String]
+    ): Boolean = lock.synchronized {
+      requireLive()
+      actual == configuration
+    }
+
+    private[DeltaRangerExternalJdbcSources] def advancePublication(
+        witness: DeltaRangerAppendCommandBinding.ExternalPublication,
+        source: BoundInput
+    ): Unit = lock.synchronized {
+      requireContext()
+      witness.requireParticipant(source)
+      if (!bindings.exists(_ eq source) || configuration != witness.beforeSettings) denied()
+      source.requireNative()
+      val key = "spark.databricks.delta.lastCommitVersionInSession"
+      val actualEffective = spark.sessionState.conf.getAllDefinedConfs.map(v => v._1 -> v._2).toMap
+      if (actualEffective - key != effective - key || spark.conf.getAll != witness.afterSettings)
+        denied()
+      configuration = witness.afterSettings
+      effective = actualEffective
+      requireLive()
     }
 
     override def close(): Unit = lock.synchronized {
@@ -204,8 +243,21 @@ private[ranger] object DeltaRangerExternalJdbcSources {
 
     def requireSame(candidate: JDBCRelation): Unit = {
       owner.requireLive()
+      if (candidate ne relation) denied()
+      requireNative()
+    }
+
+    def captureConfiguration(expected: Map[String, String]): CapturedConfiguration = {
+      requireSame(relation)
+      owner.captureConfiguration(expected)
+    }
+
+    def advancePublication(witness: DeltaRangerAppendCommandBinding.ExternalPublication): Unit =
+      owner.advancePublication(witness, this)
+
+    private[DeltaRangerExternalJdbcSources] def requireNative(): Unit = {
       if (
-        (candidate ne relation) || schema != relation.schema.json ||
+        schema != relation.schema.json ||
         options != relation.jdbcOptions.parameters.originalMap ||
         properties != snapshotProperties(relation.jdbcOptions.asProperties) ||
         connectionProperties != snapshotProperties(relation.jdbcOptions.asConnectionProperties) ||
@@ -215,6 +267,13 @@ private[ranger] object DeltaRangerExternalJdbcSources {
         }.toVector
       ) denied()
     }
+  }
+
+  /** Captured by an existing origin/receipt; only its own scope's proved transitions can advance
+    * it.
+    */
+  final class CapturedConfiguration private[DeltaRangerExternalJdbcSources] (owner: Scope) {
+    def matches(actual: Map[String, String]): Boolean = owner.matchesConfiguration(actual)
   }
 
   private def snapshotProperties(properties: Properties): Map[AnyRef, AnyRef] =

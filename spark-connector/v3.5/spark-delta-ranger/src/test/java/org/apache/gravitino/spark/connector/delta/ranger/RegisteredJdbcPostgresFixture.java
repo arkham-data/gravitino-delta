@@ -170,6 +170,29 @@ final class RegisteredJdbcPostgresFixture implements AutoCloseable {
     }
   }
 
+  // Test-only advisory lock pauses one explicit extraction query while a different input writes.
+  Connection blockExternalPayload() throws Exception {
+    String admin = Files.readAllLines(environment).get(0).substring("POSTGRES_PASSWORD=".length());
+    Connection connection = DriverManager.getConnection(url, "postgres", admin);
+    try {
+      try (Statement statement = connection.createStatement()) {
+        statement.execute("SELECT pg_advisory_lock(8675309)");
+      }
+      return connection;
+    } catch (Exception failure) {
+      connection.close();
+      throw failure;
+    }
+  }
+
+  void advanceSource() throws Exception {
+    String admin = Files.readAllLines(environment).get(0).substring("POSTGRES_PASSWORD=".length());
+    try (Connection connection = DriverManager.getConnection(url, "postgres", admin);
+        Statement statement = connection.createStatement()) {
+      statement.execute("INSERT INTO public.source VALUES (4, 'four', 'keep')");
+    }
+  }
+
   int blockedSchemaReads() throws Exception {
     String admin = Files.readAllLines(environment).get(0).substring("POSTGRES_PASSWORD=".length());
     try (Connection connection = DriverManager.getConnection(url, "postgres", admin);

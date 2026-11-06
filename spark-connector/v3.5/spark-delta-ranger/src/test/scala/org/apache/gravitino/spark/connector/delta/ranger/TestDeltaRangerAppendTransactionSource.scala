@@ -449,7 +449,16 @@ class TestDeltaRangerAppendTransactionSource {
         ) {
           e.mutationFired = true
           val foreign =
-            new DeltaRangerNativeScans.Prepared(null, None, Vector.empty, null, Nil, None, null)
+            new DeltaRangerNativeScans.Prepared(
+              null,
+              None,
+              Vector.empty,
+              null,
+              null,
+              Nil,
+              None,
+              null
+            )
           assertReason(
             assertThrows(classOf[SecurityException], () => e.sourceOwner.complete(foreign)),
             "source preparation issuance changed"

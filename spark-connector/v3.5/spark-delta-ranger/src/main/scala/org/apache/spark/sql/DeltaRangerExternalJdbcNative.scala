@@ -20,8 +20,12 @@
 package org.apache.spark.sql
 
 import org.apache.spark.sql.execution.datasources.jdbc.JDBCRelation
+import org.apache.spark.sql.execution.datasources.LogicalRelation
 
 /** Names Spark's unchanged native relation across its Scala source visibility boundary. */
 private[apache] object DeltaRangerExternalJdbcNative {
   type Relation = JDBCRelation
+
+  def frame(spark: SparkSession, relation: Relation): DataFrame =
+    Dataset.ofRows(spark, LogicalRelation(relation))
 }

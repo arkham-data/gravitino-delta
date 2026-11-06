@@ -55,14 +55,25 @@ import org.apache.spark.sql.internal.SQLConf
 
 /** Seals the complete prepared recipe before the qualified stock optimizer suffix. */
 private[ranger] object DeltaRangerPhysicalPlanning {
-  final class LogicalWitness(plan: LogicalPlan, session: SparkSession) {
+  final class LogicalWitness(
+      plan: LogicalPlan,
+      session: SparkSession,
+      originalConfiguration: Option[DeltaRangerNativeScans.OriginalConfiguration] = None
+  ) {
     private val original = plan.clone()
     private val frozen = DeltaRangerNativeProvenance.binding(original)
     private val configuration = session.sessionState.conf.clone()
     private val settings = configuration.getAllConfs
+    // Pruned sources keep the same original configuration obligations as surviving sources.
+    private val capturedConfiguration =
+      originalConfiguration
+        .map(_.capture(plan, session, settings))
+        .getOrElse(new DeltaRangerInputSources.Configuration(Nil, settings))
 
     def replay(spark: SparkSession, verifySource: LogicalPlan => Unit): LogicalPlan = {
-      if (!(spark eq session) || settings != spark.sessionState.conf.getAllConfs)
+      if (
+        !(spark eq session) || !capturedConfiguration.matches(spark.sessionState.conf.getAllConfs)
+      )
         denied("planning session or configuration changed")
       def checkOriginal(): Unit = {
         verifySource(original)
@@ -76,7 +87,7 @@ private[ranger] object DeltaRangerPhysicalPlanning {
         suffix.execute(original.clone())
       }
       checkOriginal()
-      if (settings != spark.sessionState.conf.getAllConfs)
+      if (!capturedConfiguration.matches(spark.sessionState.conf.getAllConfs))
         denied("planning configuration changed")
       expected
     }
@@ -194,7 +205,9 @@ private[ranger] object DeltaRangerPhysicalPlanning {
       // The installed append/input strategy delegates only issued JDBC PhysicalOperations.
       // Replay uses the same private continuation before otherwise unchanged stock strategies.
       override def strategies: Seq[SparkStrategy] =
-        new DeltaRangerJdbcScans.Strategy(spark) +: expected.strategies
+        new DeltaRangerExternalJdbcScans.Strategy(spark) +: new DeltaRangerJdbcScans.Strategy(
+          spark
+        ) +: expected.strategies
     }
   }
 

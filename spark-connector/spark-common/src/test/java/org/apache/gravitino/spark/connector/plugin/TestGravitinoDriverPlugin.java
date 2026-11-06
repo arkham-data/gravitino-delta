@@ -52,6 +52,21 @@ public class TestGravitinoDriverPlugin {
       "org.apache.gravitino.spark.connector.delta.GravitinoDeltaCatalogSpark35";
 
   @Test
+  void testExternalJdbcOptInRequiresOriginalDeltaRangerDependencies() {
+    SparkConf conf =
+        new SparkConf(false).set("spark.gravitino.enableDeltaRangerExternalJdbcSupport", "true");
+    List<String> loaded = new ArrayList<>();
+    GravitinoDriverPlugin plugin = new GravitinoDriverPlugin(() -> DELTA_CATALOG, loaded::add);
+    assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(conf));
+    conf.set("spark.gravitino.enableDeltaSupport", "true");
+    assertThrows(IllegalArgumentException.class, () -> plugin.configureDeltaSupport(conf));
+    conf.set("spark.gravitino.enableDeltaRangerSupport", "true");
+    plugin.configureDeltaSupport(conf);
+    assertTrue(
+        loaded.contains("org.apache.gravitino.spark.connector.delta.ranger.GravitinoJdbcInput"));
+  }
+
+  @Test
   void testRegisteredJdbcOptInRequiresDeltaRangerAndSelectsOnlyPostgresql() {
     String jdbc = "spark.gravitino.enableDeltaRangerJdbcSupport";
     String wrapper =

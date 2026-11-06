@@ -149,18 +149,20 @@ private[ranger] class DeltaRangerReadRule(
             )
           case _ =>
         }
-        (source, columns, source.engine)
+        (source, columns, DeltaRangerInputSources.named(source))
       }
     val configuration = spark.sessionState.conf.clone()
-    val stamps = bound.map(_._3).distinct.map(e => e -> e.snapshotStamp()).toMap
+    val stamps = bound.flatMap(_._3.map(_.engine)).distinct.map(e => e -> e.snapshotStamp()).toMap
     val instant = Instant.now()
     // Complete original authorization for every table before asking for any rewrite.
     bound
-      .flatMap { case (scan, columns, engine) =>
-        DeltaRangerResourceKey
-          .select(scan.catalog, scan.database, scan.table, columns.asJava, scan.owner.orNull)
-          .asScala
-          .map(key => engine -> key)
+      .flatMap { case (_, columns, resource) =>
+        resource.toVector.flatMap { scan =>
+          DeltaRangerResourceKey
+            .select(scan.catalog, scan.database, scan.table, columns.asJava, scan.owner.orNull)
+            .asScala
+            .map(key => scan.engine -> key)
+        }
       }
       .distinct
       .foreach { case (engine, key) => engine.authorize(subject, key, instant) }
@@ -169,7 +171,13 @@ private[ranger] class DeltaRangerReadRule(
       new DeltaRangerDecisionReceipt.Obligation(
         scan,
         columns,
-        DeltaRangerMaskRules.capture(scan, columns, engine, subject, instant)
+        engine
+          .map(resource =>
+            DeltaRangerMaskRules.capture(resource, columns, resource.engine, subject, instant)
+          )
+          .getOrElse(
+            new DeltaRangerMaskRules.Decisions(java.util.Optional.empty[String](), Map.empty)
+          )
       )
     }
     if (configuration.getAllConfs != spark.sessionState.conf.getAllConfs)
@@ -332,6 +340,9 @@ private[ranger] object DeltaRangerReadRule {
             val result = node match {
               case relation: DataSourceV2Relation =>
                 DeltaRangerJdbcScans.logicalBinding(relation)
+                relation
+              case relation: LogicalRelation if DeltaRangerInputSources.isExternal(relation) =>
+                DeltaRangerExternalJdbcScans.logicalBinding(relation)
                 relation
               case relation: LogicalRelation =>
                 relation.relation match {

@@ -529,3 +529,56 @@ Run its deliberately enabled Docker tests with
 `--tests '*TestDeltaRangerRegisteredJdbc*'` on this module's `test` task. The local
 fixture requires the readiness-pinned PostgreSQL 16 image and uses a fresh
 loopback port, private credentials and a read-only role for each scenario.
+
+## Job-scoped external PostgreSQL input
+
+The installed companion also provides `GravitinoJdbcInput.apiVersion() == 1`.
+Enable `spark.gravitino.enableDeltaRangerExternalJdbcSupport=true` in the original
+Spark startup configuration together with the existing Delta and Delta Ranger
+opt-ins. The trusted application opens a scope with
+`GravitinoJdbcInput.open(spark, lifetimeSeconds)`, calls
+`scope.read(java.util.Map[String, String])`, and closes it in `finally`.
+The returned classic DataFrame uses Spark's stock V1 JDBC provider and native
+JDBCRDD. There is no overload accepting an existing DataFrame.
+
+A lifetime of 1–86400 seconds is mandatory and measured monotonically; 1200
+seconds is used by the installed fixture. The scope owns the exact active
+SparkSession, authenticated subject/groups, complete configuration and issued
+native relations. Close or expiry blocks further actions and precommit checks;
+it does not atomically cancel a statement already executing in PostgreSQL.
+Repeated fresh actions use their own operation contexts. Only a confirmed native
+APPEND publication may advance the participating scope's captured
+`lastCommitVersionInSession`; unrelated configuration changes remain rejected.
+Source caches, checkpoints and cross-action snapshots are not supported.
+
+Required options are `url`, `driver`, `user`, `password` and `dbtable`. Keys are
+case-insensitive and duplicate spellings reject. The driver must be
+`org.postgresql.Driver`; URLs must identify one host and database without
+user-info, query or fragment. Optional `fetchsize` must be nonnegative. Explicit
+partitioning requires all four of `partitionColumn`, `lowerBound`, `upperBound`
+and positive `numPartitions`; native Spark validates types and bound values.
+Bounds determine partition stride, not a row filter. All other options reject,
+including explicit TLS options, `prepareQuery`, `sessionInitStatement`,
+`customSchema` and connection-provider callbacks. Native defaults remain intact;
+this is a bounded installed profile, not a deployed TLS qualification.
+
+`dbtable` may be a parenthesized query with an alias. Its access is governed by
+the supplied read-only database principal, not inferred Ranger resources.
+The trusted runtime must choose this route and keep extraction credentials from
+bypassing sources that must be Ranger-governed. Named inputs in a mixed plan keep
+their original SELECT, column, mask and filter obligations, including hidden and
+optimized-away inputs. Target authorization and native Delta transaction rules
+continue to apply. The bounded input supports native projection/filter, existing
+scalar expressions and `current_timestamp`, counts, and existing-table APPEND
+through `insertInto` or `saveAsTable`; a mixed input permits one external source
+and one named Delta source in the existing INNER-join grammar.
+
+Keep Spark's native
+`org.apache.spark.sql.execution.datasources.jdbc.connection.BasicConnectionProvider`
+logger at INFO or stricter throughout native IO. The scope rejects DEBUG/TRACE
+before connection construction and action checks, without changing global logger
+configuration. The application/runtime is trusted: concurrent arbitrary logger
+reconfiguration and distributed logging/TLS deployment are separately qualified.
+Remote count, DataFrame count and later APPEND can observe different source rows;
+telemetry does not establish the rows consumed by a write. Python/Hub routing and
+the four-version live Ranger/MinIO qualification are separate follow-up work.

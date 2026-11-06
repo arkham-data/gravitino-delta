@@ -263,6 +263,15 @@ public class GravitinoDriverPlugin implements DriverPlugin {
         !enableDeltaRangerJdbcSupport || (enableDeltaSupport && enableDeltaRangerSupport),
         "%s requires Delta and Delta Ranger support",
         GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_JDBC_SUPPORT);
+    boolean enableExternalJdbc =
+        conf.getBoolean(
+            GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_EXTERNAL_JDBC_SUPPORT, false);
+    Preconditions.checkArgument(
+        !enableExternalJdbc || (enableDeltaSupport && enableDeltaRangerSupport),
+        "%s requires Delta and Delta Ranger support",
+        GravitinoSparkConfig.GRAVITINO_ENABLE_DELTA_RANGER_EXTERNAL_JDBC_SUPPORT);
+    if (enableExternalJdbc)
+      validateDeltaClass("org.apache.gravitino.spark.connector.delta.ranger.GravitinoJdbcInput");
     if (!enableDeltaSupport) {
       return;
     }

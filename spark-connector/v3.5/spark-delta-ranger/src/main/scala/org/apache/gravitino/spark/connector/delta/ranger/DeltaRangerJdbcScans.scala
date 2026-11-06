@@ -323,6 +323,8 @@ private[ranger] object DeltaRangerJdbcScans {
     classOf[sources.AlwaysTrue],
     classOf[sources.AlwaysFalse]
   )
+  def filterBinding(filter: sources.Filter): Any = v1(filter)
+
   private def v1(filter: sources.Filter): Any = {
     if (!filters(filter.getClass)) denied()
     Vector(filter.getClass, filter.asInstanceOf[Product].productIterator.map(scalar).toVector)

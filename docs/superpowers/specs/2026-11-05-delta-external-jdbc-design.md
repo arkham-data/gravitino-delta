@@ -120,6 +120,16 @@ Close or expiry invalidates every relation issued by the scope. New work require
 a new scope. Check before payload actions and before destination commit; do not
 claim expiry cancels an already-running native JDBC statement atomically.
 
+Implementation clarification: repeated fresh actions must tolerate only the
+native `spark.databricks.delta.lastCommitVersionInSession` progression proved by
+a successful owned append. Capture exact participating sources, session/subject,
+transaction, target/publication and before/after settings; retain a scope-local
+witness after native commit/publication validation. Existing read receipts may
+recognize that same proved progression. Every unrelated setting stays frozen;
+foreign or failed/unknown-publication witnesses cannot advance the scope, and
+nothing renews its lifetime. Cache maintenance uses its existing typed owner for
+the corresponding postcommit context, without a generic configuration exemption.
+
 Each read copies the complete effective options and captures the exact native
 JDBCRelation, schema, partition descriptors and session/subject. Issue authority
 before the relation reaches ordinary analysis, using Spark's stock JDBC provider
@@ -131,7 +141,12 @@ is not a claim that no source metadata traffic occurred.
 Credentials remain private in native options and the owned scope. Never print
 options, raw SQL, credential values or hashes of credential material into new
 logs/evidence. Diagnostics use an opaque issue identifier and nonsecret case
-labels. The JVM independently validates Python inputs and ownership.
+labels. The JVM independently validates Python inputs and ownership. The stock
+BasicConnectionProvider's DEBUG diagnostic includes raw connection properties;
+construction/current validation therefore requires that exact logger to be INFO
+or stricter. The companion does not change global logging. The trusted runtime
+must preserve safe logging during native IO; this check does not promise atomic
+protection against arbitrary concurrent logging reconfiguration.
 
 Credentials/options are immutable for an issued read. Rotation requires a fresh
 scope/read from the trusted credential owner; remote revocation applies through

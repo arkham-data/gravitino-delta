@@ -44,7 +44,7 @@ private[ranger] final class DeltaRangerNativeScans private (
   private val deltaObligations =
     obligations.filter(_.source.isInstanceOf[DeltaRangerInputSources.NamedDelta])
   private val hasJdbc =
-    obligations.exists(_.source.isInstanceOf[DeltaRangerInputSources.RegisteredJdbc])
+    obligations.exists(o => !o.source.isInstanceOf[DeltaRangerInputSources.NamedDelta])
   private case class AcceptedRead(context: DeltaRangerExecutionContext.Context, live: () => Boolean)
   @volatile private var acceptedRead: Option[AcceptedRead] = None
   @volatile private var acceptedAppend: Option[DeltaRangerExecutionContext.Context] = None
@@ -109,7 +109,9 @@ private[ranger] final class DeltaRangerNativeScans private (
   }
 
   def finish(plan: LogicalPlan, operation: DeltaRangerNativeOperation): LogicalPlan = {
-    val relations = plan.collect { case relation: LogicalRelation => relation }.toVector
+    val relations = plan.collect {
+      case relation: LogicalRelation if !DeltaRangerInputSources.isExternal(relation) => relation
+    }.toVector
     val mapped = relations.map { relation =>
       val fs = relation.relation.asInstanceOf[HadoopFsRelation]
       val original = transitions.get(fs.location)
@@ -124,7 +126,8 @@ private[ranger] final class DeltaRangerNativeScans private (
       new DeltaRangerNativeScans.Occurrence(matches.head, relation, fs.location)
     }
     val jdbc = DeltaRangerJdbcScans.prepare(plan, this)
-    val surviving = mapped.map(_.obligation) ++ jdbc.obligations
+    val external = DeltaRangerExternalJdbcScans.prepare(plan, this)
+    val surviving = mapped.map(_.obligation) ++ jdbc.obligations ++ external.obligations
     val emptyBinding =
       if (surviving.isEmpty)
         DeltaRangerNativeProvenance.emptyPreparationBinding(plan, ordinary = !appendInput)
@@ -154,11 +157,17 @@ private[ranger] final class DeltaRangerNativeScans private (
       Option(operation),
       mapped,
       jdbc,
+      external,
       plan.output,
       emptyBinding,
-      new DeltaRangerPhysicalPlanning.LogicalWitness(plan, session)
+      new DeltaRangerPhysicalPlanning.LogicalWitness(
+        plan,
+        session,
+        Some(new DeltaRangerNativeScans.OriginalConfiguration(this, receipt, plan))
+      )
     )
     jdbc.bindRecipe(() => evidence.recoverExecutable(session))
+    external.bindRecipe(() => evidence.recoverExecutable(session))
     DeltaRangerNativeScans.attach(plan, evidence)
     source.foreach(_.complete(evidence))
     plan
@@ -260,6 +269,41 @@ private[ranger] final class DeltaRangerNativeScans private (
 }
 
 private[ranger] object DeltaRangerNativeScans {
+
+  /** Single-use configuration capture issued only by the exact receipt owner at preparation. */
+  final class OriginalConfiguration private[DeltaRangerNativeScans] (
+      owner: DeltaRangerNativeScans,
+      receipt: DeltaRangerDecisionReceipt,
+      original: LogicalPlan
+  ) {
+    private val frozen = DeltaRangerNativeProvenance.binding(original)
+    private var consumed = false
+    def capture(
+        candidate: LogicalPlan,
+        session: SparkSession,
+        settings: Map[String, String]
+    ): DeltaRangerInputSources.Configuration = synchronized {
+      if (
+        consumed || (candidate ne original) || (session ne owner.session) ||
+        !owner.owns(receipt) || DeltaRangerNativeProvenance.binding(candidate) != frozen ||
+        settings != session.sessionState.conf.getAllConfs
+      )
+        throw new SecurityException("Foreign original-source configuration capture")
+      owner.requireLive()
+      consumed = true
+      val captured =
+        new DeltaRangerInputSources.Configuration(receipt.obligations.map(_.source), settings)
+      if (
+        DeltaRangerNativeProvenance.binding(
+          candidate
+        ) != frozen || settings != session.sessionState.conf.getAllConfs
+      )
+        throw new SecurityException("Original-source configuration changed during capture")
+      captured
+    }
+    override def toString: String = "Owned original-source configuration capture"
+  }
+
   final class Occurrence(
       val obligation: DeltaRangerDecisionReceipt.Obligation,
       val relation: LogicalRelation,
@@ -273,6 +317,7 @@ private[ranger] object DeltaRangerNativeScans {
       private val preparation: Option[DeltaRangerNativeOperation],
       val occurrences: Vector[Occurrence],
       private val jdbc: DeltaRangerJdbcScans.Prepared,
+      private val external: DeltaRangerExternalJdbcScans.Prepared,
       private val output: Seq[Attribute],
       private val emptyBinding: Option[Vector[Any]],
       private val executable: DeltaRangerPhysicalPlanning.LogicalWitness
@@ -287,9 +332,12 @@ private[ranger] object DeltaRangerNativeScans {
       preparation.foreach(_.requireEvidence(session))
       owner.requireLive()
       jdbc.verify(plan)
+      external.verify(plan)
       if (preparation.exists(!_.succeeded()) || plan.output != output)
         throw new SecurityException("Unsealed or changed native preparation")
-      val actual = plan.collect { case relation: LogicalRelation => relation }
+      val actual = plan.collect {
+        case relation: LogicalRelation if !DeltaRangerInputSources.isExternal(relation) => relation
+      }
       if (actual.size != occurrences.size)
         throw new SecurityException("Native occurrence count changed")
       actual.zip(occurrences).foreach { case (relation, expected) =>
@@ -309,7 +357,7 @@ private[ranger] object DeltaRangerNativeScans {
           local.getClass == classOf[LocalRelation] && local.data.isEmpty && !local.isStreaming
         case _ => false
       }
-      if (actual.isEmpty && jdbc.obligations.isEmpty) {
+      if (actual.isEmpty && jdbc.obligations.isEmpty && external.obligations.isEmpty) {
         if (emptyBinding.isEmpty) throw new SecurityException("Empty native preparation changed")
         if (!owner.appendInput) {
           // This is a derivation over eliminated scans, not an empty result: a global

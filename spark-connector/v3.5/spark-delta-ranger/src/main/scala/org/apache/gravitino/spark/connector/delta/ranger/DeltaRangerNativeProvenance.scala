@@ -439,6 +439,12 @@ private[ranger] object DeltaRangerNativeProvenance {
 
   private[ranger] def binding(plan: LogicalPlan): Vector[Any] = {
     plan match {
+      case relation: LogicalRelation if DeltaRangerInputSources.isExternal(relation) =>
+        return Vector(
+          plan.getClass,
+          DeltaRangerExternalJdbcScans.logicalBinding(relation),
+          plan.output.map(value).toVector
+        )
       case scan: org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation =>
         return Vector(
           plan.getClass,

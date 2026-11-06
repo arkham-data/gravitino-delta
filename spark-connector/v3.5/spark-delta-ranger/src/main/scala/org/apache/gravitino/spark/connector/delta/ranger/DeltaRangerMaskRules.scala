@@ -53,7 +53,7 @@ private[ranger] object DeltaRangerMaskRules {
   )
 
   def capture(
-      source: DeltaRangerInputSources.Source,
+      source: DeltaRangerInputSources.Named,
       columns: Set[String],
       engine: DeltaRangerPolicyEngine,
       subject: DeltaRangerQuerySubject,
@@ -108,7 +108,15 @@ private[ranger] object DeltaRangerMaskRules {
       columns: Set[String],
       decisions: Decisions,
       spark: SparkSession
-  ): LogicalPlan = rewriteRelation(source.relation, columns, decisions, spark)
+  ): LogicalPlan = source match {
+    case external: DeltaRangerInputSources.ExternalJdbc =>
+      external.requireLive()
+      if (decisions.filter.isPresent || decisions.masks.nonEmpty)
+        throw new SecurityException("External JDBC cannot carry named policy decisions")
+      external.relation
+    case _: DeltaRangerInputSources.Named =>
+      rewriteRelation(source.relation, columns, decisions, spark)
+  }
 
   private def rewriteRelation(
       relation: LogicalPlan,

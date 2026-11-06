@@ -92,9 +92,11 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
       target.log().withNewTransaction(Some(target.descriptor())) { transaction =>
         val owner = target.bindTransaction(input.session, transaction)
         var primary: Throwable = null
+        val transition = new ExternalPublication(input, this, target, transaction)
         try {
           outcome =
             DeltaRangerAppendCoordinator.inTransaction(input, owner, transaction, maintenance)
+          transition.complete(outcome)
         } catch {
           case failure: Throwable => primary = failure; throw failure
         } finally {
@@ -189,6 +191,70 @@ private[ranger] final class DeltaRangerAppendCommandBinding private (
 }
 
 private[ranger] object DeltaRangerAppendCommandBinding {
+
+  /** Issued only around a real retained-input transaction; inert after its callback returns. */
+  final class ExternalPublication private[DeltaRangerAppendCommandBinding] (
+      input: DeltaRangerAppendV1Input.RetainedV1Input,
+      association: DeltaRangerAppendCommandBinding,
+      target: DeltaRangerRegistrationBindings.BoundAppendTarget,
+      transaction: OptimisticTransaction
+  ) {
+    private val thread = Thread.currentThread()
+    private val spark = input.session
+    private val subject = DeltaRangerQuerySubject.current(spark)
+    val beforeSettings: Map[String, String] = spark.sessionState.conf.getAllConfs
+    private val participants = input.receipt.obligations.collect {
+      case obligation if obligation.source.isInstanceOf[DeltaRangerInputSources.ExternalJdbc] =>
+        obligation.source.asInstanceOf[DeltaRangerInputSources.ExternalJdbc].binding
+    }.distinct
+    private var result: Option[DeltaRangerAppendCommit.Outcome] = None
+    private var active = false
+    private var used = false
+    def version: Long =
+      result.flatMap(_.version).getOrElse(denied("unconfirmed external publication"))
+    def afterSettings: Map[String, String] =
+      beforeSettings.updated("spark.databricks.delta.lastCommitVersionInSession", version.toString)
+
+    private[DeltaRangerAppendCommandBinding] def complete(
+        outcome: DeltaRangerAppendCommit.Outcome
+    ): Unit = {
+      if (used) denied("reused external publication")
+      used = true
+      if (participants.isEmpty || outcome.version.isEmpty) return
+      result = Some(outcome)
+      active = true
+      try participants.foreach(_.advancePublication(this))
+      finally active = false
+    }
+
+    def requireParticipant(source: DeltaRangerExternalJdbcSources.BoundInput): Unit = {
+      if (
+        !active || !participants.exists(_ eq source) || (Thread.currentThread() ne thread) ||
+        !SparkSession.getActiveSession.exists(_ eq spark) || (input.association ne association) ||
+        !OptimisticTransaction.getActive.exists(_ eq transaction) ||
+        (transaction.deltaLog ne target.log()) || !transaction.catalogTable.exists(
+          _ eq target.descriptor()
+        )
+      )
+        denied("foreign external publication")
+      input.requireMaintenanceLease()
+      val current = DeltaRangerQuerySubject.current(spark)
+      if (current.user() != subject.user() || current.groups() != subject.groups())
+        denied("external publication subject changed")
+      val evidence =
+        result.flatMap(_.evidence).getOrElse(denied("missing external publication proof"))
+      val head = target.log().unsafeVolatileSnapshot
+      if (
+        evidence.transactionId != transaction.txnId.toString || evidence.readVersion != transaction.readVersion ||
+        evidence.version != transaction.readVersion + 1 || head.version != evidence.version ||
+        head.metadata != transaction.metadata || head.protocol != transaction.protocol ||
+        evidence.tableId != transaction.metadata.id || spark.sessionState.conf.getAllConfs != afterSettings
+      )
+        denied("external publication changed")
+    }
+    override def toString: String = "Owned external source publication transition"
+  }
+
   def capture(
       spark: SparkSession,
       command: AppendData,
@@ -209,7 +275,9 @@ private[ranger] object DeltaRangerAppendCommandBinding {
     val sourceReceipt =
       DeltaRangerDecisionReceipt.consumeOwned(command.query, spark, optimized = false)
     if (sourceReceipt.obligations.isEmpty) denied("missing original source obligations")
-    val engines = (Vector(target.engine()) ++ sourceReceipt.obligations.map(_.source.engine))
+    val engines = (Vector(target.engine()) ++ sourceReceipt.obligations.flatMap(o =>
+      DeltaRangerInputSources.named(o.source).map(_.engine)
+    ))
       .foldLeft(Vector.empty[DeltaRangerPolicyEngine]) { (all, engine) =>
         if (all.exists(_ eq engine)) all else all :+ engine
       }

@@ -54,6 +54,7 @@ private[ranger] object DeltaRangerOrdinaryRead {
     private val cleanedIntent = binding(cleanDatasetReferences(original))
     private val registrations = DeltaRangerInputSources.inventory(plan, spark, catalogs)
     if (registrations.isEmpty) denied("missing named occurrence")
+    private val configuration = new DeltaRangerInputSources.Configuration(registrations, settings)
 
     def validate(candidate: LogicalPlan, session: SparkSession, remap: Boolean = false): Unit = {
       def unchanged(): Unit = {
@@ -61,7 +62,8 @@ private[ranger] object DeltaRangerOrdinaryRead {
         val current = DeltaRangerQuerySubject.current(session)
         if (current.user() != subject.user() || current.groups() != subject.groups())
           denied("subject changed")
-        if (settings != session.sessionState.conf.getAllConfs) denied("configuration changed")
+        if (!configuration.matches(session.sessionState.conf.getAllConfs))
+          denied("configuration changed")
         if (binding(original) != intent)
           denied("retained intent changed")
         val actual = binding(candidate)
