@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerRegistrationReader.PublishedObservation;
@@ -49,6 +50,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex;
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils;
 import org.apache.spark.sql.delta.schema.SchemaUtils;
+import org.apache.spark.sql.execution.LogicalRDD;
 import org.apache.spark.sql.execution.datasources.HadoopFsRelation;
 import org.apache.spark.sql.execution.datasources.LogicalRelation;
 import org.apache.spark.sql.sources.BaseRelation;
@@ -893,6 +895,7 @@ final class DeltaRangerRegistrationBindings {
     private final DeltaRangerPolicyEngine.SnapshotStamp stamp;
     private final Map<String, String> settings;
     private final PublishedObservation publication;
+    @Nullable private Predicate<LogicalRDD> checksumState;
     private boolean schemaEvolutionAuthorized;
     private volatile boolean closed;
 
@@ -974,6 +977,13 @@ final class DeltaRangerRegistrationBindings {
       target.requireRetained();
       target.requireLive();
       requireContext();
+    }
+
+    void retainChecksumState(DeltaRangerNativeOperation operation) {
+      requireLive();
+      if (checksumState != null) throw denied();
+      checksumState = operation.retainAppendTransactionState(this);
+      requireLive();
     }
 
     void authorizeSchemaEvolution() {
@@ -1115,6 +1125,10 @@ final class DeltaRangerRegistrationBindings {
   abstract static class AppendPublication {
     abstract boolean requirePublication(
         BoundAppendCommit context, OptimisticTransaction transaction);
+
+    boolean nativeInvocationRunning(BoundAppendCommit context, OptimisticTransaction transaction) {
+      return false;
+    }
   }
 
   /** Separate finite owner for the native publication and postcommit state transitions. */
@@ -1128,6 +1142,7 @@ final class DeltaRangerRegistrationBindings {
     private final boolean evolves;
     private boolean closed;
     private boolean advancedPublication;
+    private boolean advancedSettings;
 
     private BoundAppendCommit(
         BoundAppendTransaction before,
@@ -1212,11 +1227,30 @@ final class DeltaRangerRegistrationBindings {
       target.anchor.owner.reader.requireLive(before.publication);
     }
 
+    boolean containsChecksumState(LogicalRDD candidate) {
+      requireLive();
+      return !advancedSettings
+          && publicationOwner.nativeInvocationRunning(this, before.transaction)
+          && publicationOwner.requirePublication(this, before.transaction)
+          && before.checksumState != null
+          && before.checksumState.test(candidate);
+    }
+
     private void requireNativeState(boolean published) {
       requireContext();
-      if (!(published ? publishedSettings : before.settings)
-              .equals(BoundAppendTransaction.settings(before.session))
-          || (!published && OptimisticTransaction.getActive().isEmpty())) throw denied();
+      Map<String, String> current = BoundAppendTransaction.settings(before.session);
+      boolean running = publicationOwner.nativeInvocationRunning(this, before.transaction);
+      if (!published) {
+        if (!before.settings.equals(current) || OptimisticTransaction.getActive().isEmpty())
+          throw denied();
+      } else if (running && !advancedSettings && before.settings.equals(current)) {
+        // Native JSON publication precedes old-snapshot checksum derivation and setting advance.
+        // Equal before/after maps do not prove that native execution has crossed this boundary.
+        if (OptimisticTransaction.getActive().isEmpty()) throw denied();
+      } else {
+        if (!publishedSettings.equals(current)) throw denied();
+        advancedSettings = true;
+      }
     }
 
     private boolean sameOwnPublication(PublishedObservation current) {

@@ -63,8 +63,9 @@ private[ranger] final class DeltaRangerAppendCommit(
   private var next: Option[Vector[Any]] = None
   private var closed = false
   private var invoked = false
+  private var nativeRunning = false
   private var publication: Option[(Vector[Any], Vector[Byte])] = None
-  // Outer None means native commit is running; Some(None) records a native skipped result.
+  // Outer None means no native result was returned; Some(None) records a native skipped result.
   private var nativeResult: Option[Option[Long]] = None
 
   override def session(): SparkSession = spark
@@ -91,6 +92,16 @@ private[ranger] final class DeltaRangerAppendCommit(
     if (!(candidate eq context) || !(nativeTransaction eq transaction))
       denied("foreign publication consumer")
     observePublication().nonEmpty
+  }
+
+  override private[ranger] def nativeInvocationRunning(
+      candidate: DeltaRangerRegistrationBindings.BoundAppendCommit,
+      nativeTransaction: OptimisticTransaction
+  ): Boolean = {
+    requireOwner()
+    if (!(candidate eq context) || !(nativeTransaction eq transaction))
+      denied("foreign native invocation consumer")
+    nativeRunning
   }
 
   private def requireOwner(): Unit =
@@ -132,7 +143,9 @@ private[ranger] final class DeltaRangerAppendCommit(
       )
         denied("pending metadata or protocol changed")
       invoked = true
-      nativeResult = Some(transaction.commitIfNeeded(actions, nativeOperation, tags = tags))
+      nativeRunning = true
+      try nativeResult = Some(transaction.commitIfNeeded(actions, nativeOperation, tags = tags))
+      finally nativeRunning = false
       requireLive()
       operation.succeed()
     } catch {
@@ -193,7 +206,8 @@ private[ranger] final class DeltaRangerAppendCommit(
     () => requireLive(),
     () => next,
     () => expectedMetadata,
-    () => transaction.snapshot.protocol
+    () => transaction.snapshot.protocol,
+    candidate => context.containsChecksumState(candidate)
   )
   def ownsLog(relation: HadoopFsRelation, index: DeltaLogFileIndex): Boolean =
     metadata.ownsLog(relation, index)

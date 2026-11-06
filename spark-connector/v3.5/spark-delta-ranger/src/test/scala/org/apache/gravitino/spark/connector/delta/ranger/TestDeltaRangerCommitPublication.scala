@@ -47,7 +47,9 @@ import org.apache.parquet.example.data.Group
 import org.apache.parquet.hadoop.ParquetReader
 import org.apache.parquet.hadoop.example.GroupReadSupport
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaLogFileIndex, OptimisticTransaction}
+import org.apache.spark.sql.execution.LogicalRDD
+import org.apache.spark.sql.execution.datasources.HadoopFsRelation
 import org.apache.spark.sql.types.{DataType, LongType, StringType, StructField, StructType}
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.Test
@@ -85,6 +87,27 @@ class TestDeltaRangerCommitPublication {
   @Test
   def refreshedReceiptSaveAsTableReturns(): Unit =
     characterize("saveAsTable", refresh = true)
+
+  /** A schema-changing CRC without allFiles must permit the next native append to finish. */
+  @Test
+  def appendAfterSchemaChangeCompletesChecksum(): Unit =
+    characterize("saveAsTable", refresh = true, seedCommits = 1, evolvedBaseline = true)
+
+  /** An already-equal session counter is not evidence that native checksum work has ended. */
+  @Test
+  def checksumContinuationWithAlreadyEqualSessionCounter(): Unit =
+    characterize(
+      "saveAsTable",
+      refresh = true,
+      seedCommits = 1,
+      evolvedBaseline = true,
+      priorNextCounter = true
+    )
+
+  /** The exact captured old cache also covers checkpoint plus JSON-tail snapshots. */
+  @Test
+  def checksumContinuationFromCheckpointBackedSnapshot(): Unit =
+    characterize("saveAsTable", refresh = true, seedCommits = 11, evolvedBaseline = true)
 
   /** Qualifies representative proof, receipt, content and context rejection on every pin. */
   @ParameterizedTest(name = "publication rejects {0}")
@@ -323,7 +346,9 @@ class TestDeltaRangerCommitPublication {
       seedCommits: Int = 0,
       warmOrder: Option[Boolean] = None,
       emptySource: Boolean = false,
-      transactionMarker: Boolean = true
+      transactionMarker: Boolean = true,
+      evolvedBaseline: Boolean = false,
+      priorNextCounter: Boolean = false
   ): Unit = {
     val app = UserGroupInformation.createUserForTesting("APP", Array.empty[String])
     def asApp[A](body: => A): A = if (warmOrder.nonEmpty) body
@@ -334,7 +359,9 @@ class TestDeltaRangerCommitPublication {
     val beforePublicationFault =
       Set("early-refresh", "nested-published-setting", "foreign-next-file")(fault)
     val nextVersion = seedCommits.toLong + 1
-    val baselineRows = Vector.fill(seedCommits + 1)(sentinel)
+    val baselineRows =
+      if (evolvedBaseline) Vector.fill(seedCommits)(Row(99L, "sentinel", null)) :+ sentinel
+      else Vector.fill(seedCommits + 1)(sentinel)
     val trace =
       InstalledAppendBoundaryProbe.fresh(s"commit-publication-$frontend-refresh-$refresh-$fault")
     val rawConfig = trace.directory.resolve("raw-maintenance.properties")
@@ -357,6 +384,11 @@ class TestDeltaRangerCommitPublication {
     NativeSelectFixture.catalogPolicies = Map("a" -> target, "b" -> source)
     val install = NativeSelectFixture.extension(target)
     val reads = ArrayBuffer.empty[ReadObservation]
+    var foreignState: LogicalRDD = null
+    var checksumOwner: DeltaRangerAppendCommit = null
+    var checksumState: LogicalRDD = null
+    var checksumChecked = false
+    var returnedChecked = false
     try
       NativeSelectFixture.withSpark(
         spark => {
@@ -382,6 +414,12 @@ class TestDeltaRangerCommitPublication {
           val root = targetPath.getParent
           val beforeTarget = observe(targetPath)
           val beforeSource = observe(sourcePath)
+          if (evolvedBaseline) {
+            val oldCrc = mapper.readTree(
+              Files.readAllBytes(targetPath.resolve(f"_delta_log/$seedCommits%020d.crc"))
+            )
+            assertFalse(oldCrc.hasNonNull("allFiles"), "Schema-changing native CRC omits allFiles")
+          }
           assertEquals(seedCommits.toLong, beforeTarget.version)
           assertEquals(0L, beforeSource.version)
           assertEquals(baselineRows, rows(spark, targetPath, beforeTarget))
@@ -392,6 +430,9 @@ class TestDeltaRangerCommitPublication {
           val sourceProperties = sourceFixture.properties.asScala.toMap
           assertEquals(beforeTarget.nativeId, targetProperties(nativeIdKey))
           assertEquals(seedCommits.toString, targetProperties(versionKey))
+          if (priorNextCounter)
+            spark.conf
+              .set("spark.databricks.delta.lastCommitVersionInSession", nextVersion.toString)
           val originalLastCommit =
             spark.conf.getOption("spark.databricks.delta.lastCommitVersionInSession")
           var injected = false
@@ -405,6 +446,113 @@ class TestDeltaRangerCommitPublication {
             reads,
             trace,
             native => {
+              if (
+                evolvedBaseline && native.version == nextVersion && DeltaRangerAppendCommit.current.nonEmpty
+              ) {
+                val commit = DeltaRangerAppendCommit.current.get
+                if (
+                  !checksumChecked && Thread
+                    .currentThread()
+                    .getStackTrace
+                    .exists(_.getMethodName.contains("incrementallyComputeAddFiles"))
+                ) {
+                  checksumChecked = true
+                  checksumOwner = commit
+                  val transaction = OptimisticTransaction.getActive.get
+                  checksumState =
+                    transaction.snapshot.stateDF.queryExecution.analyzed.asInstanceOf[LogicalRDD]
+                  assertTrue(commit.contains(checksumState))
+                  assertFalse(
+                    commit.contains(foreignState),
+                    "Another snapshot must not borrow checksum authority"
+                  )
+                  assertFalse(
+                    commit.contains(
+                      checksumState.copy(output = checksumState.output.reverse)(spark, None, None)
+                    )
+                  )
+                  val oldIndex = transaction.snapshot.logSegment.deltas
+                  if (seedCommits == 11) {
+                    assertTrue(
+                      transaction.snapshot.logSegment.checkpointProvider.topLevelFiles.nonEmpty
+                    )
+                    assertEquals(
+                      Vector("00000000000000000011.json"),
+                      oldIndex.map(_.getPath.getName).toVector
+                    )
+                  }
+                  trace.record(
+                    "checksum-old-snapshot",
+                    s"oldVersion=${transaction.snapshot.version} nextVersion=$nextVersion checkpointBacked=${transaction.snapshot.logSegment.checkpointProvider.topLevelFiles.nonEmpty} alreadyEqualCounter=$priorNextCounter exactCache=true foreignCacheDenied=true"
+                  )
+                  val index = DeltaLogFileIndex(DeltaLogFileIndex.COMMIT_FILE_FORMAT, oldIndex).get
+                  val relation = transaction.deltaLog
+                    .indexToRelation(index)
+                    .relation
+                    .asInstanceOf[HadoopFsRelation]
+                  assertFalse(
+                    commit.ownsLog(relation, index),
+                    "Old-cache authority must not authorize old log reconstruction"
+                  )
+                  val foreign = new OptimisticTransaction(
+                    transaction.deltaLog,
+                    transaction.catalogTable,
+                    transaction.snapshot
+                  )
+                  OptimisticTransaction.withActive(foreign, overrideExistingTransaction = true) {
+                    assertThrows(classOf[SecurityException], () => commit.contains(checksumState))
+                  }
+                  val otherSession = spark.newSession()
+                  SparkSession.setActiveSession(otherSession)
+                  try assertThrows(classOf[SecurityException], () => commit.contains(checksumState))
+                  finally SparkSession.setActiveSession(spark)
+                  UserGroupInformation
+                    .createUserForTesting("checksum-foreign", Array.empty[String])
+                    .doAs(new PrivilegedExceptionAction[Unit] {
+                      override def run(): Unit = {
+                        assertThrows(
+                          classOf[SecurityException],
+                          () => commit.contains(checksumState)
+                        ); ()
+                      }
+                    })
+                  val drift = "checksum.test.unrelated.setting"
+                  spark.conf.set(drift, "changed")
+                  try assertThrows(classOf[SecurityException], () => commit.contains(checksumState))
+                  finally spark.conf.unset(drift)
+                  assertTrue(commit.contains(checksumState))
+                }
+                if (
+                  checksumChecked && !returnedChecked && !field[Boolean](commit, "nativeRunning")
+                ) {
+                  returnedChecked = true
+                  assertSame(commit, DeltaRangerAppendCommit.current.get)
+                  assertTrue(DeltaRangerNativeOperation.current().active())
+                  assertEquals(
+                    Some(Some(nextVersion)),
+                    field[Option[Option[Long]]](commit, "nativeResult")
+                  )
+                  commit.requireLive()
+                  trace.record(
+                    "checksum-native-return",
+                    "outerOwnerActive=true nativeResultExpected=true contextValid=true"
+                  )
+                  assertFalse(
+                    commit.contains(checksumState),
+                    "Native return expires old snapshot authority"
+                  )
+                  if (!priorNextCounter) {
+                    val key = "spark.databricks.delta.lastCommitVersionInSession"
+                    val after = spark.conf.get(key)
+                    originalLastCommit match {
+                      case Some(value) => spark.conf.set(key, value)
+                      case None        => spark.conf.unset(key)
+                    }
+                    try assertThrows(classOf[SecurityException], () => commit.requireLive())
+                    finally spark.conf.set(key, after)
+                  }
+                }
+              }
               if (native.version == 1) committedReads += 1
               val eligible =
                 if (beforePublicationFault)
@@ -757,8 +905,30 @@ class TestDeltaRangerCommitPublication {
               reads.filter(r => r.catalog == "a" && r.nativeVersion == nextVersion)
             assertTrue(committedReads.nonEmpty)
             assertTrue(committedReads.head.commitOwner)
-            assertTrue(committedReads.head.stack.contains("updateAfterCommit"))
-            assertTrue(committedReads.head.stack.contains("stateReconstruction"))
+            if (evolvedBaseline)
+              assertTrue(
+                committedReads.exists(read =>
+                  read.stack.contains("updateAfterCommit") && read.stack
+                    .contains("stateReconstruction")
+                )
+              )
+            else {
+              assertTrue(committedReads.head.stack.contains("updateAfterCommit"))
+              assertTrue(committedReads.head.stack.contains("stateReconstruction"))
+            }
+            if (evolvedBaseline) {
+              assertTrue(checksumChecked)
+              assertTrue(returnedChecked)
+              assertFalse(field[Boolean](checksumOwner, "nativeRunning"))
+              assertThrows(classOf[SecurityException], () => checksumOwner.contains(checksumState))
+              assertTrue(
+                committedReads.exists(_.stack.contains("incrementallyComputeAddFiles")),
+                "The old snapshot must be consumed during native checksum derivation"
+              )
+              assertFalse(
+                Files.exists(targetPath.resolve(f"_delta_log/${nextVersion + 1}%020d.json"))
+              )
+            }
             assertEquals(Some(nativeTxnId), committedReads.head.transactionId)
             assertEquals(afterTarget.headJsonSha256, committedReads.head.headJsonSha256)
             assertTrue(
@@ -901,7 +1071,17 @@ class TestDeltaRangerCommitPublication {
             warmOrder.map(_ =>
               "spark.gravitino.deltaRanger.rawCacheMaintenance.config" -> rawConfig.toString
             ),
-        beforeExtension = spark => seed(spark, seedCommits)
+        beforeExtension = spark => {
+          seed(spark, seedCommits, evolvedBaseline)
+          if (evolvedBaseline)
+            foreignState = DeltaLog
+              .forTable(spark, NativeSelectFixture.locations("b"))
+              .update()
+              .stateDF
+              .queryExecution
+              .analyzed
+              .asInstanceOf[LogicalRDD]
+        }
       )
     finally {
       NativeSelectFixture.catalogPolicies = previousPolicies
@@ -910,6 +1090,14 @@ class TestDeltaRangerCommitPublication {
       source.engine.close()
       trace.close()
     }
+  }
+
+  private def field[T](value: AnyRef, name: String): T = {
+    val member = value.getClass.getDeclaredFields
+      .find(f => f.getName == name || f.getName.endsWith("$$" + name))
+      .get
+    member.setAccessible(true)
+    member.get(value).asInstanceOf[T]
   }
 
   private def installRefresh(
@@ -1083,7 +1271,13 @@ class TestDeltaRangerCommitPublication {
             val secret =
               if (group.getFieldRepetitionCount("secret") == 0) null
               else group.getString("secret", 0)
-            result += Row(group.getLong("id", 0), secret, group.getString("region", 0))
+            val region =
+              if (
+                !group.getType
+                  .containsField("region") || group.getFieldRepetitionCount("region") == 0
+              ) null
+              else group.getString("region", 0)
+            result += Row(group.getLong("id", 0), secret, region)
             group = reader.read()
           }
         } finally reader.close()
@@ -1092,18 +1286,26 @@ class TestDeltaRangerCommitPublication {
       .sortBy(_.getLong(0))
   }
 
-  private def seed(spark: SparkSession, commits: Int): Unit = {
+  private def seed(spark: SparkSession, commits: Int, evolve: Boolean): Unit = {
     val root = Paths.get(NativeSelectFixture.locations("a")).getParent
     Seq("a" -> ("publication-target", Vector(sentinel)), "b" -> ("publication-source", sourceRows))
       .foreach { case (catalog, (name, values)) =>
         val path = root.resolve(name).toString
-        spark.createDataFrame(values.asJava, schema).write.format("delta").save(path)
-        if (catalog == "a") (0 until commits).foreach { _ =>
+        val initialSchema =
+          if (catalog == "a" && evolve) StructType(schema.fields.take(2)) else schema
+        val initialRows =
+          if (catalog == "a" && evolve) values.map(r => Row.fromSeq(r.toSeq.take(2))) else values
+        spark.createDataFrame(initialRows.asJava, initialSchema).write.format("delta").save(path)
+        if (catalog == "a") (0 until commits).foreach { index =>
+          val evolving = evolve && index == commits - 1
+          val appendSchema = if (evolving) schema else initialSchema
+          val appendRow = if (evolve && !evolving) Row.fromSeq(sentinel.toSeq.take(2)) else sentinel
           spark
-            .createDataFrame(Vector(sentinel).asJava, schema)
+            .createDataFrame(Vector(appendRow).asJava, appendSchema)
             .write
             .format("delta")
             .mode("append")
+            .option("mergeSchema", evolve.toString)
             .save(path)
         }
         NativeSelectFixture.locations = NativeSelectFixture.locations.updated(catalog, path)

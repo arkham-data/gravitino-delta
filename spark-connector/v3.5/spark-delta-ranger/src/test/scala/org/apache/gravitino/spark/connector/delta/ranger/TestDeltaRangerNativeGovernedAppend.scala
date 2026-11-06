@@ -947,6 +947,7 @@ class TestDeltaRangerNativeGovernedAppend {
   @Test
   def postpublicationFailureKeepsPrimaryAndUnconditionallyClosesOwners(): Unit = {
     val primary = new AssertionError("native-commit-callback-failure")
+    var failed: DeltaRangerAppendCommit = null
     successfulAppend(
       scenario = "postpublication-primary-and-cleanup-failure",
       testMethod = "postpublicationFailureKeepsPrimaryAndUnconditionallyClosesOwners",
@@ -955,13 +956,18 @@ class TestDeltaRangerNativeGovernedAppend {
         assertTrue(causes.exists(_ eq primary))
         assertTrue(causes.exists(_.getSuppressed.exists(_.isInstanceOf[SecurityException])))
       }),
-      inspect = (_, _) => {
+      inspect = (commit, _) => {
+        failed = commit
+        assertTrue(field[Boolean](commit, "nativeRunning"))
         val current = classOf[DeltaRangerNativeOperation].getDeclaredField("CURRENT")
         current.setAccessible(true)
         current.get(null).asInstanceOf[ThreadLocal[DeltaRangerNativeOperation]].remove()
         throw primary
       }
     )
+    assertNotNull(failed)
+    assertFalse(field[Boolean](failed, "nativeRunning"))
+    assertThrows(classOf[SecurityException], () => failed.requireLive())
   }
 
   @Test

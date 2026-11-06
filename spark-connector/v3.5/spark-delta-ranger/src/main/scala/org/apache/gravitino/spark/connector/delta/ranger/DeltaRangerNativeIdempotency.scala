@@ -69,6 +69,7 @@ private[ranger] object DeltaRangerNativeIdempotency {
     val operation = DeltaRangerNativeOperation.transactionState(owner)
     try {
       operation.captureTransactionState()
+      owner.retainChecksumState(operation)
       val value = Driver.read(transaction, spark, nativeOptions)
       owner.requireTransaction(transaction)
       operation.succeed()

@@ -423,6 +423,13 @@ final class DeltaRangerNativeOperation implements AutoCloseable {
     return retained::matches;
   }
 
+  Predicate<LogicalRDD> retainAppendTransactionState(
+      DeltaRangerRegistrationBindings.BoundAppendTransaction owner) {
+    requireActive();
+    if (transactionOwner != owner) throw denied();
+    return retainTransactionState();
+  }
+
   static DeltaRangerNativeOperation scan(
       ScanOwner owner,
       TahoeFileIndex index,
