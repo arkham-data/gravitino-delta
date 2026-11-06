@@ -17,8 +17,9 @@
 
 # External PostgreSQL input for governed Delta
 
-Status: proposed design, builder-checked, awaiting user review. Discovery only;
-no implementation or new runtime qualification. The registered PostgreSQL milestone closed at
+Status: approved by the user with “Go” after the builder-reviewed handoff.
+Implementation follows the [task plan](../plans/2026-11-05-delta-external-jdbc.md);
+no new runtime qualification is claimed by this design. The registered PostgreSQL milestone closed at
 `e796a98180f37df5ac259053ba7b283260682353` and remains closed.
 
 ## Intent and constraints
@@ -73,8 +74,8 @@ non-JDBC Snowflake/BigQuery formats are distinct behaviors.
    but copies/tags/schema do not prove how rows were obtained. Rejected by the
    existing authority contract.
 
-These are proposals from the source audit; the specific reader contract has not
-previously been approved by the user.
+These are proposals from the source audit; the user approved this concrete reader contract after the builder-reviewed
+handoff.
 
 ## Source authorization boundary
 
@@ -271,5 +272,5 @@ row semantics or deferred workload claims require an explicit design revision.
 
 A fresh independent builder found no important unanswered question after the
 connection option/TLS scope was made explicit. Those restrictions and the finite
-lifetime are engineering proposals for this first profile. User review of this
-concrete design is pending; no product behavior has changed.
+lifetime are engineering proposals for this first profile. The user approved this
+concrete design with “Go”; implementation and qualification are tracked separately.
