@@ -297,6 +297,22 @@ class TestExternalJdbcChecks(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 checks.local_table(plan, dict(resource, **{key:"other"}), ("target",))
 
+    def test_late_denials_require_every_barrier_witness(self):
+        checks = self.checker()
+        required = {"held", "release", "forwarded", "rawHeld", "rawBefore"}
+        for name in ("external_scope_closed_before_publish", "external_target_revoked_before_publish"):
+            with self.subTest(case=name):
+                complete = dict(name=name, barrier={key:dict(path=key,sha256="original") for key in required})
+                checks.verify_barrier_inventory(complete)
+                changed = dict(name=name)
+                with self.assertRaises(AssertionError):checks.verify_barrier_inventory(changed)
+                for missing in required:
+                    changed = copy.deepcopy(complete)
+                    del changed["barrier"][missing]
+                    with self.subTest(missing=missing), self.assertRaises(AssertionError):
+                        checks.verify_barrier_inventory(changed)
+        checks.verify_barrier_inventory(dict(name="external_insert_into"))
+
     def test_late_revocation_requires_snapshot_cause(self):
         checks = self.checker()
         failure = dict(className="java.lang.SecurityException", message="Delta Ranger publication changed; reanalyze the query", stack=["org.apache.gravitino.spark.connector.delta.ranger.DeltaRangerPolicyEngine.requireSnapshot(DeltaRangerPolicyEngine.java:1)"])

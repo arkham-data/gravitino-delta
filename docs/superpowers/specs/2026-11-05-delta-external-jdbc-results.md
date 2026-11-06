@@ -155,3 +155,22 @@ The conservative default capacity reserve remains 8 GiB. After one pre-case
 capacity stop, a measured, explicitly approved 5 GiB reserve applied only to the
 last two fresh pairs and their last build stages. The measurement/decision and
 per-stage/per-case readiness are retained. No historical data was deleted.
+
+## Review follow-up: mandatory late witnesses
+
+Review found that omitting the entire barrier record could bypass the late-phase
+checks. Both original late-denial records contained all five witnesses and their
+native outcomes remain valid. The checker now requires exactly `held`, `release`,
+`forwarded`, `rawHeld` and `rawBefore` for scope closure and target revocation
+before validating their contents. Missing the whole record or any witness rejects.
+
+The retained-record RED reproduced both omissions; GREEN passes both originals
+and rejects all 12 missing-evidence variants. Focused checker controls pass 41
+tests. A separate read-only successor validates the unchanged nine safe segments:
+four pairs, 19 cases and 23 actions. No native or installed run was repeated.
+Evidence is under `task-4-fix1/`: the exact original checker was retained before
+editing, `lineage.json` preserves its original reference, and
+`validation-receipt.json` binds the successor to its corrected checker snapshot,
+verification process and `matrix-successor.json`. The original matrix and
+projections were not rewritten. The historical private-receipt limitation and
+original producer versus later evidence-helper distinction remain unchanged.

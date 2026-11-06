@@ -247,12 +247,22 @@ def verify_early_unissued_close(name, message, checkpoint, observation, before, 
     assert identity["spark"] in ("3.5.4", "3.5.6") and identity["java"] == "17" and identity["scala"] == "2.12.21"
 
 
+def verify_barrier_inventory(case):
+    """Require every prepublication witness for the two late-denial cases."""
+    if case["name"] in ("external_scope_closed_before_publish", "external_target_revoked_before_publish"):
+        assert "barrier" in case, "Missing required prepublication barrier evidence"
+    if "barrier" in case:
+        assert isinstance(case["barrier"], dict)
+        assert set(case["barrier"]) == {"held", "release", "forwarded", "rawHeld", "rawBefore"}, "Incomplete prepublication barrier evidence"
+
+
 def verify_case(case):
     from pathlib import Path
     from cdf_merge_live_checks import read_ref, file_ref
     verify_summary(case)
     name = case["name"]
     assert name in COMMON + EXTRA
+    verify_barrier_inventory(case)
     verify_terminal(case)
     assert case["outcome"] == ("committed" if name in COMMITTED else "denied")
     verify_actions(name, [a["action"] for a in case["actions"]])
