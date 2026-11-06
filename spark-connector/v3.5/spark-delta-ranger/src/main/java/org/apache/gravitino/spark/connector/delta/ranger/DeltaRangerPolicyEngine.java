@@ -36,6 +36,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -66,6 +67,8 @@ import org.apache.spark.sql.catalyst.parser.CatalystSqlParser$;
  */
 public final class DeltaRangerPolicyEngine implements AutoCloseable {
   private static final Owner OWNER = new Owner(KyuubiBackend::new);
+  private static final long CREATE_PUBLICATION_NANOS = TimeUnit.SECONDS.toNanos(1);
+  private static final long CREATE_LIVENESS_NANOS = TimeUnit.MILLISECONDS.toNanos(25);
   private static final String METALAKE = "ranger.plugin.spark.gravitino.metalake";
   private static final List<String> RESOURCES =
       Arrays.asList("catalog", "database", "table", "column");
@@ -116,6 +119,69 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
   void authorize(DeltaRangerQuerySubject subject, DeltaRangerResourceKey key, Instant accessTime) {
     if (!accessDecision(subject, key, accessTime)) {
       throw new SecurityException("Delta Ranger access denied");
+    }
+  }
+
+  // Only pre-native CREATE admission may await one already exposed policy context. This is a
+  // local publication handoff, not a refresh request or an authorization/evaluation retry. The
+  // normal authorize call remains mandatory afterward and may reject a subsequent transition.
+  void awaitCreatePublication(Runnable requireContext) {
+    Objects.requireNonNull(requireContext, "CREATE context required");
+    long started = System.nanoTime();
+    PendingCreatePublication pending = null;
+    while (true) {
+      if (Thread.currentThread().isInterrupted()) {
+        throw new SecurityException(
+            "CREATE publication wait interrupted", new InterruptedException());
+      }
+      // This callback can check source expiry, session, subject and configuration. Never invoke
+      // it under either engine lock, and never extend the participant's existing lifetime.
+      requireContext.run();
+      Publication observed;
+      synchronized (owner) {
+        requireOpen();
+        if (pending != null && System.nanoTime() - started >= CREATE_PUBLICATION_NANOS) {
+          throw new SecurityException("CREATE policy publication did not complete in time");
+        }
+        RangerBasePlugin plugin = owner.backend.plugin();
+        observed = owner.publication;
+        if (pending == null) {
+          CompletedPolicy previous = observed == null ? null : observed.policy;
+          RangerAuthContext candidate = plugin.getPluginContext().getAuthContext();
+          if (previous == null || candidate == previous.context) {
+            snapshot(); // Missing, malformed and already completed states keep normal semantics.
+            return;
+          }
+          pending = new PendingCreatePublication(observed, candidate);
+        }
+        requireCreateTransition(pending, plugin);
+        if (observed != pending.previous) {
+          if (observed == null
+              || observed.policy == null
+              || observed.policy.context != pending.candidate) {
+            throw new SecurityException("CREATE policy publication was replaced");
+          }
+          snapshot(); // Only the genuine completion callback can supply this proof.
+          return;
+        }
+      }
+      long remaining = CREATE_PUBLICATION_NANOS - (System.nanoTime() - started);
+      if (remaining <= 0) {
+        throw new SecurityException("CREATE policy publication did not complete in time");
+      }
+      synchronized (owner.refreshLock) {
+        // Avoid losing a completion notification between observation and waiting. No owner
+        // lock is held here: acquisition/close may hold owner and signal refreshLock.
+        if (owner.publication == observed) {
+          try {
+            TimeUnit.NANOSECONDS.timedWait(
+                owner.refreshLock, Math.min(remaining, CREATE_LIVENESS_NANOS));
+          } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new SecurityException("CREATE publication wait interrupted", failure);
+          }
+        }
+      }
     }
   }
 
@@ -262,6 +328,9 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     synchronized (owner) {
       if (!closed) {
         closed = true;
+        synchronized (owner.refreshLock) {
+          owner.refreshLock.notifyAll();
+        }
         owner.release();
       }
     }
@@ -441,6 +510,7 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
         }
         // Every observed notification invalidates retained stamps, including enricher events.
         publication = new Publication(policy, roles);
+        refreshLock.notifyAll();
       }
     }
 
@@ -517,6 +587,16 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     }
   }
 
+  private static final class PendingCreatePublication {
+    private final Publication previous;
+    @Nullable private final RangerAuthContext candidate;
+
+    private PendingCreatePublication(Publication previous, @Nullable RangerAuthContext candidate) {
+      this.previous = previous;
+      this.candidate = candidate;
+    }
+  }
+
   private static final class KyuubiBackend implements Backend {
     private final SparkRangerAdminPlugin$ plugin;
 
@@ -552,6 +632,39 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
     if (closed || owner.backend == null) {
       throw new IllegalStateException("Delta Ranger lease is closed");
     }
+  }
+
+  private void requireCreateTransition(PendingCreatePublication pending, RangerBasePlugin plugin) {
+    CompletedPolicy previous = pending.previous.policy;
+    CompletedRoles roles = pending.previous.roles;
+    RangerAuthContext current = plugin.getCurrentRangerAuthContext();
+    // Do not inspect the candidate's fields before completion: Ranger exposes it while its
+    // engine is still under construction. The prior completed binding only bounds the wait;
+    // it never authorizes the CREATE or certifies the candidate.
+    if (previous == null
+        || roles == null
+        || pending.candidate == null
+        || pending.candidate == previous.context
+        || plugin.getPluginContext().getAuthContext() != pending.candidate
+        || (current != previous.context && current != pending.candidate)
+        || previous.version < 0
+        || !owner.config.metalake.equals(previous.metalake)
+        || roles.context != previous.context
+        || roles.mapping != previous.context.getRangerRolesUtil()
+        || roles.input != roles.mapping.getRoles()
+        || roles.input != plugin.getRoles()
+        || roles.input != plugin.getRangerRoles()
+        || roles.version < 0
+        || roles.version != plugin.getRolesVersion()
+        || !Objects.equals(roles.input.getRoleVersion(), roles.version)
+        || !owner.config.service.equals(roles.service)
+        || !owner.config.service.equals(roles.input.getServiceName())
+        || !owner.config.service.equals(plugin.getServiceName())
+        || !owner.config.metalake.equals(plugin.getServiceConfigs().get(METALAKE))
+        || plugin.getPoliciesVersion() < previous.version) {
+      throw new SecurityException("CREATE policy publication transition is invalid or replaced");
+    }
+    validateDefinition(plugin.getServiceDef(), owner.config.definition);
   }
 
   private SnapshotStamp snapshot() {

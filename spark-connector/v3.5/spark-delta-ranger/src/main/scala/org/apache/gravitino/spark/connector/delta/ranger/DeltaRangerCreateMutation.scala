@@ -138,6 +138,12 @@ private[ranger] final class DeltaRangerCreateMutation(
       DeltaRangerNativeOperation.current() != null || OptimisticTransaction.getActive.nonEmpty
     )
       denied("unbound native invocation")
+    engine.awaitCreatePublication(() => {
+      context()
+      if (closed || spark.sparkContext.isStopped || (catalog.policyEngine() ne engine))
+        denied("expired catalog")
+      input.foreach(_.requireLive())
+    })
     authorize()
     if (
       current.nonEmpty || DeltaRangerNativeOperation

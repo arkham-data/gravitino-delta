@@ -73,11 +73,64 @@ class TestDeltaRangerExternalJdbcLifecycle {
   }
 
   @Test
-  def retainedJdbcSchemaCreateThenAppendUsesOneFalseProfile(): Unit = {
+  def retainedJdbcSchemaCreateThenAppendUsesOneFalseProfile(): Unit =
+    schemaCreateThenAppend(publicationGap = false)
+
+  @Test
+  def retainedJdbcCreateWaitsForReservationPublicationThenAppends(): Unit =
+    schemaCreateThenAppend(publicationGap = true)
+
+  @Test
+  def completedReservationPublicationDenialNeverEntersNativeCreate(): Unit = {
+    var policy: TestDeltaRangerNativeSelect.Fixture = null
+    new TestDeltaRangerInstalledSchemaCreateBoundary().withCase(
+      "jdbc-create-publication-denied",
+      installed = true,
+      observed = false,
+      declaredSchema = schema,
+      settingsOverride = Some(settings),
+      policySetup = value => policy = value
+    ) { (spark, transport, evidence) =>
+      val gap = new DeltaRangerCreatePublicationGap(
+        policy,
+        () => {
+          assertTrue(evidence.files().isEmpty)
+          policy.denied.add("a:*")
+        }
+      )
+      transport.afterReserveResponse = () => gap.begin()
+      transport.publishSuccess = true
+      try {
+        assertThrows(
+          classOf[SecurityException],
+          () =>
+            GravitinoDeltaTable.create(
+              spark,
+              "a.db.created",
+              schema,
+              Vector.empty[String].asJava,
+              Map(
+                "delta.enableChangeDataFeed" -> "true",
+                "delta.compatibility.symlinkFormatManifest.enabled" -> "false"
+              ).asJava,
+              null,
+              false
+            )
+        )
+        gap.requireCompleted()
+        assertTrue(evidence.files().isEmpty)
+        assertEquals(Vector("RESERVE"), transport.commands.map(_.operation().name()).toVector)
+        assertEquals(2, policy.requests.size())
+      } finally gap.close()
+    }
+  }
+
+  private def schemaCreateThenAppend(publicationGap: Boolean): Unit = {
+    var policy: TestDeltaRangerNativeSelect.Fixture = null
     val postgres = new RegisteredJdbcPostgresFixture
     try
       new TestDeltaRangerInstalledSchemaCreateBoundary().withCase(
-        "jdbc-lifecycle-create",
+        if (publicationGap) "jdbc-create-publication-gap" else "jdbc-lifecycle-create",
         installed = true,
         observed = false,
         declaredSchema = new StructType(
@@ -90,11 +143,31 @@ class TestDeltaRangerExternalJdbcLifecycle {
             )
           )
         ),
-        settingsOverride = Some(settings)
+        settingsOverride = Some(settings),
+        policySetup = value => policy = value
       ) { (spark, transport, evidence) =>
         spark.conf.set(versionKey, "73")
         val scope = GravitinoJdbcInput.open(spark, 1200)
         val unrelated = GravitinoJdbcInput.open(spark, 1200)
+        val gap =
+          if (publicationGap)
+            Some(
+              new DeltaRangerCreatePublicationGap(
+                policy,
+                () => {
+                  assertTrue(
+                    evidence.files().isEmpty,
+                    "Native work entered before policy publication"
+                  )
+                  assertEquals(
+                    Vector("RESERVE"),
+                    transport.commands.map(_.operation().name()).toVector
+                  )
+                }
+              )
+            )
+          else None
+        gap.foreach(value => transport.afterReserveResponse = () => value.begin())
         try {
           val foreign = unrelated.read(options(postgres))
           val frame = scope.read(options(postgres))
@@ -115,6 +188,7 @@ class TestDeltaRangerExternalJdbcLifecycle {
             false,
             frame
           )
+          gap.foreach(_.requireCompleted())
           assertEquals(payload, postgres.payloadReads())
           assertEquals("PUBLISHED", transport.receipt.state().name())
           assertEquals("0", spark.conf.get(versionKey))
@@ -148,15 +222,76 @@ class TestDeltaRangerExternalJdbcLifecycle {
           transport.visibleTable = visible
           val commands = transport.commands.toVector
           val files = evidence.files()
+          val createBytes = Files.readAllBytes(evidence.log0)
+          val registration = transport.receipt.toProperties().asScala.toMap
+          val createChecksum = mapper.readTree(
+            Files.readAllBytes(evidence.log0.resolveSibling("00000000000000000000.crc"))
+          )
+          assertEquals(0, createChecksum.path("numFiles").asInt())
+          assertFalse(evidence.files().keys.exists(_.endsWith(".parquet")))
           create(spark, frame, ignore = true)
           assertEquals(commands, transport.commands.toVector)
           assertEquals(files, evidence.files())
           frame.write.mode("append").saveAsTable("a.db.created")
           assertEquals("1", spark.conf.get(versionKey))
           assertWrite(spark, evidence.target, 1)
+          assertArrayEquals(createBytes, Files.readAllBytes(evidence.log0))
+          assertEquals(registration, transport.receipt.toProperties().asScala.toMap)
+          val appendChecksum = mapper.readTree(
+            Files.readAllBytes(evidence.log0.resolveSibling("00000000000000000001.crc"))
+          )
+          val rows = appendChecksum.path("allFiles").elements().asScala.toVector.flatMap { file =>
+            val reader = ParquetReader
+              .builder[Group](
+                new GroupReadSupport,
+                new HadoopPath(evidence.target.resolve(file.path("path").asText()).toUri)
+              )
+              .withConf(spark.sparkContext.hadoopConfiguration)
+              .build()
+            try
+              Iterator
+                .continually(reader.read())
+                .takeWhile(_ != null)
+                .map { row =>
+                  (
+                    row.getLong("id", 0),
+                    if (row.getFieldRepetitionCount("secret") == 0) None
+                    else Some(row.getString("secret", 0)),
+                    row.getString("region", 0)
+                  )
+                }
+                .toVector
+            finally reader.close()
+          }
+          assertEquals(
+            Vector((1L, Some("one"), "keep"), (2L, Some("two"), "drop"), (3L, None, "keep")),
+            rows.sortBy(_._1)
+          )
+          assertEquals(createChecksum.path("metadata"), appendChecksum.path("metadata"))
+          assertEquals(
+            transport.receipt.nativeId().get(),
+            appendChecksum.path("metadata").path("id").asText()
+          )
+          val publications = Files.list(evidence.log0.getParent)
+          try
+            assertEquals(
+              Set(
+                "00000000000000000000.json",
+                "00000000000000000001.json",
+                "00000000000000000000.crc",
+                "00000000000000000001.crc"
+              ),
+              publications
+                .iterator()
+                .asScala
+                .map(_.getFileName.toString)
+                .filter(_.matches("[0-9]{20}\\.(json|crc)"))
+                .toSet
+            )
+          finally publications.close()
           assertTrue(Files.exists(evidence.log0.resolveSibling("00000000000000000001.json")))
           assertEquals(3L, frame.count())
-        } finally { unrelated.close(); scope.close() }
+        } finally { gap.foreach(_.close()); unrelated.close(); scope.close() }
       }
     finally postgres.close()
   }

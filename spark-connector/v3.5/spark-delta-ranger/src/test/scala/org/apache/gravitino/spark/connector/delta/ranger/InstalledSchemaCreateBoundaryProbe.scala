@@ -361,6 +361,7 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
     var metadataFailure: RuntimeException = null
     var reserveFailure: RuntimeException = null
     var afterPublishedResponse: () => Unit = () => ()
+    var afterReserveResponse: () => Unit = () => ()
     var receipt: DeltaRegistrationReceipt = _
     val sentinel = new IllegalStateException("INSTALLED_SCHEMA_CREATE_PUBLISH_STOP")
     Seq(metadata, actor).foreach { catalog =>
@@ -429,6 +430,7 @@ private[ranger] object InstalledSchemaCreateBoundaryProbe {
       )
       trace.record("reserved-receipt", receipt.toProperties().asScala.toSeq.sorted.mkString("\n"))
       when(reservedTable.properties()).thenReturn(receipt.toProperties())
+      afterReserveResponse()
       reservedTable
     })
     when(actorTables.alterTable(any(classOf[NameIdentifier]), any(classOf[MetadataChange])))
