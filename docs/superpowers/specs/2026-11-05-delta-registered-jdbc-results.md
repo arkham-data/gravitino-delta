@@ -396,5 +396,13 @@ The current frozen-source aggregate is
 the final-fix report records subsequent read-only documentation revalidation and
 exact commands. Owned current PostgreSQL/Gravitino fixtures are stopped with data
 and original artifacts retained; shared Ranger/MinIO readiness was checked at the
-final audit. Broader deferred scope and plan step 5 are unchanged pending the
-controller's scoped final review and closure.
+final audit.
+
+The scoped final re-review approved correction commit `a38da474f`: the JDBC
+converter mismatch, caller-row provenance, runtime recovery guidance and warning
+disclosure are addressed, with no new findings. All task reviews and the final
+milestone review are complete. This closes the bounded registered PostgreSQL to
+native Delta APPEND functional milestone; performance readiness and the broader
+deferred scope remain open. The closure-only plan/results changes are revalidated
+without replay under
+`.superpowers/sdd/2026-11-05-delta-registered-jdbc/final-fix-evidence/controller-closure-docs-validation-1/matrix-revalidated.json`.
