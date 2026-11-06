@@ -17,8 +17,9 @@
 
 # Owned manual-upload input for governed Delta
 
-Status: proposed next input capability; discovery complete and independent builder
-check found no important unanswered planning questions. Awaiting design approval.
+Status: parked by user direction on November 6, 2026. The shared Spark Hub writer,
+schema evolution and overwrite/full refresh take priority. No upload implementation
+is authorized by the later instruction to proceed with the critical path.
 No implementation or new runtime qualification is claimed. External JDBC remains
 closed at Gravitino `ebfdfbbad` and Spark Hub `5feaa5d1`.
 

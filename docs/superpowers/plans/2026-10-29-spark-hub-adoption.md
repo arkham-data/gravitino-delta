@@ -129,6 +129,18 @@ Ranger server/client 2.8.0 and MinIO, with 42 decisions. Generated date columns
 remain M5. CREATE0 -> publication0 -> WRITE1 remains the lifecycle; schema-only
 creation does not qualify payload ingestion or complete M2.
 
+## Updated critical path — November 6
+
+The user explicitly parked manual-upload/file expansion and approved actual shared
+JDBC ingestion through `job_wrapper -> write_dataset` as the next deliverable.
+Implement [the shared writer plan](2026-11-06-spark-hub-shared-writer.md): compose
+already-supported JDBC input, Gravitino-owned CREATE, named APPEND and additive
+schema evolution, with real Ranger 2.8.0/MinIO acceptance. Then implement governed
+overwrite/full refresh and only transformations required by selected real pipelines.
+Older file/constructed-input ordering below is superseded by this instruction;
+it must not block the critical shared writer. Full default-profile/M2 acceptance
+remains distinct from a bounded opt-in route.
+
 ## Current input task and remaining sequence
 
 The [direct input timestamp milestone](../specs/2026-11-05-delta-input-timestamp-findings.md)
