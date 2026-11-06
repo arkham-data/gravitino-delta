@@ -26,6 +26,7 @@ import org.apache.gravitino.spark.connector.SparkTypeConverter
 import org.mockito.Mockito._
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
+import org.apache.spark.sql.delta.OptimisticTransaction
 import java.util.concurrent.TimeUnit
 import org.apache.parquet.example.data.Group
 import org.apache.parquet.hadoop.ParquetReader
@@ -35,6 +36,8 @@ import org.apache.spark.sql.types.{LongType, StringType, StructType, MetadataBui
 import org.junit.jupiter.api.Assertions._
 import org.junit.jupiter.api.{Tag, Test}
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 /** Installed native metadata operations must preserve exactly their retained JDBC input. */
 @Tag("gravitino-docker-test")
@@ -395,6 +398,287 @@ class TestDeltaRangerExternalJdbcLifecycle {
       )
     finally { policy.close(); postgres.close() }
   }
+
+  @ParameterizedTest
+  @ValueSource(strings = Array("foreign-binding", "foreign-transaction"))
+  def createCompletionRejectsForeignPublicationWhileOwnerActive(mode: String): Unit = {
+    val postgres = new RegisteredJdbcPostgresFixture
+    try
+      new TestDeltaRangerInstalledSchemaCreateBoundary().withCase(
+        "jdbc-create-completion-" + mode,
+        installed = true,
+        observed = false,
+        declaredSchema = schema,
+        settingsOverride = Some(settings)
+      ) { (spark, transport, evidence) =>
+        spark.conf.set(versionKey, "73")
+        var onClock: () => Unit = () => ()
+        val scope = DeltaRangerExternalJdbcSources.openWithClock(
+          spark,
+          1200,
+          () => {
+            onClock(); 0L
+          }
+        )
+        val foreignScope = DeltaRangerExternalJdbcSources.openWithClock(spark, 1200, () => 0L)
+        try {
+          val frame = source(spark, scope, postgres)
+          val foreignFrame = source(spark, foreignScope, postgres)
+          val input = DeltaRangerMetadataInput.capture(spark, frame)
+          val foreignInput = DeltaRangerMetadataInput.capture(spark, foreignFrame)
+          def issued(name: String): DeltaRangerCreateCommand.Carrier =
+            spark.sessionState.analyzer
+              .execute(
+                spark.sessionState.sqlParser.parsePlan(
+                  s"CREATE TABLE a.db.$name (id BIGINT, secret STRING, region STRING) USING delta " +
+                    "TBLPROPERTIES ('delta.enableChangeDataFeed'='true', " +
+                    "'delta.compatibility.symlinkFormatManifest.enabled'='false')"
+                )
+              )
+              .asInstanceOf[DeltaRangerCreateCommand.Carrier]
+          val carrier = issued("created")
+          carrier.owner.bindInput(carrier, input)
+          val foreignCarrier = issued("other")
+          foreignCarrier.owner.bindInput(foreignCarrier, foreignInput)
+          val physical = carrier.owner.plan(carrier, spark)
+          val probe = new CompletionProbe[DeltaRangerCreateMutation](
+            carrier.owner,
+            classOf[DeltaRangerCreateMutation],
+            scope,
+            foreignScope,
+            mode,
+            mutation => mutation.requireExternalPublication(input),
+            mutation => foreignInput.complete(mutation)
+          )
+          onClock = () => probe.check()
+          transport.publishSuccess = true
+          val payload = postgres.payloadReads()
+          try {
+            if (mode == "foreign-transaction") {
+              val failure = assertThrows(classOf[Exception], () => physical.run())
+              evidence.failed("expected-foreign-transaction", failure)
+              assertTrue(failure.getMessage.contains("native=CREATE0_CONFIRMED"), failure.toString)
+              assertTrue(failure.getMessage.contains("publication=PUBLISHED"), failure.toString)
+              assertTrue(
+                causes(failure).exists(_.isInstanceOf[SecurityException]),
+                causes(failure).mkString("; ")
+              )
+            } else physical.run()
+          } finally clearActiveTransaction()
+          assertTrue(probe.exercised)
+          probe.assertSnapshots()
+          assertEquals(payload, postgres.payloadReads())
+          assertEquals("PUBLISHED", transport.receipt.state().name())
+          assertTrue(Files.exists(evidence.log0))
+          assertFalse(Files.exists(evidence.log0.resolveSibling("00000000000000000001.json")))
+          assertEquals(
+            Vector("RESERVE", "PUBLISH"),
+            transport.commands.map(_.operation().name()).toVector
+          )
+          assertThrows(classOf[SecurityException], () => foreignFrame.count())
+          if (mode == "foreign-transaction")
+            assertThrows(classOf[SecurityException], () => frame.count())
+          else assertEquals(3L, frame.count())
+        } finally { clearActiveTransaction(); foreignScope.close(); scope.close() }
+      }
+    finally postgres.close()
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = Array("foreign-binding", "foreign-transaction"))
+  def cdfCompletionRejectsForeignPublicationWhileOwnerActive(mode: String): Unit = {
+    val postgres = new RegisteredJdbcPostgresFixture
+    val policy = new TestDeltaRangerNativeSelect.Fixture
+    try
+      NativeSelectFixture.withSpark(
+        spark => {
+          Seq("a", "b").foreach { catalog =>
+            spark.conf
+              .set(s"spark.sql.catalog.$catalog", classOf[CdfAlterForwardingCatalog].getName)
+            NativeSelectFixture.bindingFixture(spark, catalog)
+          }
+          spark.conf.set(versionKey, "73")
+          var onClock: () => Unit = () => ()
+          val scope = DeltaRangerExternalJdbcSources.openWithClock(
+            spark,
+            1200,
+            () => {
+              onClock(); 0L
+            }
+          )
+          val foreignScope = DeltaRangerExternalJdbcSources.openWithClock(spark, 1200, () => 0L)
+          try {
+            val frame = source(spark, scope, postgres)
+            val foreignFrame = source(spark, foreignScope, postgres)
+            val input = DeltaRangerMetadataInput.capture(spark, frame)
+            val foreignInput = DeltaRangerMetadataInput.capture(spark, foreignFrame)
+            def issued(catalog: String): DeltaRangerCdfPropertyCommand.Carrier =
+              spark.sessionState.analyzer
+                .execute(
+                  spark.sessionState.sqlParser.parsePlan(
+                    s"ALTER TABLE $catalog.db.t SET TBLPROPERTIES ('delta.enableChangeDataFeed'='true')"
+                  )
+                )
+                .asInstanceOf[DeltaRangerCdfPropertyCommand.Carrier]
+            val carrier = issued("a")
+            carrier.owner.bindInput(carrier, input)
+            val foreignCarrier = issued("b")
+            foreignCarrier.owner.bindInput(foreignCarrier, foreignInput)
+            val physical = carrier.owner.plan(carrier, spark)
+            val probe = new CompletionProbe[DeltaRangerCdfPropertyMutation](
+              carrier.owner,
+              classOf[DeltaRangerCdfPropertyMutation],
+              scope,
+              foreignScope,
+              mode,
+              mutation => mutation.requireExternalPublication(input),
+              mutation => foreignInput.complete(mutation)
+            )
+            onClock = () => probe.check()
+            val payload = postgres.payloadReads()
+            try {
+              if (mode == "foreign-transaction") {
+                val failure = assertThrows(classOf[Exception], () => physical.run())
+                assertTrue(
+                  causes(failure).exists(e =>
+                    Option(e.getMessage).exists(
+                      _.startsWith("CDF property change committed;")
+                    )
+                  )
+                )
+                assertTrue(
+                  causes(failure).exists(_.isInstanceOf[SecurityException]),
+                  causes(failure).mkString("; ")
+                )
+              } else physical.run()
+            } finally clearActiveTransaction()
+            assertTrue(probe.exercised)
+            probe.assertSnapshots()
+            assertEquals(payload, postgres.payloadReads())
+            val target = Paths.get(NativeSelectFixture.locations("a"))
+            assertTrue(Files.exists(target.resolve("_delta_log/00000000000000000001.json")))
+            assertFalse(Files.exists(target.resolve("_delta_log/00000000000000000002.json")))
+            assertFalse(
+              Files.exists(
+                Paths.get(
+                  NativeSelectFixture.locations("b"),
+                  "_delta_log",
+                  "00000000000000000001.json"
+                )
+              )
+            )
+            assertThrows(classOf[SecurityException], () => foreignFrame.count())
+            if (mode == "foreign-transaction")
+              assertThrows(classOf[SecurityException], () => frame.count())
+            else assertEquals(3L, frame.count())
+          } finally {
+            clearActiveTransaction()
+            val root = Paths.get(
+              System.getenv("GRAVITINO_DELTA_CREATE_PROBE_EVIDENCE_DIR"),
+              "jdbc-cdf-completion-" + mode
+            )
+            Files.createDirectories(root)
+            Seq("a", "b").foreach { catalog =>
+              val target = Paths.get(NativeSelectFixture.locations(catalog))
+              Files.write(root.resolve(catalog + "-target.txt"), target.toString.getBytes("UTF-8"))
+              val logs = Files.list(target.resolve("_delta_log"))
+              try
+                logs
+                  .iterator()
+                  .asScala
+                  .filter(_.toString.endsWith(".json"))
+                  .foreach(path =>
+                    Files.copy(path, root.resolve(catalog + "-" + path.getFileName.toString))
+                  )
+              finally logs.close()
+            }
+            foreignScope.close(); scope.close()
+          }
+        },
+        Some(NativeSelectFixture.extension(policy)),
+        Map(
+          "spark.gravitino.enableDeltaRangerExternalJdbcSupport" -> "true",
+          "spark.databricks.delta.autoCompact.enabled" -> "false",
+          "spark.databricks.delta.optimizeWrite.enabled" -> "false",
+          "spark.databricks.delta.write.txnVersion.autoReset.enabled" -> "false"
+        )
+      )
+    finally { policy.close(); postgres.close() }
+  }
+
+  // Only read real owner/mutation state; never fabricate native success or production callbacks.
+  private class CompletionProbe[T <: AnyRef](
+      owner: AnyRef,
+      mutationClass: Class[T],
+      scope: DeltaRangerExternalJdbcSources.Scope,
+      foreignScope: DeltaRangerExternalJdbcSources.Scope,
+      mode: String,
+      validate: T => Unit,
+      substitute: T => Unit
+  ) {
+    var exercised = false
+    private val before = field(scope, "configuration")
+    private val foreignBefore = field(foreignScope, "configuration")
+    def check(): Unit = {
+      val mutationField = owner.getClass.getDeclaredFields.find(_.getType == mutationClass).get
+      mutationField.setAccessible(true)
+      val mutation = mutationClass.cast(mutationField.get(owner))
+      if (!exercised && mutation != null && field(mutation, "closed") == java.lang.Boolean.TRUE) {
+        exercised = true // The successful proof and nested completion must not re-enter this hook.
+        validate(mutation) // Proves the real owner is active and native publication is eligible.
+        if (mode == "foreign-binding") {
+          assertThrows(classOf[SecurityException], () => substitute(mutation))
+          assertEquals(foreignBefore, field(foreignScope, "configuration"))
+          validate(mutation)
+        } else {
+          val transactionField = mutation.getClass.getDeclaredFields
+            .find(_.getType == classOf[OptimisticTransaction])
+            .get
+          transactionField.setAccessible(true)
+          val transaction = transactionField.get(mutation).asInstanceOf[OptimisticTransaction]
+          val foreign = new OptimisticTransaction(
+            transaction.deltaLog,
+            transaction.catalogTable,
+            transaction.snapshot
+          )
+          assertNotSame(transaction, foreign)
+          assertNotEquals(transaction.txnId, foreign.txnId)
+          OptimisticTransaction.getClass
+            .getMethod("setActive", classOf[OptimisticTransaction])
+            .invoke(OptimisticTransaction, foreign)
+        }
+      }
+    }
+    def assertSnapshots(): Unit = {
+      assertEquals(foreignBefore, field(foreignScope, "configuration"))
+      if (mode == "foreign-transaction") assertEquals(before, field(scope, "configuration"))
+      else assertNotEquals(before, field(scope, "configuration"))
+    }
+  }
+
+  // Delta exposes these package-scoped Scala methods as public JVM methods.
+  private def clearActiveTransaction(): Unit = {
+    OptimisticTransaction.getClass.getMethod("clearActive").invoke(OptimisticTransaction)
+    assertTrue(OptimisticTransaction.getActive.isEmpty)
+  }
+
+  private def field(value: AnyRef, name: String): AnyRef = {
+    val member = value.getClass.getDeclaredField(name)
+    member.setAccessible(true)
+    member.get(value)
+  }
+
+  private def source(
+      spark: SparkSession,
+      scope: DeltaRangerExternalJdbcSources.Scope,
+      postgres: RegisteredJdbcPostgresFixture
+  ): DataFrame = {
+    val bound = scope.load(options(postgres))
+    RegisteredJdbcPostgresFixture.frame(spark, LogicalRelation(bound.relation))
+  }
+
+  private def causes(failure: Throwable): Vector[Throwable] =
+    Iterator.iterate(failure)(_.getCause).takeWhile(_ != null).toVector
 
   private def assertWrite(spark: SparkSession, target: Path, version: Int): Unit = {
     val actions = Files
