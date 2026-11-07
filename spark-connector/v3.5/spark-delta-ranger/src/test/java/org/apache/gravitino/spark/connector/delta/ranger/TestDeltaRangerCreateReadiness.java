@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
@@ -60,6 +61,134 @@ class TestDeltaRangerCreateReadiness {
       wait.get(5, TimeUnit.SECONDS);
       pending.fixture.engine.requireReady();
       assertTrue(pending.fixture.requests.isEmpty(), "Readiness must not evaluate or authorize");
+    }
+  }
+
+  @Test
+  void unfinishedCandidateRoleGettersAreDeferredUntilCompletedPublication() throws Exception {
+    try (Pending pending = new Pending(false)) {
+      RangerAuthContext ready = pending.candidate.get();
+      RangerAuthContext unfinished = mock(RangerAuthContext.class);
+      AtomicBoolean completed = new AtomicBoolean();
+      AtomicInteger candidateReads = new AtomicInteger();
+      when(unfinished.getRangerRolesUtil())
+          .thenAnswer(
+              call -> {
+                assertTrue(completed.get(), "Unpublished candidate role mapping was inspected");
+                candidateReads.incrementAndGet();
+                return ready.getRangerRolesUtil();
+              });
+      when(unfinished.getRoleVersion())
+          .thenAnswer(
+              call -> {
+                assertTrue(completed.get(), "Unpublished candidate role version was inspected");
+                candidateReads.incrementAndGet();
+                return ready.getRoleVersion();
+              });
+      pending.candidate.set(unfinished);
+      // These are the actual Ranger 2.8 dependencies, not getters stubbed to the old input:
+      // BasePlugin -> PolicyEngine[Impl] -> shared plugin context -> exposed candidate roles.
+      when(pending.fixture.plugin.getRangerRoles())
+          .thenAnswer(
+              call -> pending.fixture.context.getAuthContext().getRangerRolesUtil().getRoles());
+      when(pending.fixture.plugin.getRolesVersion())
+          .thenAnswer(call -> pending.fixture.context.getAuthContext().getRoleVersion());
+      AtomicInteger checks = new AtomicInteger();
+      pending.fixture.engine.awaitCreatePublication(
+          () -> {
+            if (checks.incrementAndGet() == 2) {
+              completed.set(true);
+              pending.complete();
+            }
+          });
+      assertEquals(2, checks.get());
+      assertTrue(completed.get());
+      assertTrue(
+          candidateReads.get() > 0, "Completed snapshot must still validate candidate roles");
+      pending.fixture.engine.requireReady();
+      assertTrue(pending.fixture.requests.isEmpty());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"context", "roles"})
+  void replacementAtFinalSnapshotEntryCannotCompleteCapturedReadiness(String change)
+      throws Exception {
+    TestDeltaRangerNativeSelect.Fixture fixture = new TestDeltaRangerNativeSelect.Fixture();
+    AtomicReference<RangerAuthContext> current =
+        new AtomicReference<>(fixture.plugin.getCurrentRangerAuthContext());
+    AtomicReference<RangerAuthContext> candidate = new AtomicReference<>(current.get());
+    AtomicReference<RangerRoles> roles = new AtomicReference<>(fixture.plugin.getRoles());
+    AtomicInteger snapshotEntry = new AtomicInteger();
+    AtomicBoolean replaced = new AtomicBoolean();
+    when(fixture.context.getAuthContext()).thenAnswer(call -> candidate.get());
+    when(fixture.plugin.getCurrentRangerAuthContext()).thenAnswer(call -> current.get());
+    when(fixture.plugin.getRoles()).thenAnswer(call -> roles.get());
+    when(fixture.plugin.getRangerRoles())
+        .thenAnswer(call -> fixture.context.getAuthContext().getRangerRolesUtil().getRoles());
+    when(fixture.plugin.getRolesVersion())
+        .thenAnswer(call -> fixture.context.getAuthContext().getRoleVersion());
+    DeltaRangerPolicyEngine.Backend backend =
+        new DeltaRangerPolicyEngine.Backend() {
+          /** {@inheritDoc} */
+          @Override
+          public RangerBasePlugin plugin() {
+            int entry = snapshotEntry.getAndUpdate(value -> value == 1 ? 2 : 0);
+            if (entry == 2) {
+              // The loop has checked its captured publication and all pending bindings. snapshot()
+              // enters the backend next, before capturing the publication it will validate.
+              if (change.equals("context")) {
+                candidate.set(
+                    new RangerAuthContext(Collections.emptyMap(), null, roles.get(), null));
+                current.set(candidate.get());
+              } else {
+                RangerRoles replacement = new RangerRoles();
+                replacement.setServiceName("service");
+                replacement.setRoleVersion(2L);
+                roles.set(replacement);
+                candidate.get().setRoles(replacement);
+              }
+              fixture.listener.contextChanged();
+              replaced.set(true);
+            }
+            return fixture.plugin;
+          }
+          /** {@inheritDoc} */
+          @Override
+          public void start() {
+            fixture.listener.contextChanged();
+          }
+          /** {@inheritDoc} */
+          @Override
+          public void close() {}
+        };
+    try (DeltaRangerPolicyEngine engine =
+        new DeltaRangerPolicyEngine.Owner(() -> backend)
+            .acquire(
+                new DeltaRangerConfig("service", "spark", "lake", fixture.plugin.getConfig()))) {
+      engine.requireReady();
+      candidate.set(new RangerAuthContext(Collections.emptyMap(), null, roles.get(), null));
+      AtomicInteger checks = new AtomicInteger();
+      try {
+        assertThrows(
+            SecurityException.class,
+            () ->
+                engine.awaitCreatePublication(
+                    () -> {
+                      if (checks.incrementAndGet() == 2) {
+                        current.set(candidate.get());
+                        fixture.listener.contextChanged();
+                        snapshotEntry.set(1);
+                      }
+                    }));
+      } finally {
+        assertTrue(replaced.get(), "The replacement must occur at final snapshot entry");
+      }
+      assertEquals(2, checks.get(), "Replacement must reject without retry");
+      engine.requireReady(); // The replacement is valid; only the captured readiness is invalid.
+      assertTrue(fixture.requests.isEmpty());
+    } finally {
+      fixture.engine.close();
     }
   }
 

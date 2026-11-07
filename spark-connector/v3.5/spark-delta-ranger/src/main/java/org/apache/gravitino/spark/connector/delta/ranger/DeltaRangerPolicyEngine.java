@@ -161,7 +161,11 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
               || observed.policy.context != pending.candidate) {
             throw new SecurityException("CREATE policy publication was replaced");
           }
-          snapshot(); // Only the genuine completion callback can supply this proof.
+          // The callback can publish again without owner. Bind the completed proof to exactly
+          // the publication/candidate checked above; a replacement must reject, never retry.
+          if (snapshot().publication != observed) {
+            throw new SecurityException("CREATE policy publication changed during readiness");
+          }
           return;
         }
       }
@@ -653,9 +657,7 @@ public final class DeltaRangerPolicyEngine implements AutoCloseable {
         || roles.mapping != previous.context.getRangerRolesUtil()
         || roles.input != roles.mapping.getRoles()
         || roles.input != plugin.getRoles()
-        || roles.input != plugin.getRangerRoles()
         || roles.version < 0
-        || roles.version != plugin.getRolesVersion()
         || !Objects.equals(roles.input.getRoleVersion(), roles.version)
         || !owner.config.service.equals(roles.service)
         || !owner.config.service.equals(roles.input.getServiceName())
