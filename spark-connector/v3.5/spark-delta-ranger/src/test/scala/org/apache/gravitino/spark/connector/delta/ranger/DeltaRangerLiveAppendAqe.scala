@@ -76,7 +76,9 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
     "/api/metalakes/" + text("metalake") + "/catalogs/" + text("catalog") + "/schemas/" + text(
       "database"
     ) + "/tables/"
-  gateway.observeTables(tablePath, text("metadataPrincipal"))
+  if (request.path("sharedWriter").asBoolean())
+    gateway.observeSharedTables(tablePath, text("metadataPrincipal"), text("subject"))
+  else gateway.observeTables(tablePath, text("metadataPrincipal"))
   if (request.path("registeredJdbc").asBoolean()) {
     gateway.observeTables(
       "/api/metalakes/" + text("metalake") + "/catalogs/" + text(
@@ -427,14 +429,99 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
             witness.put("role", engine.versions().role())
             witness.put("downloadVersion", engine.versions().policy())
             witness.put("responseSha256", appliedEvidence.path("downloadSha256").asText())
-            witness.put("publicStateSha256", sha(Paths.get(state.path("publicStateFile").asText())))
-            witness.put("rangerStateSha256", sha(Paths.get(state.path("rangerStateFile").asText())))
-            witness.put("publicRevokeComplete", state.path("publicRevokeComplete").asBoolean())
-            val absence =
-              if (request.path("revokeSource").asBoolean()) "sourceSelectAbsent" else "updateAbsent"
-            witness.put(absence, state.path(absence).asBoolean())
-            witness.put("roleMatchesInitialDownload", engine.versions().role() == initialRole)
-            gateway.releaseAfter(witness, initialPolicy, initialRole)
+            if (request.path("sharedWriter").asBoolean()) {
+              val downloaded = json.readTree(
+                Paths.get(appliedEvidence.path("download").path("path").asText()).toFile
+              )
+              val prior = json
+                .readTree(Paths.get(state.path("beforeRangerStateFile").asText()).toFile)
+                .path("policies")
+              val denyId = state.path("exactDenyPolicyId").asLong(-1)
+              val deny = downloaded
+                .path("policies")
+                .elements()
+                .asScala
+                .filter(_.path("id").asLong() == denyId)
+                .toVector
+              require(
+                deny.size == 1 && deny.head.path("service").asText() == text("resourceService") &&
+                  deny.head
+                    .path("policyPriority")
+                    .isIntegralNumber && deny.head.path("policyPriority").asInt() == 1
+              )
+              val expected = Map(
+                "catalog" -> text("catalog"),
+                "database" -> text("database"),
+                "table" -> target,
+                "column" -> "*"
+              )
+              require(deny.head.path("resources").fieldNames().asScala.toSet == expected.keySet)
+              expected.foreach { case (key, value) =>
+                val resource = deny.head.path("resources").path(key)
+                require(
+                  resource.path("values").elements().asScala.map(_.asText()).toVector == Vector(
+                    value
+                  )
+                )
+                require(
+                  !resource.path("isExcludes").asBoolean() && !resource
+                    .path("isRecursive")
+                    .asBoolean()
+                )
+              }
+              val items = deny.head.path("denyPolicyItems")
+              require(
+                items.size() == 1 && items.get(0).path("users").size() == 0 && items
+                  .get(0)
+                  .path("groups")
+                  .size() == 0
+              )
+              require(
+                items.get(0).path("roles").elements().asScala.map(_.asText()).toVector == Vector(
+                  state.path("applicationRole").asText()
+                )
+              )
+              val accesses = items.get(0).path("accesses")
+              require(
+                accesses.size() == 1 && accesses
+                  .get(0)
+                  .path("type")
+                  .asText() == "update" && accesses.get(0).path("isAllowed").asBoolean()
+              )
+              def policies(value: JsonNode) =
+                value.path("policies").elements().asScala.map(p => p.path("id").asLong() -> p).toMap
+              require(policies(prior) == (policies(downloaded) - denyId))
+              witness.put("exactRangerDenyComplete", true);
+              witness.put("unrelatedPoliciesUnchanged", true)
+              witness.put(
+                "rangerStateSha256",
+                sha(Paths.get(state.path("rangerStateFile").asText()))
+              )
+              witness.put("roleMatchesInitialDownload", engine.versions().role() == initialRole)
+              witness.put("service", text("resourceService"));
+              witness.put("catalog", text("catalog")); witness.put("database", text("database"))
+              witness.put("table", target); witness.put("actor", subject);
+              witness.put("applicationRole", state.path("applicationRole").asText())
+              witness.put("denyPolicyId", denyId); witness.put("access", "update");
+              witness.put("policyPriority", 1)
+              gateway.releaseSharedRangerDeny(witness, initialPolicy, initialRole)
+            } else {
+              witness.put(
+                "publicStateSha256",
+                sha(Paths.get(state.path("publicStateFile").asText()))
+              )
+              witness.put(
+                "rangerStateSha256",
+                sha(Paths.get(state.path("rangerStateFile").asText()))
+              )
+              witness.put("publicRevokeComplete", state.path("publicRevokeComplete").asBoolean())
+              val absence =
+                if (request.path("revokeSource").asBoolean()) "sourceSelectAbsent"
+                else "updateAbsent"
+              witness.put(absence, state.path(absence).asBoolean())
+              witness.put("roleMatchesInitialDownload", engine.versions().role() == initialRole)
+              gateway.releaseAfter(witness, initialPolicy, initialRole)
+            }
           }
         } catch {
           case error: Throwable => barrierFailure = error; gateway.abort()
@@ -449,6 +536,8 @@ final class DeltaRangerLiveAppendAqe(requestPath: String) extends AutoCloseable 
 
   /** Retain successful helper-owned payload plans, never planning failed callbacks. */
   def finishAppend(name: String, @Nullable failure: Throwable): String = {
+    if (request.path("sharedWriter").asBoolean())
+      writeJson(output.resolve(name + "-named-requests.json"), gateway.namedRequests())
     require(Thread.currentThread() eq writerThread, "Writer connection changed after action")
     require(activeCase == name)
     if (barrierController != null) {
@@ -716,7 +805,7 @@ private[ranger] object DeltaRangerLiveAppendAqe {
     val message = Option(failure.getMessage).getOrElse("")
     if (
       !jdbc || (failure.isInstanceOf[SecurityException] &&
-        (message == "Delta Ranger access denied" || message == "Delta Ranger publication changed; reanalyze the query" ||
+        (message == "Delta metadata observation rejected" || message == "Delta Ranger access denied" || message == "Delta Ranger publication changed; reanalyze the query" ||
           message.startsWith(
             "Registered JDBC source rejected: "
           ) || message == "Registered JDBC source load rejected"))

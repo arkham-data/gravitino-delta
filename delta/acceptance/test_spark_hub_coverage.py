@@ -263,10 +263,18 @@ class TestSparkHubCoverage(unittest.TestCase):
         validate_coverage(document)
         summary = coverage_summary(document)
         self.assertEqual(
-            {"named-filter-mask", "projected-count", "column-denied", "unknown-binding", "unpublished-registration", "fresh-action-revoke"},
+            {"named-filter-mask", "projected-count", "column-denied", "unknown-binding", "unpublished-registration", "fresh-action-revoke", "shared-jdbc-named-writer"},
             set(summary["qualifiedCases"]),
         )
         cases = {case["id"]: case for case in document["cases"]}
+        shared = cases["shared-jdbc-named-writer"]
+        runtime = [record for record in document["evidence"] if record["id"] in shared["evidenceRefs"] and record["kind"] == "runtime"]
+        self.assertEqual({"3.5.4-3.3.0", "3.5.4-3.3.2", "3.5.6-3.3.0", "3.5.6-3.3.2"}, {record["pair"] for record in runtime})
+        self.assertEqual(4, len(runtime))
+        self.assertTrue(all(record["original"] and record["caseId"] == shared["id"] for record in runtime))
+        self.assertEqual("connector-gap", cases["external-ingestion-create"]["status"])
+        self.assertIn("CHAR/VARCHAR", shared["expectedOutcome"])
+        self.assertIn("27 cases", shared["qualificationStage"])
         for case_id in (
             "named-filter-mask",
             "projected-count",
@@ -274,6 +282,7 @@ class TestSparkHubCoverage(unittest.TestCase):
             "unknown-binding",
             "unpublished-registration",
             "fresh-action-revoke",
+            "shared-jdbc-named-writer",
             "raw-path-glue-migration",
             "external-ingestion-create",
             "append-options",

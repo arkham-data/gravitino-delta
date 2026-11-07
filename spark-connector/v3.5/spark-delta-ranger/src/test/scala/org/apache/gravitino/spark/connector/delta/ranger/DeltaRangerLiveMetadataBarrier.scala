@@ -95,6 +95,64 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
     require(value.path("scopeClosed").isBoolean && value.path("scopeClosed").asBoolean())
   }
 
+  /** Exact Ranger deny evidence is distinct from public privilege revocation. */
+  def validateSharedDenyRelease(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit = {
+    val fields = Set(
+      "initialPolicy",
+      "policy",
+      "role",
+      "downloadVersion",
+      "responseSha256",
+      "rangerStateSha256",
+      "exactRangerDenyComplete",
+      "unrelatedPoliciesUnchanged",
+      "roleMatchesInitialDownload",
+      "service",
+      "catalog",
+      "database",
+      "table",
+      "actor",
+      "applicationRole",
+      "denyPolicyId",
+      "policyPriority",
+      "access"
+    )
+    require(value.isObject && value.fieldNames().asScala.toSet == fields)
+    Seq("initialPolicy", "policy", "role", "downloadVersion", "denyPolicyId").foreach(k =>
+      require(
+        value.path(k).isIntegralNumber && value
+          .path(k)
+          .canConvertToLong && value.path(k).asLong() >= 0
+      )
+    )
+    require(
+      value.path("initialPolicy").asLong() == initialPolicy && value
+        .path("policy")
+        .asLong() > initialPolicy
+    )
+    require(
+      value.path("downloadVersion").asLong() == value.path("policy").asLong() && value
+        .path("role")
+        .asLong() == initialRole
+    )
+    Seq("responseSha256", "rangerStateSha256").foreach(k =>
+      require(value.path(k).isTextual && value.path(k).asText().matches("[0-9a-f]{64}"))
+    )
+    Seq("exactRangerDenyComplete", "unrelatedPoliciesUnchanged", "roleMatchesInitialDownload")
+      .foreach(k => require(value.path(k).isBoolean && value.path(k).asBoolean()))
+    Seq("service", "catalog", "database", "table", "actor", "applicationRole").foreach(k =>
+      require(
+        value
+          .path(k)
+          .isTextual && value.path(k).asText().nonEmpty && !value.path(k).asText().contains("*")
+      )
+    )
+    require(value.path("access").asText() == "update")
+    require(
+      value.path("policyPriority").isIntegralNumber && value.path("policyPriority").asInt() == 1
+    )
+  }
+
   def validateRelease(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit = {
     val numbers = Set("initialPolicy", "policy", "role", "downloadVersion")
     val digests = Set("responseSha256", "publicStateSha256", "rangerStateSha256")
@@ -154,6 +212,7 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
     private var metadataObserved = false
     private var metadataPrefixes = Set.empty[String]
     private var metadataPaths = Set.empty[String]
+    private var sharedActorPrefixes = Map.empty[String, String]
     private var namedAttempts = Vector.empty[Map[String, Any]]
     private var witness: Vector[String] = Vector.empty
     server.createContext("/", (exchange: HttpExchange) => forward(exchange))
@@ -179,6 +238,13 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
       )
       require(metadataPrincipal == null || metadataPrincipal == principal)
       metadataPrefixes += prefix; metadataPrincipal = principal
+    }
+
+    /** Observe shared actor visibility without treating it as the separate metadata identity. */
+    def observeSharedTables(prefix: String, principal: String, actor: String): Unit = synchronized {
+      require(actor.nonEmpty && actor != principal && !sharedActorPrefixes.contains(prefix))
+      observeTables(prefix, principal)
+      sharedActorPrefixes += prefix -> actor
     }
 
     /** Detached snapshots of every relevant attempted request, including non-200 responses. */
@@ -227,6 +293,15 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
       json.writeValue(evidence.resolve("release-witness.json").toFile, value)
       state = "released"; notifyAll()
     }
+
+    /** Release after the shared caller proves an exact downloaded Ranger UPDATE deny. */
+    def releaseSharedRangerDeny(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit =
+      synchronized {
+        validateSharedDenyRelease(value, initialPolicy, initialRole)
+        require(state == "held" && live(), "Release lacks a live held phase")
+        json.writeValue(evidence.resolve("release-witness.json").toFile, value)
+        state = "released"; notifyAll()
+      }
 
     /** Release a live held request after a verified metadata-only fixture change. */
     def releaseMetadataChange(value: JsonNode, initialPolicy: Long, initialRole: Long): Unit =
@@ -315,19 +390,34 @@ private[ranger] object DeltaRangerLiveMetadataBarrier {
         } else None
       }
       try {
-        val metadata = synchronized {
+        val metadataPath = synchronized {
           metadataPrincipal != null && exchange.getRequestMethod == "GET" && (exchange.getRequestURI.getRawPath == target || metadataPrefixes
             .exists(exchange.getRequestURI.getRawPath.startsWith))
         }
-        if (metadata) {
+        val metadata = if (metadataPath) {
           val header = Option(exchange.getRequestHeaders.getFirst("Authorization")).getOrElse("")
           require(header.startsWith("Basic "), "Metadata authentication was not explicit")
           val decoded = new String(java.util.Base64.getDecoder.decode(header.substring(6)), "UTF-8")
+          val principal = decoded.takeWhile(_ != ':')
+          val actor = synchronized {
+            sharedActorPrefixes.exists { case (prefix, expected) =>
+              exchange.getRequestURI.getRawPath.startsWith(prefix) && principal == expected
+            }
+          }
           require(
-            decoded.takeWhile(_ != ':') == metadataPrincipal,
+            principal == metadataPrincipal || actor,
             "Metadata request used another principal"
           )
-        }
+          if (actor) synchronized {
+            attempt.foreach(index =>
+              namedAttempts = namedAttempts.updated(
+                index,
+                namedAttempts(index).updated("identityKind", "shared-application")
+              )
+            )
+          }
+          principal == metadataPrincipal
+        } else false
         if (!hold(exchange)) { exchange.sendResponseHeaders(503, -1); return }
         releasing = synchronized {
           state == "released" && exchange.getRequestMethod == "GET" && exchange.getRequestURI.getRawPath == target

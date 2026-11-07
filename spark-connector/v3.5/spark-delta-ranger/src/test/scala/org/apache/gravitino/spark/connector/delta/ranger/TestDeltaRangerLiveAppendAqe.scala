@@ -19,7 +19,7 @@
 
 package org.apache.gravitino.spark.connector.delta.ranger
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import java.nio.file.Files
 import scala.collection.JavaConverters._
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -42,6 +42,20 @@ class TestDeltaRangerLiveAppendAqe {
         new SecurityException("Delta Ranger access denied"),
         true
       ) == "Delta Ranger access denied"
+    )
+    assert(
+      DeltaRangerLiveAppendAqe.safeFailureMessage(
+        new SecurityException("Delta metadata observation rejected"),
+        true
+      ) == "Delta metadata observation rejected"
+    )
+    assert(
+      !DeltaRangerLiveAppendAqe
+        .safeFailureMessage(
+          new SecurityException("Delta metadata observation rejected password=private"),
+          true
+        )
+        .contains("password=private")
     )
     val witness = json.createObjectNode()
     witness.put("initialPolicy", 2L); witness.put("policy", 2L); witness.put("role", 4L)
@@ -78,6 +92,54 @@ class TestDeltaRangerLiveAppendAqe {
     assertThrows(
       classOf[java.lang.reflect.InvocationTargetException],
       () => methods.head.invoke(DeltaRangerLiveMetadataBarrier, witness, Long.box(2L), Long.box(4L))
+    )
+  }
+
+  /** Shared Ranger deny witnesses cannot impersonate a public privilege revoke. */
+  @Test
+  def sharedRangerDenyWitness(): Unit = {
+    val methods = DeltaRangerLiveMetadataBarrier.getClass.getMethods.filter(
+      _.getName == "validateSharedDenyRelease"
+    )
+    assert(methods.length == 1, "Missing distinct shared Ranger deny witness")
+    val witness = json.createObjectNode()
+    witness.put("initialPolicy", 2L); witness.put("policy", 3L); witness.put("role", 4L);
+    witness.put("downloadVersion", 3L)
+    witness.put("denyPolicyId", 8L); witness.put("access", "update");
+    witness.put("policyPriority", 1)
+    Seq("responseSha256", "rangerStateSha256").foreach(witness.put(_, "a" * 64))
+    Seq("exactRangerDenyComplete", "unrelatedPoliciesUnchanged", "roleMatchesInitialDownload")
+      .foreach(witness.put(_, true))
+    Seq("service", "catalog", "database", "table", "actor", "applicationRole").foreach(k =>
+      witness.put(k, k)
+    )
+    def verify(value: JsonNode): Unit =
+      methods.head.invoke(DeltaRangerLiveMetadataBarrier, value, Long.box(2L), Long.box(4L))
+    verify(witness)
+    witness.fieldNames().asScala.toVector.foreach { field =>
+      val changed = witness.deepCopy(); changed.remove(field)
+      assertThrows(classOf[java.lang.reflect.InvocationTargetException], () => verify(changed))
+    }
+    Seq("exactRangerDenyComplete", "unrelatedPoliciesUnchanged", "roleMatchesInitialDownload")
+      .foreach { field =>
+        val changed = witness.deepCopy(); changed.put(field, false)
+        assertThrows(classOf[java.lang.reflect.InvocationTargetException], () => verify(changed))
+      }
+    Seq("service", "catalog", "database", "table", "actor", "applicationRole").foreach { field =>
+      val changed = witness.deepCopy(); changed.put(field, "*")
+      assertThrows(classOf[java.lang.reflect.InvocationTargetException], () => verify(changed))
+    }
+    Seq("policy", "downloadVersion", "role").foreach { field =>
+      val changed = witness.deepCopy(); changed.put(field, 1L)
+      assertThrows(classOf[java.lang.reflect.InvocationTargetException], () => verify(changed))
+    }
+    val normalPriority = witness.deepCopy(); normalPriority.put("policyPriority", 0)
+    assertThrows(classOf[java.lang.reflect.InvocationTargetException], () => verify(normalPriority))
+    val forged = witness.deepCopy(); forged.put("publicRevokeComplete", true)
+    assertThrows(classOf[java.lang.reflect.InvocationTargetException], () => verify(forged))
+    assertThrows(
+      classOf[IllegalArgumentException],
+      () => DeltaRangerLiveMetadataBarrier.validateRelease(witness, 2L, 4L)
     )
   }
 

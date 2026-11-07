@@ -85,6 +85,64 @@ class TestDeltaRangerLiveNamedRequests {
     } finally { gateway.close(); upstream.stop(0) }
   }
 
+  /** Shared actor absence is transparent but never supplies a separate metadata witness. */
+  @Test
+  def sharedActorVisibilityKeepsSeparateMetadataWitness(): Unit = {
+    val upstream = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+    upstream.createContext(
+      "/",
+      exchange => {
+        val status = if (exchange.getRequestURI.getPath.endsWith("absent")) 404 else 200
+        exchange.sendResponseHeaders(status, -1); exchange.close()
+      }
+    )
+    upstream.start()
+    val prefix = "/api/metalakes/lake/catalogs/catalog/schemas/schema/tables/"
+    val gateway = new DeltaRangerLiveMetadataBarrier.Gateway(
+      URI.create("http://127.0.0.1:" + upstream.getAddress.getPort),
+      Files.createTempDirectory("shared-actor-observation")
+    )
+    val legacy = new DeltaRangerLiveMetadataBarrier.Gateway(
+      URI.create("http://127.0.0.1:" + upstream.getAddress.getPort),
+      Files.createTempDirectory("legacy-actor-observation")
+    )
+    try {
+      gateway.getClass
+        .getMethod("observeSharedTables", classOf[String], classOf[String], classOf[String])
+        .invoke(gateway, prefix, "metadata", "actor")
+      legacy.observeTables(prefix, "metadata")
+      def get(
+          observer: DeltaRangerLiveMetadataBarrier.Gateway,
+          principal: String,
+          table: String
+      ): Int =
+        HttpClient
+          .newHttpClient()
+          .send(
+            HttpRequest
+              .newBuilder(observer.uri.resolve(prefix + table))
+              .header(
+                "Authorization",
+                "Basic " + Base64.getEncoder
+                  .encodeToString((principal + ":ignored").getBytes("UTF-8"))
+              )
+              .GET()
+              .build(),
+            HttpResponse.BodyHandlers.discarding()
+          )
+          .statusCode()
+      assertEquals(404, get(gateway, "actor", "absent"))
+      assertThrows(classOf[IllegalArgumentException], () => gateway.requireMetadataObserved())
+      assertEquals(200, get(gateway, "actor", "present"))
+      assertThrows(classOf[IllegalArgumentException], () => gateway.requireMetadataObserved())
+      assertEquals(200, get(gateway, "metadata", "present"))
+      gateway.requireMetadataObserved()
+      assertEquals(503, get(gateway, "foreign", "present"))
+      assertEquals(503, get(legacy, "actor", "absent"))
+      assertEquals(0, legacy.namedRequests().get(0).get("status"))
+    } finally { gateway.close(); legacy.close(); upstream.stop(0) }
+  }
+
   /** Authentication failures are attempted table requests too. */
   @Test
   def failedAuthenticationIsRetainedWithoutSecrets(): Unit = {

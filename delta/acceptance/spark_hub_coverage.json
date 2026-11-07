@@ -492,6 +492,66 @@
       "pair": "3.5.6-3.3.2",
       "aggregateReference": ".superpowers/sdd/2026-10-29-spark-hub-catalog-foundation/task-4-runtime-index.json",
       "aggregateSha256": "92d2e2b710542c9bf550be5f780454f84d7561c5ac7e0fdb6e2b651b88a99afb"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.0-shared-jdbc-named-writer",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a9b98e16df0c1b0a73e0bdb256fd0adcc3d0cc1e",
+      "reference": ".superpowers/sdd/2026-11-06-spark-hub-shared-writer/task-5-ready-live-3.5.4-3.3.0/checked-result.json",
+      "sha256": "627ea9d1ba468511fe29b1582fdd851174a735f9f5cec31abb84fe6f9d1b1d06",
+      "caseId": "shared-jdbc-named-writer",
+      "original": true,
+      "pair": "3.5.4-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-11-06-spark-hub-shared-writer/task-5-ready-matrix.json",
+      "aggregateSha256": "5a4b06054615dc126413d7d86774d1a7bb98a25b7dd8456a5d09fd51dd3432e2",
+      "hubRevision": "8af43fa12c01394c32f1fef6196a3d384bd604e3",
+      "sourceInputDigest": "677238b217cdc2b36ba47397c990b02f767356a6e13af59c0f8acb186d22aa06"
+    },
+    {
+      "id": "runtime-3.5.4-3.3.2-shared-jdbc-named-writer",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a9b98e16df0c1b0a73e0bdb256fd0adcc3d0cc1e",
+      "reference": ".superpowers/sdd/2026-11-06-spark-hub-shared-writer/task-5-ready-live-3.5.4-3.3.2/checked-result.json",
+      "sha256": "9158ab7c979450df7bc3767b636928b2a5460bc4b4fda18079bd526afab9bfce",
+      "caseId": "shared-jdbc-named-writer",
+      "original": true,
+      "pair": "3.5.4-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-11-06-spark-hub-shared-writer/task-5-ready-matrix.json",
+      "aggregateSha256": "5a4b06054615dc126413d7d86774d1a7bb98a25b7dd8456a5d09fd51dd3432e2",
+      "hubRevision": "8af43fa12c01394c32f1fef6196a3d384bd604e3",
+      "sourceInputDigest": "677238b217cdc2b36ba47397c990b02f767356a6e13af59c0f8acb186d22aa06"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.0-shared-jdbc-named-writer",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a9b98e16df0c1b0a73e0bdb256fd0adcc3d0cc1e",
+      "reference": ".superpowers/sdd/2026-11-06-spark-hub-shared-writer/task-5-ready-live-3.5.6-3.3.0/checked-result.json",
+      "sha256": "73eb0240a17f3cca6621a3927ce5bffc8bccc8086b200178192d02fe771cd512",
+      "caseId": "shared-jdbc-named-writer",
+      "original": true,
+      "pair": "3.5.6-3.3.0",
+      "aggregateReference": ".superpowers/sdd/2026-11-06-spark-hub-shared-writer/task-5-ready-matrix.json",
+      "aggregateSha256": "5a4b06054615dc126413d7d86774d1a7bb98a25b7dd8456a5d09fd51dd3432e2",
+      "hubRevision": "8af43fa12c01394c32f1fef6196a3d384bd604e3",
+      "sourceInputDigest": "677238b217cdc2b36ba47397c990b02f767356a6e13af59c0f8acb186d22aa06"
+    },
+    {
+      "id": "runtime-3.5.6-3.3.2-shared-jdbc-named-writer",
+      "kind": "runtime",
+      "repository": "gravitino",
+      "revision": "a9b98e16df0c1b0a73e0bdb256fd0adcc3d0cc1e",
+      "reference": ".superpowers/sdd/2026-11-06-spark-hub-shared-writer/task-5-ready-live-3.5.6-3.3.2/checked-result.json",
+      "sha256": "7a99339a64089202c9262e9d69e0c35be7a41355082ad5b7c780e999234253d9",
+      "caseId": "shared-jdbc-named-writer",
+      "original": true,
+      "pair": "3.5.6-3.3.2",
+      "aggregateReference": ".superpowers/sdd/2026-11-06-spark-hub-shared-writer/task-5-ready-matrix.json",
+      "aggregateSha256": "5a4b06054615dc126413d7d86774d1a7bb98a25b7dd8456a5d09fd51dd3432e2",
+      "hubRevision": "8af43fa12c01394c32f1fef6196a3d384bd604e3",
+      "sourceInputDigest": "677238b217cdc2b36ba47397c990b02f767356a6e13af59c0f8acb186d22aa06"
     }
   ],
   "cases": [
@@ -798,7 +858,7 @@
       ],
       "settings": {},
       "policyProfile": "Preserve current Ranger row filters, masks and column permissions; no raw-key or raw-row bypass.",
-      "expectedOutcome": "Preserve external/constructed inputs, input schema, primary key and native table properties; qualify owned create/publish and original commit outcomes before shared-sink adoption. Registered PostgreSQL named-source execution has separate bounded installed and four-pair actual-service qualification in docs/superpowers/specs/2026-11-05-delta-registered-jdbc-results.md, with final-review correction evidence retained separately; job-scoped external PostgreSQL source/count and existing named APPEND now have separate finite four-pair actual-service qualification in docs/superpowers/specs/2026-11-05-delta-external-jdbc-results.md (19 cases/23 actions, actual Hub tracker on the lead pair). This CREATE/shared-sink workload remains open.",
+      "expectedOutcome": "Preserve external/constructed inputs, input schema, primary key and native table properties; qualify owned create/publish and original commit outcomes before shared-sink adoption. Registered PostgreSQL named-source execution has separate bounded installed and four-pair actual-service qualification in docs/superpowers/specs/2026-11-05-delta-registered-jdbc-results.md, with final-review correction evidence retained separately; job-scoped external PostgreSQL source/count and existing named APPEND now have separate finite four-pair actual-service qualification in docs/superpowers/specs/2026-11-05-delta-external-jdbc-results.md (19 cases/23 actions, actual Hub tracker on the lead pair). A separate bounded shared-jdbc-named-writer entry now qualifies 27 current service cases through the actual shared wrapper with explicit normalized scalar input and profile. This broader legacy/full-schema CREATE/shared-sink workload remains open.",
       "status": "connector-gap",
       "evidenceRefs": [
         "writer",
@@ -1416,6 +1476,49 @@
         "legacy-writer"
       ],
       "predecessorIds": []
+    },
+    {
+      "id": "shared-jdbc-named-writer",
+      "production": {
+        "repository": "sparkHub",
+        "path": "src/shared/services/v3/gravitino_writer.py",
+        "symbol": "GravitinoDatasetWriter.write_dataset"
+      },
+      "milestone": "M2",
+      "scope": "required",
+      "api": "Actual JDBC v2 source -> job_wrapper(gravitino_runtime) -> named write_dataset",
+      "planFamily": "owned-external-jdbc-create-and-append",
+      "options": {
+        "mode": "append",
+        "mergeSchema": "true/false",
+        "overwriteSchema": "false",
+        "CDF": "new true / existing false-to-true"
+      },
+      "features": [
+        "Application-owned native CREATE and APPEND",
+        "Scalar additive append plus distinct matching-schema next append and checksum continuation",
+        "Independent CREATE/CDF/data outcomes, denials, postcommit hook/tracker failures"
+      ],
+      "settings": {
+        "spark.sql.adaptive.enabled": "true",
+        "spark.databricks.delta.optimizeWrite.enabled": "false",
+        "spark.databricks.delta.autoCompact.enabled": "false",
+        "spark.databricks.delta.schema.autoMerge.enabled": "false",
+        "spark.databricks.delta.properties.defaults.compatibility.symlinkFormatManifest.enabled": "false"
+      },
+      "policyProfile": "Read-only PostgreSQL credentials authorize the source; actual Ranger destination authority and Gravitino registration. Application-owned CREATE; exact Ranger-authored priority-1 denials, not public-revoke pushdown.",
+      "expectedOutcome": "Finite explicit-profile APPEND/SNAPSHOT without cursor; original native JSON/CRC, UUID, rows, schema and Gravitino column identities verified. PostgreSQL CHAR/VARCHAR requires explicit CAST to TEXT; full schema, overwrite/full refresh, default-enabled maintenance and full M2 remain open. See docs/superpowers/specs/2026-11-06-spark-hub-shared-writer-results.md.",
+      "status": "qualified",
+      "evidenceRefs": [
+        "runtime-3.5.4-3.3.0-shared-jdbc-named-writer",
+        "runtime-3.5.4-3.3.2-shared-jdbc-named-writer",
+        "runtime-3.5.6-3.3.0-shared-jdbc-named-writer",
+        "runtime-3.5.6-3.3.2-shared-jdbc-named-writer"
+      ],
+      "predecessorIds": [
+        "external-ingestion-create"
+      ],
+      "qualificationStage": "Four current original runtime cells, 27 cases / 31 actual wrapper jobs / 25 new native publications / 19 confirmed data outcomes. One writer per dataset; no retry, no reservation-response test barrier, no legacy raw-path equivalence."
     }
   ]
 }

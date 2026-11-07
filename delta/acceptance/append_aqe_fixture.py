@@ -188,7 +188,16 @@ def run():
     }
     from append_aqe_profiles import fixture_tables
 
-    if inputs.get("externalJdbcPair"):
+    if inputs.get("sharedWriterPair"):
+        from shared_writer_live import fixture_tables as shared_tables
+
+        tables = shared_tables(plan, tuple(inputs["sharedWriterPair"]))
+        plan["sharedWriter"] = True
+        plan["inputTimestampProfile"] = "shared-writer"
+        plan["externalJdbc"] = True
+        plan["jdbcConnectionFile"] = inputs["jdbcConnectionFile"]
+        plan["python"] = inputs["pythonRuntime"]
+    elif inputs.get("externalJdbcPair"):
         from external_jdbc_live import case_specs
         from input_timestamp_checks import timestamp_tables
 
@@ -321,9 +330,10 @@ def run():
             from registered_jdbc_live import register_sources
 
             register_sources(plan, inputs, rest, props, out)
-        native(plan, runtime, tables, "seed", out / "native-seed")
+        seeded = [table for table in tables if table.get("seed", True)]
+        native(plan, runtime, seeded, "seed", out / "native-seed")
         receipts = {}
-        for table in tables:
+        for table in seeded:
             receipt = submit(
                 rest,
                 base,
@@ -367,7 +377,7 @@ def run():
                 plan["catalog"] + "." + plan["database"] + "." + t["name"],
                 "SELECT_TABLE",
             )
-            for t in tables
+            for t in seeded
         ]
         if plan.get("registeredJdbc"):
             from registered_jdbc_live import source_objects
@@ -375,14 +385,24 @@ def run():
             objects += source_objects(plan, obj)
         for user in [plan["subject"], plan["metadataPrincipal"]]:
             rest.call("POST", base + "/users", {"name": user})
+        if plan.get("sharedWriter"):
+            rest.call(
+                "PUT", base + "/owners/catalog/" + plan["catalog"],
+                {"name": plan["metadataPrincipal"], "type": "USER"},
+            )
         for role, user in [
             (plan["appRole"], plan["subject"]),
             (plan["metaRole"], plan["metadataPrincipal"]),
         ]:
+            granted_objects = objects
+            if plan.get("sharedWriter"):
+                from shared_writer_live import role_objects
+
+                granted_objects = role_objects(objects, plan["catalog"] + "." + plan["database"] if role == plan["appRole"] else None)
             rest.call(
                 "POST",
                 base + "/roles",
-                {"name": role, "properties": {}, "securableObjects": objects},
+                {"name": role, "properties": {}, "securableObjects": granted_objects},
             )
             rest.call(
                 "PUT",
@@ -519,6 +539,11 @@ def run():
             + plan["metadataPrincipal"]
             + "\nlifetime-seconds=3600\n"
         )
+        if plan.get("sharedWriter"):
+            server.stop()
+            server.column_snapshot("shared-before")
+            server.start()
+            plan["serverPid"] = server.process.pid
         plan["sourceSecurityDirectory"] = str(security)
         plan["fixtureDirectory"] = str(out)
         save(out / "state.private.json", plan)
@@ -571,6 +596,8 @@ def run():
         process = server.process
         try:
             server.stop()
+            if plan.get("sharedWriter"):
+                server.column_snapshot("shared-after")
         finally:
             try:
                 callbacks.wait_drained(20)
