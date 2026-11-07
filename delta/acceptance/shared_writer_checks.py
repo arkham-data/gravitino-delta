@@ -210,6 +210,9 @@ def verify_case(record):
         before_raw, after_raw = [read_ref(read_ref(job[key])["rawEvidence"]) for key in ("before", "after")]
         retained = {item["key"]: item for item in after_raw}
         assert all(retained.get(item["key"]) == item for item in before_raw), "Original native bytes changed"
+        if name == "shared_create_denied":
+            # Registration404 cannot establish absence of orphan native publications.
+            assert before_raw == after_raw, "Denied CREATE mutated raw native objects"
     verify_barrier(name, record.get("barrier"))
 
 

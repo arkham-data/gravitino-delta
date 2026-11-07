@@ -166,6 +166,77 @@ class TestSharedWriterChecks(unittest.TestCase):
         with self.assertRaises(AssertionError):
             checks.verify_native("shared_late_target_revoke", 0, absent, dict(before, checksums=[0, 1]))
 
+    def test_denied_create_rejects_orphan_publications_and_raw_mutation(self):
+        import hashlib
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from cdf_merge_live_checks import file_ref
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def save(name, value):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(value))
+                return file_ref(path)
+
+            def absent(name, objects):
+                folder = root / name / "raw"
+                folder.mkdir(parents=True)
+                raw = []
+                for key, content in objects:
+                    data = content.encode()
+                    (folder / hashlib.sha256(key.encode()).hexdigest()).write_bytes(data)
+                    raw.append(dict(key=key, sha256=hashlib.sha256(data).hexdigest(), size=len(data)))
+                registration = save(name + "/registration.json", dict(status=404, body={}))
+                self.assertEqual(json.loads(Path(registration["path"]).read_text())["status"], 404)
+                image = dict(version=-1, publications=[], nativeId=None, rows=[], schema=[],
+                             properties={}, checksums=[], columnIds=[], rawEvidence=save(name + "/raw.json", raw))
+                checks.verify_native_image(image)  # All retained object bytes/hash references are valid.
+                return save(name + "/image.json", image)
+
+            name = "shared_create_denied"
+            expected = checks.contract(name)[0]
+            main = dict(python=1, jvm=2, session="session", ugi="actor", groups=["group"])
+            caller = dict(main=main, tracker=dict(main, python=3, jvm=4), joinedBeforeClose=True,
+                          readerLiveDuringCount=True, readerLiveUntilClose=True, readerClosed=True,
+                          sparkStopped=False, remoteCount=3, trackerCount=3, sourceQuery=expected["query"],
+                          actionCounts=expected["calls"], phases=expected["phases"], errorPhase="writer",
+                          attempted=True, retryEligible=False,
+                          calls=[dict(module=m, function=f) for m, f in checks.REQUIRED_CALLS])
+            save("writer/process.json", dict(pid=10, started=2))
+            save("writer/command.json", dict(argv=["original-child"], started=1))
+            writer = save("writer/exit.json", dict(pid=10, exitCode=0, timedOut=False, finished=3))
+            original = [("owned/seed/_delta_log/00000000000000000000.json", '{"metaData":{}}')]
+            before = absent("before", original)
+            job = dict(job="initial", before=before, after=absent("same", original),
+                       caller=save("caller.json", caller),
+                       observation=save("observation.json", dict(failure=[dict(
+                           className="java.lang.SecurityException", message="Delta Ranger access denied",
+                           stack=["DeltaRangerPolicyEngine.authorize"])])),
+                       namedRequests=save("requests.json", [dict(identityKind="shared-application",
+                           method="GET", path="/tables/" + name, status=404)]))
+            record = dict(name=name, jobs=[job], writerExit=writer)
+            target = "owned/adoption/" + name + "/_delta_log/00000000000000000000."
+            mutations = {
+                "orphan-json": original + [(target + "json", '{"metaData":{"id":"orphan"}}')],
+                "orphan-crc": original + [(target + "crc", '{"numFiles":0}')],
+                "new-object": original + [("owned/adoption/" + name + "/part.parquet", "staged")],
+                "changed-object": [(original[0][0], '{"metaData":{"id":"changed"}}')],
+                "deleted-object": [],
+            }
+            # SQL classification is outside this native-state negative control.
+            with patch.object(checks, "verify_sql", return_value=expected["sql"]):
+                checks.verify_case(record)
+                for label, objects in mutations.items():
+                    with self.subTest(label=label):
+                        job["after"] = absent(label, objects)
+                        with self.assertRaises(AssertionError):
+                            checks.verify_case(record)
+
     def test_held_late_denial_rejects_next_json_and_crc(self):
         from unittest.mock import patch
         value = dict(held=dict(runId="run"), forwarded=dict(runId="run", status=200, transparent=True),
