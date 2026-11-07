@@ -33,13 +33,22 @@ distributed execution and production deployment remain open.
 
 ## Original current evidence
 
-Current production is Gravitino `a9b98e16df0c1b0a73e0bdb256fd0adcc3d0cc1e`
-and immutable Hub `8af43fa12c01394c32f1fef6196a3d384bd604e3` (259 production
-files). All four packages captured the same 9,254 source files with digest
+The original live qualification producers were Gravitino
+`a9b98e16df0c1b0a73e0bdb256fd0adcc3d0cc1e` and immutable Hub
+`8af43fa12c01394c32f1fef6196a3d384bd604e3` (259 production files). All four packages captured the same 9,254 source files with digest
 `677238b217cdc2b36ba47397c990b02f767356a6e13af59c0f8acb186d22aa06`.
 Source files/digests match before and after builds; the before snapshot alone
 also records Git HEAD. Every case binds its actual child producer, runtime,
 caller/process identities and helper source to its original manifest.
+
+The later Hub cleanup fix `288f905632070a29bc6f8e22d3b9a34152d49eff`
+waits for positive tracker callback completion before unpersist and JDBC reader
+closure after an interrupted drain. Its separate real-thread unit evidence
+covers KeyboardInterrupt/SystemExit, confirmed writes, prior writer failures
+and late callback failures; 168 affected runner/tracker/writer tests passed.
+See the [final cleanup-fix report](../../../.superpowers/sdd/2026-11-06-spark-hub-shared-writer/whole-slice-final-fix-report.md).
+No native/service matrix was replayed for that fix: the 27 original live cases
+below remain evidence from Hub `8af43fa`, with their original artifacts intact.
 
 | Spark / Delta | Cases / jobs | New publications | Confirmed data | Original checked cell (SHA-256) |
 | --- | ---: | ---: | ---: | --- |
